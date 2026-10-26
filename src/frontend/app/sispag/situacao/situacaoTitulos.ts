@@ -9,8 +9,8 @@ import {
   type SugestaoBoletoSemDda,
   type TituloAPagar,
 } from '@/lib/sispag'
-import { diaDoErp } from '../components/filtroDatas'
 import { ROTULO_MOTIVO } from './rotulos'
+import { diaDoPrazo, diasAtePrazo, estaPerdido } from './prazoTitulo'
 
 /**
  * Regras puras da aba de títulos com situação de pagamento (ADR-0075): filtro por coluna,
@@ -124,6 +124,13 @@ export const faixaDeVencimento = (dias?: number): FaixaVencimento | undefined =>
   return '8+'
 }
 
+/**
+ * Faixa do título pelo PRAZO EFETIVO (I19t): o boleto sugerido que vence antes do título puxa a
+ * faixa; o "perdido" cai sempre em Vencidos — como filtro, sem virar o motivo `VENCIDO` (I19e).
+ */
+export const faixaDoTitulo = (t: TituloAPagar): FaixaVencimento | undefined =>
+  estaPerdido(t) ? 'VENCIDO' : faixaDeVencimento(diasAtePrazo(t))
+
 const valorNumerico = (s: string): number | undefined => {
   if (s.trim() === '') return undefined
   const n = Number(s.replace(',', '.'))
@@ -162,11 +169,11 @@ export const passaColunas = (t: TituloAPagar, f: FiltrosTitulos): boolean => {
   if (min !== undefined && t.valor < min) return false
   if (max !== undefined && t.valor > max) return false
   if (f.faixas.length > 0) {
-    const faixa = faixaDeVencimento(t.diasAteVencimento)
+    const faixa = faixaDoTitulo(t)
     if (!faixa || !f.faixas.includes(faixa)) return false
   }
   if (f.vencDe || f.vencAte) {
-    const dia = diaDoErp(t.vencimento)
+    const dia = diaDoPrazo(t)
     if (!dia) return false
     if (f.vencDe && dia < f.vencDe) return false
     if (f.vencAte && dia > f.vencAte) return false
@@ -231,9 +238,18 @@ export const somar = (titulos: TituloAPagar[]): Total => ({
   valor: titulos.reduce((acc, t) => acc + t.valor, 0),
 })
 
-/** Faixa vermelha: bloqueados que vencem HOJE (vencidos ficam de fora, decisão D2). */
+/**
+ * Faixa vermelha: bloqueados cujo PRAZO EFETIVO é hoje (vencidos ficam de fora, decisão D2; o
+ * "perdido" também, I19t(5): tem linha própria).
+ */
 export const bloqueadosQueVencemHoje = (titulos: TituloAPagar[]): TituloAPagar[] =>
-  titulos.filter((t) => ehBloqueado(t) && t.diasAteVencimento === 0).sort((a, b) => b.valor - a.valor)
+  titulos
+    .filter((t) => ehBloqueado(t) && !estaPerdido(t) && diasAtePrazo(t) === 0)
+    .sort((a, b) => b.valor - a.valor)
+
+/** Bloqueados com boleto perdido (I19t(5)): linha separada, "resolver no portal do banco". */
+export const bloqueadosPerdidos = (titulos: TituloAPagar[]): TituloAPagar[] =>
+  titulos.filter((t) => ehBloqueado(t) && estaPerdido(t)).sort((a, b) => b.valor - a.valor)
 
 /** Card "Vencem em até 2 dias": hoje, amanhã e depois (vencidos não entram). */
 export const vencemEmAteDoisDias = (titulos: TituloAPagar[]): TituloAPagar[] =>

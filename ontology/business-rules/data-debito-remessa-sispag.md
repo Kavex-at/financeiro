@@ -3,7 +3,7 @@ name: data-debito-remessa-sispag
 type: business-rule
 entity: LotePagamento
 invariant: I8
-ontology_version: "0.27.0"
+ontology_version: "0.49.0"
 implementation_status: implemented
 status: active
 owners: [yuri]
@@ -18,7 +18,7 @@ related_files:
   - src/backend/routes/sispag.ts
   - src/frontend/app/sispag/components/GerarRemessaDialog.tsx
   - src/frontend/app/sispag/components/LoteCard.tsx
-last_review: 2026-09-22
+last_review: 2026-10-26
 has_canonical_test: true
 ---
 
@@ -36,7 +36,12 @@ janela(lote) = [ hoje_BRT , min(itsDtaPgto dos itens) ]  ∩  diasUteisBancarios
 
 I8a   dataDebito ∈ janela(lote)                     — senão: bloqueia, antes de qualquer escrita
 I8b   existe lote nativo fin015 criado com dataDebito  ⇒  dataDebito é imutável
+I8c   item de data divergente (I17o): data candidata = min(título, barra rolada) ≥ hoje_BRT  — ADR-0078, implemented Fase 1 (função pura e janela por lote); uso na formação de lotes e Δ>0: planned
 ```
+
+**I8c — data candidata do item de data divergente (ADR-0078, P0-4, `implemented` Fase 1: `DataCandidataItem` e janela por lote; a separação por data efetiva na formação e o Δ>0 seguem `planned`, Fase 2).** Para item do caminho `DATA_DIVERGENTE` (I17o), a **data candidata** é `min(vencimentoTitulo, vencimentoEfetivoBarra)` (barra rolada ao próximo dia útil bancário, I15h), e só é possível se `≥ hoje_BRT` e dia útil bancário (I8a). O item entra no lote cuja `dataDebito` é a **data efetiva** dele: `Δ < 0` **não puxa os demais itens do lote para trás** (o limite superior de I8a, `min(itsDtaPgto)`, passa a considerar `min(vencimentoTitulo, vencimentoEfetivoBarra)` **apenas dos itens daquele lote**; a formação separa por data efetiva). Sem data candidata possível (barra antes de hoje ou sem dia útil entre hoje e ela) ⇒ o par segue **informativo** (`VENCIDO_INFORMATIVO`), não vincula e não bloqueia os demais. I8a e I8b **inalteradas**: um lote ⇒ uma `dataDebito`, congelada depois do `criarLote`. `[DEFAULT]` (a confirmar na medição HML V11): o ERP (R2) compara a `dataDebito` com o `itsDtaPgto` **depois do `PUT`**; se ele passar a ser o da barra, a janela do lote é a da barra. **Δ > 0: em aberto** (depende do que o J carrega, I17p/V12).
+
+*(Item de data divergente: ver I8c.)*
 
 - **`hoje_BRT`** — a data civil em `America/Sao_Paulo`. **Nunca** meia-noite UTC: com UTC, das 21h às
   24h de Brasília "hoje" já é amanhã, e a data enviada ao `fin015` salta um dia (bug do `hojeUtc()`

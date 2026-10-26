@@ -1,7 +1,9 @@
 import { injectable } from 'tsyringe';
 import { type EmissorBoleto, LAYOUT_EMISSOR } from '../../interface/sispag/SugestaoBoleto.js';
+import FatorVencimentoBoleto from './FatorVencimentoBoleto.js';
 
 const SO_DIGITOS = /^\d+$/;
+const FATOR = new FatorVencimentoBoleto();
 
 /**
  * Código de barras de boleto BANCÁRIO (44 dígitos, layout FEBRABAN):
@@ -68,42 +70,36 @@ export default class CodigoBarrasBoleto {
 
     /**
      * Decodifica valor e vencimento do código (44 ou 47), conferindo os DVs (`paraBarras`).
-     * `referencia` (data civil `YYYY-MM-DD`) escolhe o ciclo do fator de vencimento: o fator vai
-     * de 1000 a 9999 e recomeça (9.000 dias; o último reinício foi em 22/02/2025), então a data é
-     * a do ciclo mais próxima da referência. Fator `0000` = sem vencimento (`vencimento` ausente).
+     * `referencia` (data civil `YYYY-MM-DD`) escolhe o ciclo do fator de vencimento (definição única
+     * em `FatorVencimentoBoleto`: ciclos de 9.000 dias, reinício em 22/02/2025). Fator `0000` =
+     * sem vencimento (`semVencimento`, `vencimento` ausente).
      * Nunca lança; `undefined` se o código for inválido ou arrecadação.
      */
     public decodificar = (
         codigo: string | undefined,
         referencia: string,
     ):
-        | { barras: string; banco: string; valorCentavos: number; vencimento?: string }
+        | {
+              barras: string;
+              banco: string;
+              valorCentavos: number;
+              vencimento?: string;
+              /** Fator `0000`: o boleto não carrega vencimento (distinto de "não decodificável"). */
+              semVencimento?: true;
+          }
         | undefined => {
         const barras = this.paraBarras((codigo ?? '').replace(/[\s.]/g, ''));
         if (!barras) return undefined;
-        const fator = Number(barras.slice(5, 9));
+        const fator = barras.slice(5, 9);
         const base = {
             barras,
             banco: barras.slice(0, 3),
             valorCentavos: Number(barras.slice(9, 19)),
         };
-        if (fator === 0) return base;
-        const ref = Date.parse(`${referencia}T00:00:00Z`);
-        const dia = 24 * 60 * 60 * 1000;
-        const origem = Date.UTC(1997, 9, 7);
-        let melhor: number | undefined;
-        for (let ciclo = 0; ciclo <= 4; ciclo += 1) {
-            const candidato = origem + (fator + 9000 * ciclo) * dia;
-            if (melhor === undefined || Math.abs(candidato - ref) < Math.abs(melhor - ref)) {
-                melhor = candidato;
-            }
-        }
-        return {
-            ...base,
-            ...(melhor !== undefined
-                ? { vencimento: new Date(melhor).toISOString().slice(0, 10) }
-                : {}),
-        };
+        const decodificado = FATOR.decodificar(fator, referencia);
+        if (decodificado === undefined) return base;
+        if ('semVencimento' in decodificado) return { ...base, semVencimento: true };
+        return { ...base, vencimento: decodificado.vencimento };
     };
 
     /** Código FEBRABAN do banco emissor (ex.: `341` Itaú). */

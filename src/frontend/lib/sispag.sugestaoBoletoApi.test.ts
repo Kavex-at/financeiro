@@ -150,6 +150,23 @@ describe('cliente da sugestão de boleto', () => {
     expect(JSON.parse((c2?.[1] as RequestInit).body as string)).toEqual(CHAVE)
   })
 
+  it('confirmar com ack tipado manda reconhecimento (e só ele quando não há aviso simples)', async () => {
+    mock.mockResolvedValue(resp(201, { criada: true, decisao }))
+    const reconhecimento = {
+      tipo: 'DATA_DIVERGENTE',
+      aceito: true,
+      motivo: 'Fornecedor confirmou a data por telefone',
+      deltaDiasVisto: -3,
+      valorBoletoVisto: 12345,
+    } as const
+    await confirmarSugestaoBoleto(CHAVE, [], reconhecimento)
+    const [c1] = mock.mock.calls
+    expect(JSON.parse((c1?.[1] as RequestInit).body as string)).toEqual({
+      ...CHAVE,
+      reconhecimento,
+    })
+  })
+
   it('filtro situacao vai na query', async () => {
     mock.mockResolvedValue(resp(200, lista([], 0)))
     await fetchSugestoesBoleto({ situacao: 'AMBIGUA' })

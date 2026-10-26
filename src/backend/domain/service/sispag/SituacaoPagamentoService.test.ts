@@ -11,7 +11,11 @@ import {
     FONTE_SITUACAO,
     MOTIVO_PAGAMENTO,
 } from '../../interface/sispag/SituacaoPagamento.js';
-import { SITUACAO_SUGESTAO_TITULO } from '../../interface/sispag/SugestaoBoleto.js';
+import type { PrazoBoleto } from '../../interface/sispag/PrazoBoleto.js';
+import {
+    MOTIVO_ORFA_RECONHECIMENTO_INVALIDADO,
+    SITUACAO_SUGESTAO_TITULO,
+} from '../../interface/sispag/SugestaoBoleto.js';
 import { ETAPA_AJUSTE } from '../../libs/boleto/EtapaAjusteCentavos.js';
 import type AjusteCentavosExecucaoRepository from '../../repository/sispag/AjusteCentavosExecucaoRepository.js';
 import type BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
@@ -36,6 +40,8 @@ interface Over {
     bloqueios?: jest.Mock;
     ajustes?: jest.Mock;
     desfechos?: jest.Mock;
+    motivosOrfa?: Map<string, string>;
+    prazos?: Map<string, PrazoBoleto>;
     env?: jest.Mock;
     buscarPorChave?: jest.Mock;
     buscarPorChaves?: jest.Mock;
@@ -49,7 +55,11 @@ const make = (over: Over = {}) => {
         listarUltimaEtapaPorTitulo: over.ajustes ?? jest.fn().mockResolvedValue(new Map()),
     } as unknown as AjusteCentavosExecucaoRepository;
     const boleto = {
-        situacaoPorTitulo: over.desfechos ?? jest.fn().mockResolvedValue(new Map()),
+        contextoPorTitulo: async () => ({
+            situacoes: await (over.desfechos ?? jest.fn().mockResolvedValue(new Map()))(),
+            motivosOrfa: over.motivosOrfa ?? new Map<string, string>(),
+            prazos: over.prazos ?? new Map(),
+        }),
     } as unknown as BoletoSuggestionService;
     const env = {
         getEnvironmentVars:
@@ -167,6 +177,89 @@ describe('SituacaoPagamentoService', () => {
                     data: expect.objectContaining({ fonte: FONTE_SITUACAO.BOLETO }),
                 }),
             );
+        });
+
+        it('I19i: confirmação órfã por reconhecimento invalidado traz o motivo no detalhe', async () => {
+            const invalidado = make({
+                desfechos: jest
+                    .fn()
+                    .mockResolvedValue(new Map([['2:100:1', SITUACAO_SUGESTAO_TITULO.ORFA]])),
+                motivosOrfa: new Map([['2:100:1', MOTIVO_ORFA_RECONHECIMENTO_INVALIDADO]]),
+            });
+            const outro = make({
+                desfechos: jest
+                    .fn()
+                    .mockResolvedValue(new Map([['2:100:1', SITUACAO_SUGESTAO_TITULO.ORFA]])),
+                motivosOrfa: new Map([
+                    ['2:100:1', 'O Conexos já sinalizou boleto DDA para este título.'],
+                ]),
+            });
+            const a = titulo();
+            const b = titulo();
+            await invalidado.service.avaliarCarteira([a]);
+            await outro.service.avaliarCarteira([b]);
+            expect(a.situacaoPagamento?.principal).toBe(MOTIVO_PAGAMENTO.CONFIRMACAO_A_REVISAR);
+            expect(a.situacaoPagamento?.detalhe).toBe(MOTIVO_ORFA_RECONHECIMENTO_INVALIDADO);
+            // outro motivo de órfã mantém o detalhe de sempre
+            expect(b.situacaoPagamento?.detalhe).toBe(
+                'o Conexos mudou o título depois da confirmação do boleto',
+            );
+        });
+
+        it('I19t: preenche `prazoBoleto` (um batch) e cai no vencimento do título sem desfecho', async () => {
+            const prazo: PrazoBoleto = {
+                prazoEfetivo: '2026-10-20',
+                origem: 'BOLETO_SUGERIDO',
+                vencimentoTitulo: '2026-10-22',
+                vencimentoBoleto: '2026-10-20',
+                perdido: false,
+            };
+            const { service } = make({ prazos: new Map([['2:100:1', prazo]]) });
+            const comPrazo = titulo();
+            const semDesfecho = titulo({
+                docCod: '200',
+                vencimento: Date.parse('2026-10-23T15:00:00Z'),
+            });
+            const semVencimento = titulo({ docCod: '300' });
+            await service.avaliarCarteira([comPrazo, semDesfecho, semVencimento]);
+            expect(comPrazo.prazoBoleto).toEqual(prazo);
+            expect(semDesfecho.prazoBoleto).toEqual({
+                prazoEfetivo: '2026-10-23',
+                origem: 'TITULO',
+                vencimentoTitulo: '2026-10-23',
+                perdido: false,
+            });
+            expect(semVencimento.prazoBoleto).toBeUndefined();
+        });
+
+        it('I19t: fonte BOLETO indisponível ⇒ prazo = título (fail-open) com a fonte avisada', async () => {
+            const { service } = make({
+                desfechos: jest.fn().mockRejectedValue(new Error('motor fora do ar')),
+            });
+            const t = titulo({ vencimento: Date.parse('2026-10-21T15:00:00Z') });
+            const resumo = await service.avaliarCarteira([t]);
+            expect(resumo.fontesIndisponiveis).toEqual([FONTE_SITUACAO.BOLETO]);
+            expect(t.prazoBoleto).toMatchObject({ origem: 'TITULO', prazoEfetivo: '2026-10-21' });
+        });
+
+        it('I19e/I19b inalterados: título que vence hoje não é VENCIDO, com ou sem prazo de boleto', async () => {
+            const hojeCivil = '2026-10-20';
+            const { service } = make({
+                prazos: new Map([
+                    [
+                        '2:100:1',
+                        {
+                            prazoEfetivo: hojeCivil,
+                            origem: 'BOLETO_SUGERIDO',
+                            vencimentoTitulo: '2026-10-25',
+                            perdido: true,
+                        } as PrazoBoleto,
+                    ],
+                ]),
+            });
+            const t = titulo({ diasAteVencimento: 0 });
+            await service.avaliarCarteira([t]);
+            expect(t.situacaoPagamento?.principal).not.toBe(MOTIVO_PAGAMENTO.VENCIDO);
         });
 
         it('registra TODAS as fontes que falharam', async () => {

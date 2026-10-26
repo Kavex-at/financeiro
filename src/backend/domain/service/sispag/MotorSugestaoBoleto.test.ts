@@ -540,6 +540,94 @@ describe('MotorSugestaoBoleto — confirmação órfã (I15l)', () => {
     });
 });
 
+describe('MotorSugestaoBoleto — validade do reconhecimento tipado (I15q, I15l, ADR-0078)', () => {
+    // Título vence 20/10 (terça); boleto 17/10 (sábado ⇒ prazo final 19/10); Δ = -3, valor igual.
+    const decisaoComAck = (over: Record<string, unknown> = {}) => ({
+        filCod: 1,
+        docCod: 'DONO',
+        titCod: '1',
+        ddcCod: 500,
+        ditCod: 40,
+        valorTitulo: 100,
+        vencimentoTitulo: '2026-10-20',
+        valorBoleto: 100,
+        vencimentoBoleto: '2026-10-17',
+        deltaValor: 0,
+        deltaPercentual: 0,
+        deltaDias: -3,
+        sinais: ['VALOR_IGUAL' as const],
+        tier: 'ATENCAO' as const,
+        reconhecimento: { deltaDiasVisto: -3, valorBoletoVisto: 10_000 },
+        ...over,
+    });
+    const cenario = (tituloOver: Partial<TituloAPagar> & { vencimentoCivil?: string } = {}) => {
+        const dono = titulo({ docCod: 'DONO', ...tituloOver });
+        const b = boleto({ ditCod: 40, vencimento: '2026-10-17' });
+        return { dono, b };
+    };
+    // Débito antecipado (lote em 15/10) mantém a barra vigente: o par existe de verdade.
+    const datasDebito = new Map([['1:DONO:1', '2026-10-15']]);
+    const base = (
+        confirmadas: EntradaMotorSugestao['confirmadas'],
+        t: TituloAPagar,
+        b: BoletoDda,
+    ) =>
+        entrada({
+            titulos: [t],
+            boletos: [b],
+            paresVigentes: [{ pesCod: '7001', emissorChave: '237:2656:0092740' }],
+            confirmadas,
+            datasDebito,
+        });
+
+    it('Δ e valor iguais aos vistos: a confirmação segue viva (CONFIRMADA)', () => {
+        const { dono, b } = cenario();
+        const d = motor
+            .desfechos(base([decisaoComAck()], dono, b))
+            .find((x) => x.docCod === 'DONO');
+        expect(d?.situacao).toBe('CONFIRMADA');
+        expect(d?.motivoOrfa).toBeUndefined();
+    });
+
+    it('o vencimento do título mudou (Δ muda): vira ORFA com motivo em português', () => {
+        const { dono, b } = cenario({ vencimentoCivil: '2026-10-21' });
+        const d = motor
+            .desfechos(base([decisaoComAck()], dono, b))
+            .find((x) => x.docCod === 'DONO');
+        expect(d?.situacao).toBe('ORFA');
+        expect(d?.motivoOrfa).toMatch(/reconhecimento de data divergente invalidado/i);
+    });
+
+    it('o valor do boleto mudou em 1 centavo: vira ORFA', () => {
+        const { dono } = cenario();
+        const b = boleto({ ditCod: 40, vencimento: '2026-10-17', valor: 100.01 });
+        const d = motor
+            .desfechos(base([decisaoComAck()], dono, b))
+            .find((x) => x.docCod === 'DONO');
+        expect(d?.situacao).toBe('ORFA');
+    });
+
+    it('órfã por ack inválido segue ocupando o título e o boleto (nada é sugerido no lugar)', () => {
+        const { dono, b } = cenario({ vencimentoCivil: '2026-10-21' });
+        const outro = titulo({ docCod: 'OUTRO', vencimentoCivil: '2026-10-17' });
+        const r = motor.sugerir(base([decisaoComAck()], dono, b));
+        expect(r).toHaveLength(1);
+        expect(r[0]).toMatchObject({ orfa: true, ditCod: 40, docCod: 'DONO' });
+        const comOutro = motor.sugerir({
+            ...base([decisaoComAck()], dono, b),
+            titulos: [dono, outro],
+        });
+        expect(comOutro.filter((x) => x.ditCod === 40 && x.docCod === 'OUTRO')).toHaveLength(0);
+    });
+
+    it('decisão sem reconhecimento (legada) nunca vira órfã por esta regra', () => {
+        const { dono, b } = cenario({ vencimentoCivil: '2026-10-21' });
+        const { reconhecimento: _r, ...legada } = decisaoComAck();
+        const d = motor.desfechos(base([legada], dono, b)).find((x) => x.docCod === 'DONO');
+        expect(d?.situacao).toBe('CONFIRMADA');
+    });
+});
+
 describe('MotorSugestaoBoleto — desfecho por título (I15m, I15n, ADR-0072)', () => {
     const desfecho = (e: EntradaMotorSugestao, t: TituloAPagar) =>
         motor.desfechos(e).find((d) => d.docCod === t.docCod && d.filCod === t.filCod);
@@ -770,13 +858,13 @@ describe('MotorSugestaoBoleto — desfecho por título (I15m, I15n, ADR-0072)', 
             const t = titulo({ docCod: 'V' });
             const e = entrada({
                 titulos: [t],
-                boletos: [boleto({ ditCod: 12, vencimento: '2026-10-18', valor: 107 })],
+                boletos: [boleto({ ditCod: 12, vencimento: '2026-10-16', valor: 107 })],
             });
             const d = desfecho(e, t);
             expect(d?.situacao).toBe('SO_VENCIDA');
             expect(d?.candidatos[0]).toMatchObject({
                 confirmavel: false,
-                avaliacao: { resultado: 'VENCIDO_INFORMATIVO', diasVencidoNoDebito: 2 },
+                avaliacao: { resultado: 'VENCIDO_INFORMATIVO', diasVencidoNoDebito: 4 },
             });
         });
 

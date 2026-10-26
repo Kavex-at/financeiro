@@ -14,6 +14,7 @@ import {
     type EventoSugestaoBoleto,
     type EventoSugestaoRegistro,
     eventoSugestaoRowSchema,
+    type ReconhecimentoDecisao,
 } from '../../interface/sispag/ConfirmacaoEmissorBoleto.js';
 import type {
     DecisaoConfirmadaChaveada,
@@ -32,7 +33,9 @@ const COLUNAS_DECISAO = `id, fil_cod, doc_cod, tit_cod, pes_cod, credor, ddc_cod
     AS vencimento_titulo, valor_boleto, to_char(vencimento_boleto, 'YYYY-MM-DD') AS vencimento_boleto,
     delta_valor, delta_percentual, delta_dias, sinais, tier, emissor_chave, decisao, decidido_por,
     decidido_em, motivo, confirmacao_emissor_id, versao, anulada_por, anulada_em, motivo_anulacao,
-    tipo_anulacao, origem_decisao_id, transferida_por`;
+    tipo_anulacao, origem_decisao_id, transferida_por, reconhecimento_tipo, reconhecimento_motivo,
+    reconhecimento_delta_dias_visto, reconhecimento_valor_boleto_visto_centavos, reconhecido_por,
+    reconhecido_em`;
 
 const COLUNAS_EVENTO = `id, tipo, ator, ocorrido_em, pes_cod, emissor_chave, fil_cod, doc_cod,
     tit_cod, ddc_cod, dit_cod, motivo, detalhe, lote_id, decisao_id`;
@@ -77,6 +80,11 @@ export interface NovaDecisao {
     decididoPor: string;
     motivo?: string;
     confirmacaoEmissorId?: string;
+    /**
+     * Reconhecimento tipado (I15q, ADR-0078), gravado na MESMA linha e na mesma transação da
+     * confirmação. `reconhecidoPor` vem do JWT; `reconhecido_em` é a hora do servidor.
+     */
+    reconhecimento?: Omit<ReconhecimentoDecisao, 'reconhecidoEm'>;
 }
 
 export interface NovoEventoSugestao {
@@ -272,12 +280,17 @@ export default class SugestaoBoletoRepository {
                 (id, fil_cod, doc_cod, tit_cod, pes_cod, credor, ddc_cod, dit_cod, numero_boleto,
                  codbar_mascarado, valor_titulo, vencimento_titulo, valor_boleto, vencimento_boleto,
                  delta_valor, delta_percentual, delta_dias, sinais, tier, emissor_chave, decisao,
-                 decidido_por, decidido_em, motivo, confirmacao_emissor_id)
+                 decidido_por, decidido_em, motivo, confirmacao_emissor_id,
+                 reconhecimento_tipo, reconhecimento_motivo, reconhecimento_delta_dias_visto,
+                 reconhecimento_valor_boleto_visto_centavos, reconhecido_por, reconhecido_em)
              VALUES ($id, $filCod, $docCod, $titCod, $pesCod, $credor, $ddcCod, $ditCod,
                      $numeroBoleto, $codbarMascarado, $valorTitulo, $vencimentoTitulo::date,
                      $valorBoleto, $vencimentoBoleto::date, $deltaValor, $deltaPercentual,
                      $deltaDias, $sinais::jsonb, $tier, $emissorChave, $decisao, $decididoPor,
-                     now(), $motivo, $confirmacaoEmissorId::uuid)
+                     now(), $motivo, $confirmacaoEmissorId::uuid,
+                     $reconhecimentoTipo, $reconhecimentoMotivo, $reconhecimentoDeltaDiasVisto,
+                     $reconhecimentoValorBoletoVisto, $reconhecidoPor,
+                     CASE WHEN $reconhecimentoTipo::text IS NULL THEN NULL ELSE now() END)
              ON CONFLICT DO NOTHING
              RETURNING id`,
             {
@@ -305,6 +318,11 @@ export default class SugestaoBoletoRepository {
                 decididoPor: input.decididoPor,
                 motivo: input.motivo ?? null,
                 confirmacaoEmissorId: input.confirmacaoEmissorId ?? null,
+                reconhecimentoTipo: input.reconhecimento?.tipo ?? null,
+                reconhecimentoMotivo: input.reconhecimento?.motivo ?? null,
+                reconhecimentoDeltaDiasVisto: input.reconhecimento?.deltaDiasVisto ?? null,
+                reconhecimentoValorBoletoVisto: input.reconhecimento?.valorBoletoVisto ?? null,
+                reconhecidoPor: input.reconhecimento?.reconhecidoPor ?? null,
             },
         );
         const alvo = inserida ? { id: inserida.id } : null;
@@ -474,12 +492,16 @@ export default class SugestaoBoletoRepository {
                  codbar_mascarado, valor_titulo, vencimento_titulo, valor_boleto, vencimento_boleto,
                  delta_valor, delta_percentual, delta_dias, sinais, tier, emissor_chave, decisao,
                  decidido_por, decidido_em, motivo, confirmacao_emissor_id, origem_decisao_id,
-                 transferida_por)
+                 transferida_por, reconhecimento_tipo, reconhecimento_motivo,
+                 reconhecimento_delta_dias_visto, reconhecimento_valor_boleto_visto_centavos,
+                 reconhecido_por, reconhecido_em)
              SELECT $novaId::uuid, fil_cod, doc_cod, $titCodNovo, pes_cod, credor, ddc_cod, dit_cod,
                     numero_boleto, codbar_mascarado, valor_titulo, vencimento_titulo, valor_boleto,
                     vencimento_boleto, delta_valor, delta_percentual, delta_dias, sinais, tier,
                     emissor_chave, 'CONFIRMADA', decidido_por, decidido_em, motivo,
-                    confirmacao_emissor_id, id, $ator
+                    confirmacao_emissor_id, id, $ator, reconhecimento_tipo, reconhecimento_motivo,
+                    reconhecimento_delta_dias_visto, reconhecimento_valor_boleto_visto_centavos,
+                    reconhecido_por, reconhecido_em
                FROM sispag_decisao_sugestao_boleto WHERE id = $id::uuid`,
             { novaId, titCodNovo: input.titCodNovo, ator: input.ator, id: antiga.id },
         );
@@ -598,6 +620,14 @@ export default class SugestaoBoletoRepository {
             ...(d.tier ? { tier: d.tier } : {}),
             decididoPor: d.decididoPor,
             ...(d.transferidaPor ? { transferidaPor: d.transferidaPor } : {}),
+            ...(d.reconhecimento
+                ? {
+                      reconhecimento: {
+                          deltaDiasVisto: d.reconhecimento.deltaDiasVisto,
+                          valorBoletoVisto: d.reconhecimento.valorBoletoVisto,
+                      },
+                  }
+                : {}),
         }));
 
     /** Pares (credor, emissor) VIGENTES no formato que o motor consome. */

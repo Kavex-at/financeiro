@@ -380,3 +380,62 @@ describe('TitulosAbaSituacao: seleção e lotes por filial', () => {
     expect(props.onFormarAutomaticos).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('TitulosAbaSituacao — prazo efetivo do boleto sugerido (I19t)', () => {
+  const jomed = TITULOS_FIXTURE.find((t) => t.docCod === '5544') as (typeof TITULOS_FIXTURE)[number]
+  const DIA = 86_400_000
+  const clone = (
+    docCod: string,
+    credor: string,
+    dias: number,
+    prazoBoleto: NonNullable<(typeof jomed)['prazoBoleto']>,
+  ) => ({
+    ...jomed,
+    docCod,
+    credor,
+    valor: 5000,
+    diasAteVencimento: dias,
+    vencimento: Date.UTC(2026, 9, 20) + dias * DIA,
+    prazoBoleto,
+  })
+  const puxado = clone('7001', 'CREDOR PUXADO', 2, {
+    prazoEfetivo: '2026-10-20',
+    origem: 'BOLETO_SUGERIDO',
+    vencimentoTitulo: '2026-10-22',
+    vencimentoBoleto: '2026-10-20',
+    totalCandidatos: 2,
+    perdido: false,
+  })
+  const perdido = clone('7002', 'CREDOR PERDIDO', 3, {
+    prazoEfetivo: '2026-10-23',
+    origem: 'TITULO',
+    vencimentoTitulo: '2026-10-23',
+    perdido: true,
+  })
+
+  it('faixa: o título que vence hoje pelo boleto aparece com a causa e "N candidatos"', () => {
+    montar({ titulos: [...TITULOS_FIXTURE, puxado] })
+    const faixa = screen.getByRole('region', { name: 'Bloqueados que vencem hoje' })
+    expect(within(faixa).getByText(/3 bloqueados vencem hoje/)).toBeInTheDocument()
+    expect(
+      within(faixa).getByText('Boleto sugerido vence hoje · título vence 22/10 · 2 candidatos'),
+    ).toBeInTheDocument()
+  })
+
+  it('perdido: linha separada "resolver no portal do banco", fora da faixa de hoje, sem botão de boleto', () => {
+    montar({ titulos: [...TITULOS_FIXTURE, perdido] })
+    const faixa = screen.getByRole('region', { name: 'Bloqueados que vencem hoje' })
+    expect(within(faixa).queryByText(/CREDOR PERDIDO/)).not.toBeInTheDocument()
+    expect(within(faixa).getByText(/2 bloqueados vencem hoje/)).toBeInTheDocument()
+    const separada = screen.getByRole('region', { name: 'Boletos perdidos' })
+    expect(within(separada).getByText(/CREDOR PERDIDO/)).toBeInTheDocument()
+    expect(within(separada).getAllByText(/resolver no portal do banco/i).length).toBeGreaterThan(0)
+    expect(within(separada).queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  it('só perdido, sem ninguém vencendo hoje: a faixa de hoje some e a linha separada fica', () => {
+    montar({ titulos: [perdido] })
+    expect(screen.queryByRole('region', { name: 'Bloqueados que vencem hoje' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Boletos perdidos' })).toBeInTheDocument()
+  })
+})

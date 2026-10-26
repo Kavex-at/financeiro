@@ -325,7 +325,11 @@ export function TabelaTitulos({
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{formatBRL(t.valor)}</TableCell>
                     <TableCell>
-                      <VencimentoCelula vencimento={t.vencimento} dias={t.diasAteVencimento} />
+                      <VencimentoCelula
+                        vencimento={t.vencimento}
+                        dias={t.diasAteVencimento}
+                        titulo={t}
+                      />
                     </TableCell>
                     <TableCell>
                       <FormaPagamentoBadge

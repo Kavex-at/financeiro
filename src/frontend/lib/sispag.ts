@@ -189,9 +189,38 @@ export interface CriarLotesPorFilialResult {
   lotes: LoteCriadoPorFilial[]
 }
 
+/**
+ * Prazo efetivo do título pelo boleto sugerido (I19t, ADR-0078) — espelho de
+ * `domain/interface/sispag/PrazoBoleto.ts`. DERIVADO no servidor, nunca persistido. Datas são
+ * dias civis `YYYY-MM-DD` (BRT): a tela compara strings e nunca reconverte instante.
+ */
+export const ORIGEM_PRAZO = {
+  TITULO: 'TITULO',
+  BOLETO_SUGERIDO: 'BOLETO_SUGERIDO',
+} as const
+export type OrigemPrazo = (typeof ORIGEM_PRAZO)[keyof typeof ORIGEM_PRAZO]
+
+export interface PrazoBoleto {
+  /** `min(vencimento do título, prazo final do candidato acionável)`. */
+  prazoEfetivo: string
+  origem: OrigemPrazo
+  vencimentoTitulo: string
+  /** Vencimento da barra que puxou o prazo (só com `BOLETO_SUGERIDO`). */
+  vencimentoBoleto?: string
+  /** Candidatos acionáveis quando há mais de um (ambíguos seguros). */
+  totalCandidatos?: number
+  /** Boleto perdido: resolver no portal do banco. NÃO é o motivo `VENCIDO` (I19e). */
+  perdido: boolean
+}
+
 export interface TituloAPagar {
   /** Situação de pagamento (ADR-0075). Opcional para tolerar backend antigo. */
   situacaoPagamento?: SituacaoPagamento
+  /**
+   * Prazo efetivo pelo boleto sugerido (I19t). Ausente = backend antigo ou fonte `BOLETO`
+   * indisponível: a tela cai no vencimento do título.
+   */
+  prazoBoleto?: PrazoBoleto
 
   docCod: string
   titCod: string
@@ -2318,6 +2347,13 @@ export const sugestaoBoletoSchema = z.object({
     confirmavel: z.boolean(),
     /** Dias vencido na data de débito (derivado, ≥ 0); ausente em resposta antiga. */
     diasVencidoNoDebito: z.number().optional(),
+    /** Vencimento da barra rolado ao próximo dia útil bancário (I15h); ausente em resposta antiga. */
+    prazoFinalBoleto: z.string().optional(),
+    /**
+     * Reconhecimento que confirmar este par exige (I15q, ADR-0078). `DATA_DIVERGENTE` = valor igual
+     * e data fora da janela: ack tipado (checkbox + motivo). Ausente em backend antigo = `NENHUM`.
+     */
+    exigeReconhecimento: z.enum(['NENHUM', 'DATA_DIVERGENTE']).optional(),
   }),
   estado: z.enum(['SUGERIDA', 'CONFIRMADA']),
   motivo: z.string().optional(),
@@ -2527,6 +2563,8 @@ export const CODIGOS_ERRO_SUGESTAO_BOLETO = {
   MOTIVO_OBRIGATORIO: 'CONFIRMACAO_EMISSOR_MOTIVO_OBRIGATORIO', // 422
   VENCIDO: 'BOLETO_VENCIDO_NAO_CONFIRMAVEL', // 422
   AVISO_OBRIGATORIO: 'RECONHECIMENTO_DE_AVISO_OBRIGATORIO', // 422: reconhecer VENCE_ANTES_DO_TITULO
+  DIVERGENCIA_OBRIGATORIA: 'RECONHECIMENTO_DE_DIVERGENCIA_OBRIGATORIO', // 422: ack tipado ausente
+  DIVERGENCIA_DESATUALIZADA: 'RECONHECIMENTO_DE_DIVERGENCIA_DESATUALIZADO', // 422: Δ ou valor mudou
   TITULO_SEM_SUGESTAO: 'TITULO_SEM_SUGESTAO', // 404
   PAR_NAO_ENCONTRADO: 'CONFIRMACAO_EMISSOR_NAO_ENCONTRADA', // 404
   NAO_CONFIRMADA: 'DECISAO_NAO_CONFIRMADA', // 409: nada a anular neste título
@@ -2568,18 +2606,41 @@ export async function fetchTodasSugestoesBoleto(): Promise<ListagemSugestoesBole
   return fetchSugestoesBoleto({ pagina: 1, tamanho: SUGESTOES_TAMANHO_TELA })
 }
 
+/** Menor/maior motivo do reconhecimento tipado (o servidor tem a mesma regra, I15q). */
+export const MOTIVO_RECONHECIMENTO_MIN = 10
+export const MOTIVO_RECONHECIMENTO_MAX = 500
+
+/**
+ * Reconhecimento TIPADO da divergência de data (I15q, ADR-0078). `deltaDiasVisto` e
+ * `valorBoletoVisto` (centavos) são o que a tela mostrou: o servidor os confere contra a avaliação
+ * recalculada ao vivo e recusa (422) se mudaram. O autor sai do token, nunca do corpo.
+ */
+export interface ReconhecimentoDivergencia {
+  tipo: 'DATA_DIVERGENTE'
+  aceito: true
+  motivo: string
+  deltaDiasVisto: number
+  valorBoletoVisto: number
+}
+
 /**
  * `POST .../confirmar` (`sispag:executar`). Nada é escrito no ERP. `reconheceAvisos` só vai no
- * corpo quando há aviso reconhecido (o servidor confere contra a avaliação recalculada).
+ * corpo quando há aviso reconhecido (o servidor confere contra a avaliação recalculada);
+ * `reconhecimento` só quando o par exige o ack tipado de data divergente.
  */
 export async function confirmarSugestaoBoleto(
   chave: ChaveSugestaoBoleto,
   reconheceAvisos: readonly SinalSugestaoBoleto[] = [],
+  reconhecimento?: ReconhecimentoDivergencia,
 ): Promise<ResultadoDecisaoBoleto> {
   return autorizacaoRequest(
     `${sugestoesBase}/confirmar`,
     resultadoDecisaoBoletoSchema,
-    post(reconheceAvisos.length > 0 ? { ...chave, reconheceAvisos } : chave),
+    post({
+      ...chave,
+      ...(reconheceAvisos.length > 0 ? { reconheceAvisos } : {}),
+      ...(reconhecimento ? { reconhecimento } : {}),
+    }),
   )
 }
 

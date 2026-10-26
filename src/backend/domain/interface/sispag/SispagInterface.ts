@@ -1,4 +1,5 @@
 import type { PayeeItemWarning } from './AuthorizedPayeeInterface.js';
+import type { PrazoBoleto } from './PrazoBoleto.js';
 import type { ProntidaoLote, ResumoSituacao, SituacaoPagamento } from './SituacaoPagamento.js';
 import type { GrupoNoLote } from './GrupoNoLoteInterface.js';
 /**
@@ -62,6 +63,8 @@ export interface TituloAPagar {
     tpdDesNome?: string;
     /** Situação de pagamento (ADR-0075): calculada no painel, nunca persistida. */
     situacaoPagamento?: SituacaoPagamento;
+    /** Prazo efetivo pelo boleto sugerido (I19t, ADR-0078). Derivado, nunca persistido. */
+    prazoBoleto?: PrazoBoleto;
 }
 
 /** Referência ao lote RASCUNHO que contém um título (projeção de `ItemLote` no painel). */
@@ -504,8 +507,24 @@ export const VINCULO_ORIGEM = {
 
 export type VinculoOrigem = (typeof VINCULO_ORIGEM)[keyof typeof VINCULO_ORIGEM];
 
+/** Caminho pelo qual o código foi vinculado (I17o, ADR-0078; paridade com o CHECK da 0091). */
+export const VINCULO_CAMINHO = {
+    /** Passo 2 original: valor igual, Δdias ∈ [0,5]. */
+    JANELA_PADRAO: 'JANELA_PADRAO',
+    /** Valor igual, Δdias ∈ [-10,-1] ∪ [6,10], com reconhecimento tipado (I15q). */
+    DATA_DIVERGENTE: 'DATA_DIVERGENTE',
+} as const;
+
+export type VinculoCaminho = (typeof VINCULO_CAMINHO)[keyof typeof VINCULO_CAMINHO];
+
 export interface VinculoCodigoBarrasItem {
     origem: VinculoOrigem;
+    /** Ausente = vínculo anterior à 0091 (equivale a `JANELA_PADRAO`). */
+    caminho?: VinculoCaminho;
+    /** Vencimento da barra − vencimento do título, em dias (só quando `caminho` existe). */
+    deltaDias?: number;
+    /** Decisão cujo reconhecimento autorizou o caminho `DATA_DIVERGENTE` (I15q). */
+    reconhecimentoId?: string;
     /** `DecisaoSugestaoBoleto` que autorizou (só `DECISAO_HUMANA`). */
     decisaoId?: string;
     /** Máscara 5+4 (I17j). */

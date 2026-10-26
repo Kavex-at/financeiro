@@ -1,7 +1,7 @@
 ---
 name: DecisaoSugestaoBoleto
 type: entity
-ontology_version: "0.45.0"
+ontology_version: "0.49.0"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -12,13 +12,13 @@ related_files:
   - "src/backend/domain/repository/sispag/SugestaoBoletoRepository.ts"
   - "src/backend/domain/service/sispag/BoletoSuggestionService.ts"
   - "src/frontend/app/sispag/components/SugestaoBoletoPainel.tsx"
-properties: [id, filCod, docCod, titCod, pesCod, credor, ddcCod, ditCod, numeroBoleto, codbarMascarado, valorTitulo, vencimentoTitulo, valorBoleto, vencimentoBoleto, deltaValor, deltaPercentual, deltaDias, sinais, tier, emissorChave, decisao, decididoPor, decididoEm, motivo, confirmacaoEmissorId, anuladaPor, anuladaEm, motivoAnulacao, tipoAnulacao, origemDecisaoId, transferidaPor, versao]
+properties: [id, filCod, docCod, titCod, pesCod, credor, ddcCod, ditCod, numeroBoleto, codbarMascarado, valorTitulo, vencimentoTitulo, valorBoleto, vencimentoBoleto, deltaValor, deltaPercentual, deltaDias, sinais, tier, emissorChave, decisao, decididoPor, decididoEm, motivo, confirmacaoEmissorId, anuladaPor, anuladaEm, motivoAnulacao, tipoAnulacao, origemDecisaoId, transferidaPor, reconhecimento, versao]
 relationships:
   - "DecisaoSugestaoBoleto N—1 TituloAPagar (chave filCod/docCod/titCod; vínculo lógico, sem escrita no título)"
   - "DecisaoSugestaoBoleto N—1 BoletoDda (chave ddcCod/ditCod; snapshot — o pool pode mudar)"
   - "DecisaoSugestaoBoleto N—0..1 ConfirmacaoEmissorBoleto (a confirmação que esta decisão criou ou reutilizou; só quando decisao = CONFIRMADA)"
   - "DecisaoSugestaoBoleto 0..1—0..1 DecisaoSugestaoBoleto (origemDecisaoId: a decisão do título antigo que esta herdou na renegociação I18j; ADR-0074, implemented, migration 0088)"
-last_review: 2026-10-20
+last_review: 2026-10-26
 universality_evidence:
   - "Mesmas fontes de ConfirmacaoEmissorBoleto (entrevista 2026-10-14; sondagens PRD 2026-10-13/14)"
   - "Conceito universal: toda conciliação assistida guarda QUEM aprovou QUAL par com QUE evidência (trilha de auditoria)"
@@ -45,7 +45,7 @@ universality_evidence:
 | `numeroBoleto` · `codbarMascarado` | string? · string | `ditEspNumero` do boleto; barras só mascaradas (emissor + últimos dígitos). A linha digitável completa não é persistida. |
 | `valorTitulo` · `vencimentoTitulo` · `valorBoleto` · `vencimentoBoleto` | number · Date · number · Date | Snapshot na hora da decisão. Datas como data civil (UTC meia-noite, BRT). |
 | `deltaValor` · `deltaPercentual` · `deltaDias` | number · number · number | **Com sinal**, boleto − título (mesma convenção de `diferencaDias`). Mostrados e gravados; **nunca** abençoados pelo par (I15d). |
-| `sinais` | lista | Ex.: `VALOR_IGUAL`, `VALOR_ATE_5_CENTAVOS`, `MESMO_DIA`, `DIAS_DEPOIS`, `NUMERO_IGUAL`, `EMISSOR_CONFIRMADO`; (ADR-0072, `planned`) `VENCE_ANTES_DO_TITULO` e `RECONHECEU_VENCE_ANTES` (reconhecimento explícito do aviso, I15o). Sem estado novo; se `sinais` não for lista/JSON livre, a migration mínima é do TaskScoper. |
+| `sinais` | lista | Ex.: `VALOR_IGUAL`, `VALOR_ATE_5_CENTAVOS`, `MESMO_DIA`, `DIAS_DEPOIS`, `NUMERO_IGUAL`, `EMISSOR_CONFIRMADO`; (ADR-0072, `planned`) `VENCE_ANTES_DO_TITULO` e `RECONHECEU_VENCE_ANTES` (reconhecimento explícito do aviso, I15o). (ADR-0078, `implemented`) `DATA_DIVERGENTE_RECONHECIDA` (implica `RECONHECEU_VENCE_ANTES` quando Δ < 0). Sem estado novo; se `sinais` não for lista/JSON livre, a migration mínima é do TaskScoper. |
 | `tier` | `CONHECIDO \| FORTE \| ATENCAO` | Derivado na hora da decisão (regra I15c). |
 | `emissorChave` | string | Chave do emissor derivada do `codbar` do boleto (par com `pesCod`). |
 | `decisao` | `CONFIRMADA \| REJEITADA \| ANULADA` | `CONFIRMADA → ANULADA` é a única transição; `REJEITADA` e `ANULADA` são terminais. Ver "Estados". |
@@ -55,6 +55,7 @@ universality_evidence:
 | `anuladaPor` · `anuladaEm` · `motivoAnulacao` | string? · Date? · string? | Todos preenchidos em `ANULADA` e só nela (CHECK). `anuladaPor` nunca `unknown`; nunca `sistema`, **exceto** com `tipoAnulacao = TITULO_RENEGOCIADO` (ADR-0074, M1; CHECK da 0084 relaxado só para esse caso na migration 0088). Motivo de 10 a 500 caracteres; na cascata é `par revogado: <motivo da revogação>`; na renegociação, `título renegociado X/Y → X/Z, frnCod N`. |
 | `tipoAnulacao` | enum? | `MANUAL \| PAR_REVOGADO \| TITULO_RENEGOCIADO` (ADR-0074, `implemented` (migration 0088); legado sem backfill ⇒ derivado do motivo). Preenchido só em `ANULADA`. |
 | `origemDecisaoId` · `transferidaPor` | string? · string? | Só na decisão nascida da transferência (I18j): a decisão do título antigo e o ator `sistema`. Nulos em decisão tomada por pessoa. (ADR-0074, `planned`) |
+| `reconhecimento` | objeto? | `{ tipo: DATA_DIVERGENTE, motivo (10–500), deltaDiasVisto, valorBoletoVisto, reconhecidoPor, reconhecidoEm }` (colunas nuláveis, **migration 0091**, ADR-0078, `implemented` Fase 1). Preenchido só em `CONFIRMADA` com `exigeReconhecimento` (I15q); imutável depois (reconfirmar cria linha nova, I15l). Autor = JWT. **Validade é derivada** (`reconhecimentoValido`), nunca coluna. |
 | `versao` | number | Lock otimista da anulação (`UPDATE ... WHERE versao = ? AND decisao = 'CONFIRMADA'`). |
 
 ## Estados (I15l)
@@ -99,6 +100,8 @@ sob par `REVOGADA`.
 (`VINCULO_SIMULADO`/`VINCULO_APLICADO`/`VINCULO_FALHOU`) e de `ItemLote.vinculoCodigoBarras`. **Não existe**
 estado `APLICADO_NO_ERP` (a aplicação é por remessa × tentativa; a decisão sobrevive a lote cancelado).
 `decisao` segue `CONFIRMADA | REJEITADA | ANULADA`.
+
+**Reconhecimento da divergência de data (ADR-0078, `implemented` Fase 1; a retirada do vínculo, I17l, segue `planned`) — derivados, não persistidos:** `exigeReconhecimento ∈ {NENHUM, DATA_DIVERGENTE}` (por candidato, recalculado ao vivo; I15m) e `reconhecimentoValido` (verdadeiro enquanto `Δdias` e `valorBoleto` atuais forem iguais aos gravados em `reconhecimento`; I15q). Reconhecimento inválido torna a decisão `orfa` com `motivoOrfa` "reconhecimento de data divergente invalidado" (I15l/I19i) e retira o vínculo (I17l). **Não existe** estado `CONFIRMADA_COM_RESSALVA`/`AGUARDANDO_ACK`.
 
 **Ajuste de centavos (ADR-0074, `implemented`) — derivado, não persistido:** `ajuste` =
 `NAO_APLICAVEL | DESLIGADO | AGUARDANDO | SIMULADO | EM_ANDAMENTO | AJUSTADO | AGUARDANDO_APROVACAO_MANUAL |

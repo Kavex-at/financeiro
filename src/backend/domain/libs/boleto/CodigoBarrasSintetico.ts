@@ -14,6 +14,8 @@ export interface ParametrosBarrasSinteticas {
     banco?: string;
     /** Varia o campo livre para gerar códigos distintos com o mesmo valor/data. */
     serie?: number;
+    /** Força o fator de vencimento (ex.: `0` = sem vencimento), ignorando `vencimento`. */
+    fator?: number;
 }
 
 /**
@@ -37,7 +39,7 @@ export default class CodigoBarrasSintetico {
             .padEnd(25, '0');
         const corpo =
             `${p.banco ?? '341'}9` +
-            String(CodigoBarrasSintetico.fator(p.vencimento)).padStart(4, '0') +
+            String(p.fator ?? CodigoBarrasSintetico.fator(p.vencimento)).padStart(4, '0') +
             String(Math.round(p.valor * 100)).padStart(10, '0') +
             livre;
         return `${corpo.slice(0, 4)}${CodigoBarrasSintetico.dvGeral(corpo)}${corpo.slice(4)}`;

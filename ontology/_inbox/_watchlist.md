@@ -283,3 +283,14 @@
 - **Boleto digitado fora do DDA (P1-3 b)** — REJECT-PREMATURE.
 - **Subconjunto livre (subset-sum) na sugestão** — 922/2369 falsos (M1); só com outra evidência.
 - **Universalidade do `GrupoBoleto`/I21** — 1 cliente; revisar com o Francinei (não bloqueante).
+
+## sispag-vinculo-data-divergente (2026-10-26, ADR-0078)
+
+- **Fase 2: ajustar a data do título** (`fin026/alteraDataVencimento` ou `fin070`) — REJECT-PREMATURE;
+  pré-requisito só se a medição V12 mostrar J ≠ barra.
+- **Boleto vencido na data de débito (juros/multa)** — REJECT-PREMATURE (P0-3): segue `VENCIDO_INFORMATIVO`.
+- **`|Δdias| > 10`** — REJECT-VOLATILE (P0-2).
+- **Segunda pessoa para o ack da divergência** — REJECT-PREMATURE; reservada ao passo 3 (I15g).
+- **Δ > 0: débito na data do título ou da barra** — em aberto, depende de V12 (I17p).
+- **Desempate da I16d.1** — pendência registrada na entrevista, fora desta fatia.
+- **Universalidade** — 1 cliente; revisar com o Francinei (fator de vencimento é norma FEBRABAN).

@@ -6,8 +6,10 @@ import type {
   SinalSugestaoBoleto,
   SituacaoSugestaoTitulo,
   ModoAjusteCentavos,
+  ReconhecimentoDivergencia,
   SugestaoBoleto,
 } from '@/lib/sispag'
+import { MOTIVO_RECONHECIMENTO_MAX, MOTIVO_RECONHECIMENTO_MIN } from '@/lib/sispag'
 import { formatBRL } from '@/lib/utils'
 
 const numero = (n: number, casas: number) =>
@@ -184,9 +186,52 @@ export const mensagemVenceAntes = (
   return `${inicio} O débito está previsto para ${diaMes(ctx.dataDebito)}, dentro do prazo do boleto, mas se o pagamento atrasar ele vencerá antes do título: pode haver juros e multa. Confirmar não faz o boleto sair na remessa.`
 }
 
-/** O candidato exige reconhecimento ao confirmar (o servidor confere de novo). */
+/**
+ * O candidato exige reconhecimento ao confirmar (o servidor confere de novo): o aviso simples de
+ * vence-antes (I15o) ou o ack TIPADO de data divergente (I15q).
+ */
 export const exigeReconhecimento = (c: Pick<CandidatoTituloBoleto, 'avaliacao'>): boolean =>
-  c.avaliacao.sinais.includes('VENCE_ANTES_DO_TITULO')
+  c.avaliacao.sinais.includes('VENCE_ANTES_DO_TITULO') || exigeReconhecimentoTipado(c)
+
+/**
+ * O par exige o reconhecimento TIPADO da divergência de data (I15q, ADR-0078): valor igual e
+ * Δdias fora da janela padrão (Δ<0 ou Δ>5). Substitui o aviso simples nesse caso; o Δ<0 com valor
+ * diferente segue no aviso simples. Backend antigo (sem o campo) nunca pede o tipado.
+ */
+export function exigeReconhecimentoTipado(c: Pick<CandidatoTituloBoleto, 'avaliacao'>): boolean {
+  return c.avaliacao.exigeReconhecimento === 'DATA_DIVERGENTE'
+}
+
+/**
+ * O ack tipado que a tela envia: o que ela EXIBE (Δ dias e valor do boleto em centavos), nunca um
+ * recálculo — o servidor confere com a avaliação ao vivo e recusa se algo mudou (anti-TOCTOU).
+ */
+export const montarReconhecimentoDivergencia = (
+  c: Pick<CandidatoTituloBoleto, 'avaliacao' | 'valorBoleto'>,
+  motivo: string,
+): ReconhecimentoDivergencia => ({
+  tipo: 'DATA_DIVERGENTE',
+  aceito: true,
+  motivo: motivo.trim(),
+  deltaDiasVisto: c.avaliacao.deltaDias,
+  valorBoletoVisto: Math.round(c.valorBoleto * 100),
+})
+
+/** Motivo válido do ack tipado (mesma regra do servidor: 10 a 500 caracteres sem as pontas). */
+export const motivoReconhecimentoValido = (motivo: string): boolean => {
+  const n = motivo.trim().length
+  return n >= MOTIVO_RECONHECIMENTO_MIN && n <= MOTIVO_RECONHECIMENTO_MAX
+}
+
+/** Texto do diálogo do ack tipado: a data do boleto frente à do título, com o sentido do Δ. */
+export const mensagemDivergenciaData = (
+  c: Pick<CandidatoTituloBoleto, 'avaliacao' | 'vencimentoBoleto'>,
+  ctx: { vencimentoTitulo: string },
+): string => {
+  const n = Math.abs(c.avaliacao.deltaDias)
+  const sentido = c.avaliacao.deltaDias < 0 ? 'antes do' : 'depois do'
+  return `O valor do boleto é igual ao do título, mas ele vence em ${diaMes(c.vencimentoBoleto)}, ${dias(n)} ${sentido} título (${diaMes(ctx.vencimentoTitulo)}). Confirme o vencimento no portal do banco antes de reconhecer.`
+}
 
 /**
  * Um candidato do desfecho no formato que o painel já renderiza. Confirmada e órfã vêm com

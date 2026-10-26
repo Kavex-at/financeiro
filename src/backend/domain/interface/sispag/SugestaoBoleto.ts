@@ -74,6 +74,11 @@ export const SINAL_SUGESTAO = {
     /** Gravado no snapshot da decisão quando o analista reconheceu `VENCE_ANTES_DO_TITULO`. */
     RECONHECEU_VENCE_ANTES: 'RECONHECEU_VENCE_ANTES',
     /**
+     * Gravado no snapshot da decisão quando a analista deu o reconhecimento TIPADO da divergência
+     * de data (I15q, ADR-0078). Informativo: a prova é a propriedade `reconhecimento` da decisão.
+     */
+    DATA_DIVERGENTE_RECONHECIDA: 'DATA_DIVERGENTE_RECONHECIDA',
+    /**
      * Âncora DPS direta (I15p(1), ADR-0073): o número do boleto é o DPS do título, lido do PDF da
      * NFS-e, seguido de `000`. Âncora como `NUMERO_IGUAL`: não sobe tier nem alarga limite.
      */
@@ -114,6 +119,17 @@ export interface AvaliacaoSugestaoEntrada {
     ordemDps?: boolean;
 }
 
+/**
+ * Reconhecimento exigido para confirmar (I15m/I15q, ADR-0078): derivado por candidato, nunca estado
+ * nem persistido. `DATA_DIVERGENTE` = valor igual em centavos com Δdias ∈ [-10,-1] ∪ [6,10] e boleto
+ * ainda vigente na data de débito.
+ */
+export const EXIGE_RECONHECIMENTO = {
+    NENHUM: 'NENHUM',
+    DATA_DIVERGENTE: 'DATA_DIVERGENTE',
+} as const;
+export type ExigeReconhecimento = (typeof EXIGE_RECONHECIMENTO)[keyof typeof EXIGE_RECONHECIMENTO];
+
 export interface AvaliacaoSugestao {
     resultado: ResultadoSugestao;
     /** boleto − título, em reais (2 casas). */
@@ -130,6 +146,10 @@ export interface AvaliacaoSugestao {
      * ≥ 0). DERIVADO, nunca persistido (I15o): 0 quando o boleto ainda vale no débito.
      */
     diasVencidoNoDebito: number;
+    /** Vencimento da barra rolado ao próximo dia útil bancário (I15h, ADR-0078). Ausente se a data é inválida. */
+    prazoFinalBoleto?: string;
+    /** Reconhecimento que a confirmação deste par exige (I15q). Derivado, nunca persistido. */
+    exigeReconhecimento: ExigeReconhecimento;
 }
 
 /** Chave de um boleto do pool `fin124`. */
@@ -165,6 +185,11 @@ export interface DecisaoConfirmadaChaveada extends DecisaoChaveada {
     decididoPor?: string;
     /** `sistema` quando a decisão foi transferida ao título renegociado (ADR-0074 M1). */
     transferidaPor?: string;
+    /**
+     * O que a analista viu ao reconhecer a divergência de data (I15q, ADR-0078): o motor o confere
+     * com o Δdias e o valor de AGORA e, se mudaram, mostra a decisão como órfã. Valor em centavos.
+     */
+    reconhecimento?: { deltaDiasVisto: number; valorBoletoVisto: number };
 }
 
 /** Par (credor, emissor) `VIGENTE`. */
@@ -186,6 +211,10 @@ export interface DpsConhecido {
     nfse?: string;
     dps: string;
 }
+
+/** `motivoOrfa` quando o reconhecimento tipado deixa de valer (I15q/I19i, ADR-0078). */
+export const MOTIVO_ORFA_RECONHECIMENTO_INVALIDADO =
+    'Reconhecimento de data divergente invalidado: o vencimento do título ou o valor do boleto mudaram depois da confirmação. Anule a confirmação e confirme de novo com um novo reconhecimento.';
 
 /** Estado da sugestão devolvida para um título. */
 export const ESTADO_SUGESTAO = {

@@ -454,6 +454,30 @@ describe('VinculoCodigoBarrasService.executar (I17e–I17h)', () => {
         expect(h.sugestoes.listarDecisoes).toHaveBeenCalled();
     });
 
+    it('7º check (I17d(7)): fator da barra ≠ data do DDA ⇒ item retirado com motivo nomeado, sem PUT', async () => {
+        const barra = CodigoBarrasSintetico.barras({
+            valor: 1028.8,
+            vencimento: '2026-10-20',
+            serie: 4,
+        });
+        const h = umItem({
+            boletoPool: {
+                '10:3': {
+                    ddcCod: 10,
+                    ditCod: 3,
+                    valor: 1028.8,
+                    vencimento: '2026-10-23',
+                    codbar: barra,
+                },
+            },
+        });
+        const r = await h.service.executar({ lote: h.lote, ...CTX });
+        expect(r.vinculados).toHaveLength(0);
+        expect(r.retirar[0]).toMatchObject({ motivo: 'FATOR_VENCIMENTO_DIVERGE' });
+        expect(h.write.editarItemDoRascunho).not.toHaveBeenCalled();
+        expect(JSON.stringify(r.retirar)).not.toContain(barra);
+    });
+
     it('lote com mais de 500 itens: o vínculo ABORTA (retomável), nunca retira, nenhuma chamada ao ERP', async () => {
         const itens = Array.from({ length: 501 }, (_v, i) => itemLote(String(700 + i)));
         itens[0] = itemLote('636');

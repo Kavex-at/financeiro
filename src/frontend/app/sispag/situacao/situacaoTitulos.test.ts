@@ -1,9 +1,16 @@
-import { DONO_PAGAMENTO, MOTIVO_PAGAMENTO, SUGESTAO_BOLETO_SEM_DDA } from '@/lib/sispag'
+import {
+  DONO_PAGAMENTO,
+  MOTIVO_PAGAMENTO,
+  SUGESTAO_BOLETO_SEM_DDA,
+} from '@/lib/sispag'
 import { RESUMO_FIXTURE, TITULOS_FIXTURE } from '../__fixtures__/situacaoPagamento'
 import {
   boletoSemDdaPorSugestao,
   aplicarFiltros,
+  bloqueadosPerdidos,
   bloqueadosQueVencemHoje,
+  type FiltrosTitulos,
+  faixaDoTitulo,
   contarFiltrosDeColuna,
   ehBloqueado,
   ehPronto,
@@ -261,5 +268,80 @@ describe('boleto sem DDA por sugestão (I19r)', () => {
     expect(docs(comVencido).sort()).toEqual(['5298', '5311', '5549'])
     // Sem o motivo marcado, o sub-chip que sobrou não esconde nada.
     expect(aplicarFiltros(TITULOS_FIXTURE, f)).toHaveLength(9)
+  })
+})
+
+// ---------------------------------------------------------------- prazo efetivo (I19t, ADR-0078)
+
+describe('prazo efetivo do boleto sugerido (I19t)', () => {
+  // hoje = 2026-10-20 (HOJE_FIXTURE). O JOMED (5544) vence hoje; clonamos um bloqueado qualquer.
+  const base = TITULOS_FIXTURE.find((t) => t.docCod === '5544') as (typeof TITULOS_FIXTURE)[number]
+  const comPrazo = (
+    dias: number,
+    prazo: NonNullable<(typeof base)['prazoBoleto']>,
+    docCod = 'P1',
+  ): (typeof base) => ({
+    ...base,
+    docCod,
+    diasAteVencimento: dias,
+    vencimento: Date.UTC(2026, 9, 20) + dias * 86_400_000,
+    prazoBoleto: prazo,
+  })
+  const doBoleto = comPrazo(2, {
+    prazoEfetivo: '2026-10-20',
+    origem: 'BOLETO_SUGERIDO',
+    vencimentoTitulo: '2026-10-22',
+    vencimentoBoleto: '2026-10-20',
+    perdido: false,
+  })
+  const perdidoInformativo = comPrazo(
+    3,
+    { prazoEfetivo: '2026-10-23', origem: 'TITULO', vencimentoTitulo: '2026-10-23', perdido: true },
+    'P2',
+  )
+  const perdidoPuxado = comPrazo(
+    2,
+    {
+      prazoEfetivo: '2026-10-18',
+      origem: 'BOLETO_SUGERIDO',
+      vencimentoTitulo: '2026-10-22',
+      vencimentoBoleto: '2026-10-18',
+      perdido: true,
+    },
+    'P3',
+  )
+  const tudo = [doBoleto, perdidoInformativo, perdidoPuxado]
+
+  it('faixa vermelha: o bloqueado cujo prazo do boleto é hoje entra, o perdido não', () => {
+    expect(docs(bloqueadosQueVencemHoje(tudo))).toEqual(['P1'])
+  })
+
+  it('linha separada: os bloqueados perdidos, maior valor primeiro', () => {
+    expect(docs(bloqueadosPerdidos(tudo)).sort()).toEqual(['P2', 'P3'])
+    expect(bloqueadosPerdidos([doBoleto])).toEqual([])
+  })
+
+  it('faixa HOJE usa o prazo efetivo; perdido cai em Vencidos sem virar HOJE', () => {
+    const f = (faixas: FiltrosTitulos['faixas']) => docs(aplicarFiltros(tudo, com({ faixas })))
+    expect(f(['HOJE'])).toEqual(['P1'])
+    expect(f(['VENCIDO']).sort()).toEqual(['P2', 'P3'])
+    expect(f(['1-2'])).toEqual([])
+  })
+
+  it('de/até compara o prazo efetivo, não o vencimento do título', () => {
+    const r = (vencDe: string, vencAte: string) =>
+      docs(aplicarFiltros(tudo, com({ vencDe, vencAte })))
+    expect(r('2026-10-20', '2026-10-20')).toEqual(['P1'])
+    expect(r('2026-10-22', '2026-10-22')).toEqual([])
+  })
+
+  it('perdido não vira motivo VENCIDO nem some do estado (continua bloqueado pelo título)', () => {
+    expect(situacaoChave(perdidoInformativo)).toBe(situacaoChave(base))
+    expect(ehBloqueado(perdidoInformativo)).toBe(true)
+  })
+
+  it('sem prazoBoleto o comportamento é o do vencimento do título (regressão)', () => {
+    expect(docs(bloqueadosQueVencemHoje(TITULOS_FIXTURE))).toEqual(['5502', '5544'])
+    expect(faixaDoTitulo(base)).toBe('HOJE')
   })
 })

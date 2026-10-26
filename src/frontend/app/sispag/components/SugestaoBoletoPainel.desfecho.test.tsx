@@ -279,4 +279,132 @@ describe('SugestaoBoletoPainel — desfecho do título (ADR-0072)', () => {
       expect(confirmar.mock.calls[0]).toHaveLength(1)
     })
   })
+
+  describe('caso C: valor igual com data divergente exige o reconhecimento TIPADO (I15q)', () => {
+    const casoC = (deltaDias: number, vencimentoBoleto: string) =>
+      desfecho({
+        situacao: 'SO_ATENCAO',
+        avisoVenceAntes: deltaDias < 0 ? 'ATENCAO' : 'NENHUM',
+        vencimentoTitulo: '2026-10-20',
+        dataDebito: '2026-10-20',
+        candidatos: [
+          candidato(1, {
+            ancorado: true,
+            confirmavel: true,
+            motivo: undefined,
+            valorBoleto: 1234.56,
+            vencimentoBoleto,
+            avaliacao: {
+              ...candidato(1).avaliacao,
+              deltaDias,
+              deltaValor: 0,
+              confirmavel: true,
+              sinais: ['EMISSOR_CONFIRMADO', 'VALOR_IGUAL'],
+              exigeReconhecimento: 'DATA_DIVERGENTE',
+            },
+          }),
+        ],
+      })
+    const MOTIVO = 'Fornecedor confirmou a data por telefone'
+
+    it('Δ<0: checkbox + motivo habilitam; envia o ack com Δ e valor VISTOS (centavos)', async () => {
+      confirmar.mockResolvedValue({ criada: true, decisao: {} })
+      renderPainel(casoC(-3, '2026-10-17'))
+      await userEvent.click(screen.getByRole('button', { name: /^Confirmar boleto/ }))
+      const dlg = await screen.findByRole('dialog')
+      expect(within(dlg).getByText('-3 dias')).toBeInTheDocument()
+      expect(within(dlg).getByText(/R\$\s*1\.234,56/)).toBeInTheDocument()
+      const botao = within(dlg).getByRole('button', { name: 'Confirmar' })
+      expect(botao).toBeDisabled()
+      await userEvent.click(within(dlg).getByRole('checkbox'))
+      expect(botao).toBeDisabled() // falta o motivo
+      await userEvent.type(within(dlg).getByRole('textbox'), 'curto')
+      expect(botao).toBeDisabled()
+      await userEvent.clear(within(dlg).getByRole('textbox'))
+      await userEvent.type(within(dlg).getByRole('textbox'), MOTIVO)
+      expect(botao).toBeEnabled()
+      await userEvent.click(botao)
+      await waitFor(() => expect(confirmar).toHaveBeenCalledTimes(1))
+      expect(confirmar.mock.calls[0]).toEqual([
+        { filCod: 1, docCod: '5046', titCod: '1', ddcCod: 152, ditCod: 1 },
+        [],
+        {
+          tipo: 'DATA_DIVERGENTE',
+          aceito: true,
+          motivo: MOTIVO,
+          deltaDiasVisto: -3,
+          valorBoletoVisto: 123456,
+        },
+      ])
+      await waitFor(() => expect(onDecidido).toHaveBeenCalled())
+    })
+
+    it('Δ>5 (fora da janela, antes sem ack) também abre o diálogo tipado', async () => {
+      confirmar.mockResolvedValue({ criada: true, decisao: {} })
+      renderPainel(casoC(7, '2026-10-27'))
+      await userEvent.click(screen.getByRole('button', { name: /^Confirmar boleto/ }))
+      const dlg = await screen.findByRole('dialog')
+      expect(within(dlg).getByText('+7 dias')).toBeInTheDocument()
+      expect(confirmar).not.toHaveBeenCalled()
+      await userEvent.click(within(dlg).getByRole('checkbox'))
+      await userEvent.type(within(dlg).getByRole('textbox'), MOTIVO)
+      await userEvent.click(within(dlg).getByRole('button', { name: 'Confirmar' }))
+      await waitFor(() => expect(confirmar).toHaveBeenCalledTimes(1))
+      expect(confirmar.mock.calls[0]?.[2]).toMatchObject({ deltaDiasVisto: 7 })
+    })
+
+    it('422 desatualizado aparece no diálogo (que continua aberto) e relê a lista', async () => {
+      confirmar.mockRejectedValue(
+        new AutorizacaoApiError(
+          'O vencimento do título ou o valor do boleto mudaram. Recarregue e reconheça de novo.',
+          422,
+          'RECONHECIMENTO_DE_DIVERGENCIA_DESATUALIZADO',
+        ),
+      )
+      renderPainel(casoC(-3, '2026-10-17'))
+      await userEvent.click(screen.getByRole('button', { name: /^Confirmar boleto/ }))
+      const dlg = await screen.findByRole('dialog')
+      await userEvent.click(within(dlg).getByRole('checkbox'))
+      await userEvent.type(within(dlg).getByRole('textbox'), MOTIVO)
+      await userEvent.click(within(dlg).getByRole('button', { name: 'Confirmar' }))
+      expect(await within(dlg).findByRole('alert')).toHaveTextContent('mudaram')
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      expect(onDecidido).toHaveBeenCalled()
+    })
+
+    it('Δ<0 com valor diferente (sem o ack tipado) mantém o aviso simples atual', async () => {
+      confirmar.mockResolvedValue({ criada: true, decisao: {} })
+      renderPainel(
+        desfecho({
+          situacao: 'SO_ATENCAO',
+          avisoVenceAntes: 'ATENCAO',
+          vencimentoTitulo: '2026-10-16',
+          dataDebito: '2026-10-14',
+          candidatos: [
+            candidato(1, {
+              ancorado: true,
+              confirmavel: true,
+              motivo: undefined,
+              vencimentoBoleto: '2026-10-15',
+              avaliacao: {
+                ...candidato(1).avaliacao,
+                deltaDias: -1,
+                deltaValor: 0.03,
+                confirmavel: true,
+                sinais: ['EMISSOR_CONFIRMADO', 'VENCE_ANTES_DO_TITULO'],
+                exigeReconhecimento: 'NENHUM',
+              },
+            }),
+          ],
+        }),
+      )
+      await userEvent.click(screen.getByRole('button', { name: /^Confirmar boleto/ }))
+      const dlg = await screen.findByRole('dialog')
+      expect(within(dlg).queryByRole('textbox')).not.toBeInTheDocument()
+      await userEvent.click(within(dlg).getByRole('checkbox'))
+      await userEvent.click(within(dlg).getByRole('button', { name: 'Confirmar' }))
+      await waitFor(() => expect(confirmar).toHaveBeenCalledTimes(1))
+      expect(confirmar.mock.calls[0]?.[1]).toEqual(['VENCE_ANTES_DO_TITULO'])
+    })
+  })
 })

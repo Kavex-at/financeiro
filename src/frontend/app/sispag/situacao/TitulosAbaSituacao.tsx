@@ -4,13 +4,13 @@ import { AlertTriangle, Layers } from 'lucide-react'
 import * as React from 'react'
 import { Button } from '@/components/ui/button'
 import {
-  formatErpDay,
   type LotePagamento,
   type ResumoSituacao,
   type TituloAPagar,
   type TituloRetidoPorCodigoBarras,
 } from '@/lib/sispag'
 import { ExportarTitulosAPagarBotao } from '../components/ExportarTitulosAPagarBotao'
+import { formatarDia } from '../components/filtrosAbas'
 import { MoverParaLoteDialog } from '../components/MoverParaLoteDialog'
 import type { ResumoDesfecho } from '../components/sugestaoBoleto'
 import { BarraSelecaoLotes } from './BarraSelecaoLotes'
@@ -20,10 +20,12 @@ import { FiltroSituacaoBarra } from './FiltroSituacaoBarra'
 import { PreviaLotesAutomaticos } from './PreviaLotesAutomaticos'
 import { RegrasSituacao } from './RegrasSituacao'
 import { ResultadoLotesDialog } from './ResultadoLotesDialog'
+import { diaDoPrazo } from './prazoTitulo'
 import { ROTULO_FONTE } from './rotulos'
 import { resumirSelecao, selecionavel } from './selecao'
 import {
   bloqueadosPorMotivo,
+  bloqueadosPerdidos,
   bloqueadosQueVencemHoje,
   boletoSemDdaPorSugestao,
   chaveDoTitulo,
@@ -109,8 +111,9 @@ export function TitulosAbaSituacao({
   const sugestoesBoleto = React.useMemo(() => boletoSemDdaPorSugestao(titulos), [titulos])
   const opcoes = React.useMemo(() => opcoesDosFiltros(titulos), [titulos])
   const hoje = React.useMemo(() => bloqueadosQueVencemHoje(titulos), [titulos])
-  // O dia de hoje é o vencimento de qualquer título da faixa (todos vencem hoje, por construção).
-  const dataHoje = formatErpDay(hoje[0]?.vencimento)
+  const perdidos = React.useMemo(() => bloqueadosPerdidos(titulos), [titulos])
+  // O dia de hoje é o prazo efetivo de qualquer título da faixa (todos vencem hoje, por construção).
+  const dataHoje = hoje[0] ? formatarDia(diaDoPrazo(hoje[0])) : ''
   const resumoSelecao = resumirSelecao(selecionadosTitulos, new Set(selecionadosTitulos.map(chaveDoTitulo)))
   const lotesEsperando = lotesIndisponiveis
     ? null
@@ -163,6 +166,7 @@ export function TitulosAbaSituacao({
 
       <FaixaBloqueadosHoje
         titulos={hoje}
+        perdidos={perdidos}
         dataHoje={dataHoje}
         podeExecutar={podeExecutar}
         onVerBoleto={onVerBoleto}

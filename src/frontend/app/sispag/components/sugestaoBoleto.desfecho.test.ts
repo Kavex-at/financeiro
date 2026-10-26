@@ -14,6 +14,10 @@ import {
   desfechoPorTitulo,
   desfechosDeSugestoesLegadas,
   exigeReconhecimento,
+  exigeReconhecimentoTipado,
+  mensagemDivergenciaData,
+  montarReconhecimentoDivergencia,
+  motivoReconhecimentoValido,
   formatDeltaDias,
   formatDeltaValor,
   mensagemVenceAntes,
@@ -263,5 +267,62 @@ describe('adaptações', () => {
     expect(a?.candidatos[0]?.confirmavel).toBe(true)
     expect(b).toMatchObject({ situacao: 'SO_VENCIDA', avisoVenceAntes: 'CRITICO' })
     expect(b?.candidatos[0]?.confirmavel).toBe(false)
+  })
+})
+
+describe('reconhecimento tipado de data divergente (I15q, ADR-0078)', () => {
+  const divergente = (deltaDias: number) => ({
+    valorBoleto: 1234.56,
+    vencimentoBoleto: '2026-10-17',
+    avaliacao: {
+      ...candidato().avaliacao,
+      deltaDias,
+      exigeReconhecimento: 'DATA_DIVERGENTE' as const,
+    },
+  })
+
+  it('o tipado vale para Δ<0 e para Δ>5; backend antigo (sem o campo) nunca pede o tipado', () => {
+    expect(exigeReconhecimentoTipado(divergente(-3))).toBe(true)
+    expect(exigeReconhecimentoTipado(divergente(7))).toBe(true)
+    expect(exigeReconhecimentoTipado({ avaliacao: candidato().avaliacao })).toBe(false)
+    expect(
+      exigeReconhecimentoTipado({
+        avaliacao: { ...candidato().avaliacao, exigeReconhecimento: 'NENHUM' },
+      }),
+    ).toBe(false)
+  })
+
+  it('exigeReconhecimento também vale para o tipado sem o sinal (Δ>5)', () => {
+    expect(exigeReconhecimento(divergente(7))).toBe(true)
+  })
+
+  it('o ack envia o que a tela mostra: Δ com sinal e valor em centavos, motivo sem as pontas', () => {
+    expect(montarReconhecimentoDivergencia(divergente(-3), '  Confirmado por telefone  ')).toEqual({
+      tipo: 'DATA_DIVERGENTE',
+      aceito: true,
+      motivo: 'Confirmado por telefone',
+      deltaDiasVisto: -3,
+      valorBoletoVisto: 123456,
+    })
+  })
+
+  it('motivo: 10 a 500 caracteres depois do trim', () => {
+    expect(motivoReconhecimentoValido('curto')).toBe(false)
+    expect(motivoReconhecimentoValido('   123456789   ')).toBe(false)
+    expect(motivoReconhecimentoValido('1234567890')).toBe(true)
+    expect(motivoReconhecimentoValido('x'.repeat(500))).toBe(true)
+    expect(motivoReconhecimentoValido('x'.repeat(501))).toBe(false)
+  })
+
+  it('mensagem diz o sentido e as datas', () => {
+    expect(mensagemDivergenciaData(divergente(-3), { vencimentoTitulo: '2026-10-20' })).toContain(
+      'vence em 17/10, 3 dias antes do título (20/10)',
+    )
+    expect(
+      mensagemDivergenciaData(
+        { ...divergente(7), vencimentoBoleto: '2026-10-27' },
+        { vencimentoTitulo: '2026-10-20' },
+      ),
+    ).toContain('7 dias depois do título')
   })
 })

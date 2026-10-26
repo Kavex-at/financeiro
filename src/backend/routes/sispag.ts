@@ -913,9 +913,13 @@ const limiteDecisaoBoleto = buildSugestaoBoletoLimiter({}, 'confirmar');
 const limiteCopiaLinha = buildSugestaoBoletoLimiter({}, 'copiar');
 
 /** A decisão para a API: sem a chave do emissor (carrega a conta completa; só a máscara sai). */
-const decisaoParaApi = (d: DecisaoSugestao): Omit<DecisaoSugestao, 'emissorChave'> => {
+const decisaoParaApi = (
+    d: DecisaoSugestao,
+    reconhecimentoValido?: boolean,
+): Omit<DecisaoSugestao, 'emissorChave'> & { reconhecimentoValido?: boolean } => {
     const { emissorChave: _chave, ...resto } = d;
-    return resto;
+    // `reconhecimentoValido` é derivado (I15q): nunca coluna; só sai quando há reconhecimento.
+    return reconhecimentoValido === undefined ? resto : { ...resto, reconhecimentoValido };
 };
 
 // GET /sispag/sugestoes-boleto?filCod=&pesCod=&tier=&situacao=&pagina=&tamanho= — `sispag:ver`.
@@ -962,7 +966,10 @@ router.get(
 
 // POST /sispag/sugestoes-boleto/confirmar — `sispag:executar`. 201 decisão nova · 200 já existia
 // (idempotente) · 409 indisponível/reservado a outro título/não confirmável (fraco, ambíguo,
-// disputado) · 422 boleto vencido ou aviso `VENCE_ANTES_DO_TITULO` sem `reconheceAvisos`.
+// disputado) · 422 boleto vencido, aviso `VENCE_ANTES_DO_TITULO` sem `reconheceAvisos`, divergência de
+// data com valor igual sem `reconhecimento` (`RECONHECIMENTO_DE_DIVERGENCIA_OBRIGATORIO`) ou com
+// `reconhecimento` que não bate com o Δ/valor de agora (`RECONHECIMENTO_DE_DIVERGENCIA_DESATUALIZADO`).
+// A decisão devolvida traz `reconhecimento` e o derivado `reconhecimentoValido` (ADR-0078, I15q).
 router.post(
     '/sugestoes-boleto/confirmar',
     exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
@@ -975,7 +982,7 @@ router.post(
             const r = await sugestoesBoleto().confirmar({ ...body.data, ator: ator(req) });
             res.status(r.criada ? 201 : 200).json({
                 criada: r.criada,
-                decisao: decisaoParaApi(r.decisao),
+                decisao: decisaoParaApi(r.decisao, r.reconhecimentoValido),
             });
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;

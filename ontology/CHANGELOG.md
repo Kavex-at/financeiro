@@ -3,6 +3,34 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.49.0 — SISPAG: vínculo de código de barras com data divergente (2026-10-26, ADR-0078)
+
+Feature: `sispag-vinculo-data-divergente` (`/feature-tweak`). `entity_changed = true`. **Ontologia à frente do
+código** (tudo `planned`). Numeração 0.49.0/ADR-0078/migration ≥ 0091 por colisão com `feat/sispag-boleto-agrupado`
+(0.48.0, ADR-0077, migration 0090): reconferir no rebase.
+
+- **Caminho `DATA_DIVERGENTE` (I17o):** valor igual em centavos (I17b intacta), Δdias ∈ [-10,-1] ∪ [6,10], com
+  reconhecimento tipado válido. Emendas I17a, I17c (passo 2 passa a ler o reconhecimento), I17d (**7º check:**
+  fator de vencimento × DDA), I17k (modo próprio, default `off`, `shadow` registra Δ), I17l (ack inválido retira).
+- **I17p** (guarda de data do `.REM`, fail-closed) e medições HML V10–V12 **a fazer** antes de qualquer código;
+  Δ>0 em aberto até a medição do J.
+- **I15q** reconhecimento tipado (propriedade `DecisaoSugestaoBoleto.reconhecimento` + derivados
+  `reconhecimentoValido`/`exigeReconhecimento`; sem estado novo): substitui o `reconheceAvisos` simples em Δ<0
+  com valor igual; Δ>5 com valor igual também pede ack. Emendas I15c/d (notas), I15h (barra rolada ao próximo dia
+  útil), I15m, I15o.
+- **I8c** data candidata do item = min(título, barra rolada) ≥ hoje; Δ<0 não puxa os demais itens do lote.
+- **I19t `prazoBoleto`** derivado em `TituloAPagar` (faixa "bloqueados vencem hoje", filtro "Vencidos", de/até);
+  "perdido" no filtro "Vencidos" sem virar `VENCIDO`; o "perdido" cobre também o par de valor igual + âncora
+  `VENCIDO_INFORMATIVO` com barra `< hoje` (título a vencer), sem puxar o prazo (G1, 2026-10-26). Emendas I19i/j/r. `VENCIDO` (I19e) e I19b inalteradas.
+- `ItemLote.vinculoCodigoBarras` += `caminho`, `deltaDias`, `reconhecimentoId` (1 migration).
+- Rejeitados (ADR-0078): entidade de reconhecimento, estado novo, persistir `prazoBoleto`, tolerância de valor,
+  envelope > ±10, fase 2, juros/multa.
+- Coverage: contagens inalteradas (regras 32; entidades e ações sem mudança); `open_gap` nas 4 regras.
+- **Fase 1 fechada (T1.13, 2026-10-26): `planned` → `implemented`** em I17d(7), I15h (rolagem), I15m/I15o
+  (`exigeReconhecimento`), I15q, I8c (função pura e janela por lote), I19i e I19t (`prazoBoleto`, backend e frontend, com o
+  "perdido" do G1). **Seguem `planned` (Fase 2, aguardam V10–V12):** I17o/I17p, I17k (modo novo), I17l (ack), emendas
+  de I17a/I17c, I19j (modo do caminho), uso de I8c na formação e Δ>0.
+
 ## v0.48.0 — implementação (2026-10-26)
 
 `GrupoBoleto`, `boleto-agrupado-sispag` (I21a–u) e as cinco ações passam de `planned` a `implemented`; emendas

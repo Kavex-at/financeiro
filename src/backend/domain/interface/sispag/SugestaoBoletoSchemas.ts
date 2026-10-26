@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ESTADO_CONFIRMACAO_EMISSOR } from './ConfirmacaoEmissorBoleto.js';
+import { ESTADO_CONFIRMACAO_EMISSOR, RECONHECIMENTO_TIPO } from './ConfirmacaoEmissorBoleto.js';
 import {
     RESULTADO_SUGESTAO,
     SINAL_SUGESTAO,
@@ -33,6 +33,23 @@ export const ChaveSugestaoBodySchema = z
 export const AVISOS_RECONHECIVEIS = [SINAL_SUGESTAO.VENCE_ANTES_DO_TITULO] as const;
 
 /**
+ * Reconhecimento TIPADO da divergência de data (I15q, ADR-0078). `.strict()`: qualquer campo extra —
+ * inclusive `reconhecidoPor`/`reconhecidoEm` — é 400 (o autor vem do JWT, nunca do corpo).
+ * `deltaDiasVisto` e `valorBoletoVisto` (centavos) são conferidos no servidor contra a avaliação ao
+ * vivo (anti-TOCTOU); o checkbox `aceito` só existe como `true`.
+ */
+export const ReconhecimentoDivergenciaSchema = z
+    .object({
+        tipo: z.literal(RECONHECIMENTO_TIPO.DATA_DIVERGENTE),
+        aceito: z.literal(true),
+        motivo: z.string().trim().min(10).max(500),
+        deltaDiasVisto: z.number().int(),
+        valorBoletoVisto: z.number().int().min(0),
+    })
+    .strict();
+export type ReconhecimentoDivergenciaBody = z.infer<typeof ReconhecimentoDivergenciaSchema>;
+
+/**
  * Body de confirmar: a chave + os avisos reconhecidos. `reconheceAvisos` só existe aqui — rejeitar
  * e copiar-linha continuam `strict` sem o campo. "ator" e qualquer outro campo continuam 400.
  */
@@ -41,6 +58,8 @@ export const ConfirmarSugestaoBodySchema = ChaveSugestaoBodySchema.extend({
         .array(z.enum(AVISOS_RECONHECIVEIS))
         .max(AVISOS_RECONHECIVEIS.length)
         .default([]),
+    /** Obrigatório quando o candidato tem `exigeReconhecimento = DATA_DIVERGENTE` (I15q). */
+    reconhecimento: ReconhecimentoDivergenciaSchema.optional(),
 }).strict();
 
 /** Chave de um título (sem boleto): detalhe de candidatos por título. */
