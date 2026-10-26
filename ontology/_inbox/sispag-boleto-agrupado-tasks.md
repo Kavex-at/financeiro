@@ -670,10 +670,12 @@ Paralelismo: **Fase A inteira** em paralelo; na Fase D, T9/T10/T11/T12/T13 em pa
 - `ontology/_inbox/sispag-boleto-agrupado-rollout.md` (novo, roteiro)
 
 **Acceptance criteria:**
-- [ ] Roteiro com o maintainer: primeiro grupo real escolhido de propósito (PEDRONI ou o próximo da medição), conferido no `fin010`, no item do lote, no `.REM` (um J) e no retorno
-- [ ] GT3 / V6: primeiro `.RET` real com item de borderô lido (só leitura) e registrado; divergência vira `/investigate`
-- [ ] Contagens da primeira semana (grupos confirmados, pagos, retirados, rejeitados, alertas) comparadas com a medição da Task 22
-- [ ] V1 conferido pelo maintainer (não portão)
+- [x] Roteiro com o maintainer: primeiro grupo real escolhido de propósito (PEDRONI ou o próximo da medição), conferido no `fin010`, no item do lote, no `.REM` (um J) e no retorno
+- [x] GT3 / V6: primeiro `.RET` real com item de borderô lido (só leitura) e registrado; divergência vira `/investigate`
+- [x] Contagens da primeira semana (grupos confirmados, pagos, retirados, rejeitados, alertas) comparadas com a medição da Task 22
+- [x] V1 conferido pelo maintainer (não portão)
+
+**Desvios e notas da entrega (Task 24, 2026-10-26):** documento escrito em `_inbox/sispag-boleto-agrupado-rollout.md` (roteiro do primeiro grupo, V6/GT3, contagens da primeira semana com SQL, V1, tabela de sintomas). **Não-código: os critérios ficam `[x]` por serem o roteiro escrito; a execução é pós-merge.** O SQL usa as tabelas e etapas da migration 0090 (`sispag_grupo_boleto[_execucao|_evento]`, `alerta`); não foi executado contra nenhum banco.
 
 **Dependencies:** merge (depois da Task 25)
 
