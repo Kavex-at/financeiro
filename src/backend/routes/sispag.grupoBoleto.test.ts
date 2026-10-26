@@ -113,11 +113,13 @@ const servicos = (
             grupo: { ...GRUPO, estado: 'ANULADO' },
             retiradoDoLoteId: LOTE_ID,
         }),
+        filialDoGrupo: jest.fn().mockResolvedValue(2),
         ...over.grupos,
     };
     const lotes = {
         incluirGrupo: jest.fn().mockResolvedValue({ lote: { id: LOTE_ID }, avisos: [] }),
         removerGrupo: jest.fn().mockResolvedValue({ id: LOTE_ID }),
+        filialDoLote: jest.fn().mockResolvedValue(2),
         ...over.lotes,
     };
     container.registerInstance(GrupoBoletoService, grupos as never);
@@ -256,6 +258,61 @@ describe('allow-list de filiais (filialAuthz)', () => {
             [3],
         );
         expect(s.grupos.confirmar).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        [
+            'POST anular',
+            'POST',
+            `/sispag/grupos-boleto/${GRUPO_ID}/anular`,
+            { motivo: 'boleto pago por fora' },
+        ],
+        ['POST incluir no lote', 'POST', `/sispag/lotes/${LOTE_ID}/grupos`, { grupoId: GRUPO_ID }],
+        [
+            'DELETE retirar do lote',
+            'DELETE',
+            `/sispag/lotes/${LOTE_ID}/grupos/${GRUPO_ID}`,
+            undefined,
+        ],
+    ])('%s: grupo/lote de filial fora da allow-list é 403 FILIAL_NAO_AUTORIZADA e o serviço fica intocado; dentro passa', async (_n, metodo, rota, body) => {
+        const s = servicos();
+        await comApp(
+            VER_EXECUTAR,
+            async (url) => {
+                const r = await enviar(metodo, `${url}${rota}`, body);
+                expect(r.status).toBe(403);
+                expect(await r.json()).toMatchObject({ code: 'FILIAL_NAO_AUTORIZADA' });
+            },
+            [3],
+        );
+        for (const fn of [s.grupos.anular, s.lotes.incluirGrupo, s.lotes.removerGrupo]) {
+            expect(fn).not.toHaveBeenCalled();
+        }
+        await comApp(
+            VER_EXECUTAR,
+            async (url) => {
+                expect((await enviar(metodo, `${url}${rota}`, body)).status).toBe(200);
+            },
+            [2],
+        );
+    });
+
+    it('anular/incluir/retirar de grupo ou lote inexistente não é barrado pelo guard (o serviço responde)', async () => {
+        const s = servicos({
+            grupos: { filialDoGrupo: jest.fn().mockResolvedValue(undefined) },
+            lotes: { filialDoLote: jest.fn().mockResolvedValue(undefined) },
+        });
+        await comApp(
+            VER_EXECUTAR,
+            async (url) => {
+                const r = await enviar('POST', `${url}/sispag/grupos-boleto/${GRUPO_ID}/anular`, {
+                    motivo: 'boleto pago por fora',
+                });
+                expect(r.status).toBe(200);
+            },
+            [3],
+        );
+        expect(s.grupos.anular).toHaveBeenCalledTimes(1);
     });
 
     it('sem allow-list provisionada o comportamento é o de hoje (permitido)', async () => {

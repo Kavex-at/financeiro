@@ -203,6 +203,10 @@ export default class GrupoBoletoService {
         return resultado;
     };
 
+    /** Filial do grupo (para a autorização por filial nas rotas por id); `undefined` se não existe. */
+    public filialDoGrupo = async (grupoId: string): Promise<number | undefined> =>
+        (await this.grupos.buscarPorId(grupoId))?.filCod;
+
     // ── Anular ─────────────────────────────────────────────────────────────────────────────────
 
     public anular = async (input: {
