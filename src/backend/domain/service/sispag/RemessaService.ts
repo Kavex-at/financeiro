@@ -2,6 +2,7 @@ import { inject, injectable } from 'tsyringe';
 import { z } from 'zod';
 import ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
+import GroupedBoletoNotEligibleAtRemittanceError from '../../errors/GroupedBoletoNotEligibleAtRemittanceError.js';
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import LoteAnteriorCanceladoError from '../../errors/LoteAnteriorCanceladoError.js';
 import RemessaEmAndamentoError from '../../errors/RemessaEmAndamentoError.js';
@@ -11,6 +12,11 @@ import ValorItemImport from '../../libs/sispag/ValorItemImport.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type { ArquivoRemessa, ContaPagadora } from '../../interface/sispag/Fin015Write.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import { DESFECHO_PREPARACAO } from '../../interface/sispag/BorderoGrupoBoletoInterface.js';
+import {
+    GRUPO_BOLETO_ESTADO,
+    type GrupoBoleto,
+} from '../../interface/sispag/GrupoBoletoInterface.js';
 import type { RemessaExecucaoRow } from '../../interface/sispag/RemessaExecucao.js';
 import {
     type ChaveTitulo,
@@ -63,6 +69,8 @@ import DestinoPagamentoResolver, {
     type DestinoResolvido,
     type FlagsDestino,
 } from './DestinoPagamentoResolver.js';
+import GrupoBoletoRepository from '../../repository/sispag/GrupoBoletoRepository.js';
+import BorderoGrupoBoletoService from './BorderoGrupoBoletoService.js';
 
 /** Código FEBRABAN a partir do `bncCod` interno do Conexos. */
 const FEBRABAN_POR_BNCCOD: Record<number, number> = { 3: 1, 4: 341, 7: 237, 10: 33 };
@@ -121,6 +129,10 @@ type AssinaturaDestino = z.infer<typeof assinaturaDestinoSchema>;
  */
 const ORDEM_ETAPAS = [
     'criar_lote',
+    // ADR-0077 (L8, I21l): borderô `fin010` do boleto agrupado, entre `criarLote` e `importar`.
+    // PERSISTIDA no ledger (a 0090 ampliou o CHECK): numa retomada, `sincronizarComErp` diz se o
+    // item de borderô do grupo já está no rascunho.
+    'preparar_bordero',
     'importar',
     // ADR-0071 (I17e): vínculo do código de barras confirmado ao item, com o rascunho completo e
     // ANTES da guarda I16 e do `finalizar`. Etapa só de MEMÓRIA (nunca vai ao ledger): o ledger
@@ -242,6 +254,9 @@ export default class RemessaService {
         @inject(VinculoCodigoBarrasService)
         private readonly vinculo: VinculoCodigoBarrasService,
         @inject(CodigoBarrasBoleto) private readonly codigoBarras: CodigoBarrasBoleto,
+        @inject(GrupoBoletoRepository) private readonly grupoRepo: GrupoBoletoRepository,
+        @inject(BorderoGrupoBoletoService)
+        private readonly borderoGrupo: BorderoGrupoBoletoService,
     ) {}
 
     /**
@@ -306,6 +321,10 @@ export default class RemessaService {
                 motivo: 'O lote está vazio.',
             });
         }
+        const grupos = await this.carregarGrupos(lote);
+        // Título de grupo nunca segue o caminho do avulso (I21k, V2): vínculo, destino e import
+        // por título só enxergam os avulsos; o grupo é UM item de borderô.
+        const loteAvulso = this.semGrupo(lote);
         const env = await this.environmentProvider.getEnvironmentVars();
         const writeEnabled = env.conexosWriteEnabled;
         // ADR-0054 — as duas desligadas (default) = envio idêntico ao `main`. `=== true`
@@ -377,7 +396,7 @@ export default class RemessaService {
                     anterior.etapa === 'finalizar' &&
                     anterior.nativeFlpCod !== undefined));
         if (anterior && emVooOuAbortadoNaGuarda) {
-            const sync = await this.sincronizarComErp(anterior, lote, modoVinculo);
+            const sync = await this.sincronizarComErp(anterior, lote, modoVinculo, grupos);
             await this.logService.warn({
                 type: LOG_TYPE.BUSINESS_WARN,
                 message: 'execução órfã encontrada — estado real consultado no ERP',
@@ -480,6 +499,12 @@ export default class RemessaService {
                 ? await this.exigirFavorecidosAutorizados(lote)
                 : undefined;
         const dataDebito = await this.resolverDataDebito(input, lote, flpCodExistente, retomarDe);
+        // ── Guarda dos grupos de boleto (ADR-0077 I21p(1)) — ANTES de qualquer escrita ──
+        // Mesma lógica do favorecido: só sem lote nativo (numa retomada o `preparar` relê o grupo
+        // e barrar deixaria o lote nativo órfão).
+        if (flpCodExistente === undefined) {
+            await this.exigirGruposConferidos(lote, grupos, dataDebito);
+        }
 
         // ── Conta pagadora da FILIAL (nunca fixa) ───────────────────────────
         const contas = await this.sispag.listContasCorrentes(lote.filCod);
@@ -545,7 +570,7 @@ export default class RemessaService {
             // ADR-0071 (Q8): no dry-run o vínculo só PREVÊ (local, zero chamada ao ERP) e não grava
             // nada durável — nem trilha.
             const vinculosPrevistos =
-                modoVinculo === MODO_VINCULO.OFF ? [] : await this.vinculo.prever(lote);
+                modoVinculo === MODO_VINCULO.OFF ? [] : await this.vinculo.prever(loteAvulso);
             if (vinculosPrevistos.length > 0) {
                 await this.logService.info({
                     type: LOG_TYPE.BUSINESS_INFO,
@@ -609,7 +634,7 @@ export default class RemessaService {
             // aqui, antes do `criarLote`: nada de lote nativo pela metade. Com as flags
             // desligadas nada disto roda (paridade com o `main`).
             const { preflight, comDestinos } = await this.prepararDestinos({
-                lote,
+                lote: loteAvulso,
                 bncCod,
                 flags,
                 importar: !pular('importar'),
@@ -674,6 +699,22 @@ export default class RemessaService {
                 ...(escolhida.gerNum !== undefined ? { gerNum: escolhida.gerNum } : {}),
             });
 
+            // (1.1) BORDERÔ DO GRUPO (ADR-0077, L8, I21l): um item nativo de borderô por grupo,
+            // entre o `criarLote` e o import dos avulsos. A etapa vai ao ledger ANTES: numa queda,
+            // `sincronizarComErp` reconhece o item pela identidade `borCod + borTimCad`.
+            if (grupos.length > 0 && !pular('preparar_bordero')) {
+                await this.ledger.setEtapa(key, 'preparar_bordero');
+                await this.prepararBorderosDosGrupos({
+                    lote,
+                    grupos,
+                    bncCod,
+                    flpCod,
+                    gerNum: escolhida.gerNum,
+                    dataDebito: dataDebito ?? lote.dataDebito,
+                });
+                await this.ledger.setEtapa(key, 'importar');
+            }
+
             // (2) importar: identidade VERBATIM do grid de pendentes do ERP.
             // Se algum título não for elegível, isto lança ANTES de qualquer escrita no
             // lote — e o lote nativo vazio fica registrado no ledger para ser reusado na
@@ -686,7 +727,7 @@ export default class RemessaService {
                 const vinculaveis =
                     modoVinculo === MODO_VINCULO.OFF
                         ? undefined
-                        : await this.vinculo.avaliarParaImport(lote, modoVinculo);
+                        : await this.vinculo.avaliarParaImport(loteAvulso, modoVinculo);
                 const montados = await this.montarItensImport(
                     lote,
                     bncCod,
@@ -754,7 +795,7 @@ export default class RemessaService {
                     !pular('vincular_codbar');
                 if (vincularAgora) {
                     const exec = await this.vinculo.executar({
-                        lote,
+                        lote: loteAvulso,
                         bncCod,
                         flpCod,
                         bancoLote: contaPagadora.bncNumCodbanco,
@@ -774,19 +815,21 @@ export default class RemessaService {
                     loteFinal = (await this.loteRepo.getLoteComItens(lote.id)) ?? lote;
                 } else {
                     if (modoVinculo === MODO_VINCULO.ON) {
-                        preferidos = await this.vinculo.chavesComDecisaoHumana(lote);
+                        preferidos = await this.vinculo.chavesComDecisaoHumana(loteAvulso);
                     }
                     // F-ft-1: o vínculo não roda aqui (retomada em `gerar_remessa`, modo `off`,
                     // etapa já passada), mas item com código NOSSO cuja decisão caiu não pode
                     // seguir: a guarda retira (rascunho aberto) ou aborta (lote nativo FINALIZADO).
-                    retiradosPeloVinculo = await this.vinculo.vinculosOrfaos(lote);
+                    retiradosPeloVinculo = await this.vinculo.vinculosOrfaos(loteAvulso);
                 }
 
                 // (2.1) GUARDA DE CÓDIGO DE BARRAS REPETIDO (ADR-0069, I16) — fora do `if` do
                 // import de propósito: numa retomada o import é pulado e a checagem TEM que rodar
                 // de novo, senão "retry" seria a forma de passar pela guarda.
+                // ADR-0077: o item de borderô do grupo (um J com a soma) ainda não é lido por esta
+                // guarda — ela passa a conhecê-lo na Task 17 (I16a/d.1/e/h). Até lá, só os avulsos.
                 const guarda = await this.retirada.garantir({
-                    lote: loteFinal,
+                    lote: this.semGrupo(loteFinal),
                     bncCod,
                     flpCod,
                     rascunhoAberto: retomarDe !== 'gerar_remessa',
@@ -1005,6 +1048,7 @@ export default class RemessaService {
         anterior: RemessaExecucaoRow,
         lote: LotePagamento,
         modoVinculo: ModoVinculo = MODO_VINCULO.OFF,
+        grupos: GrupoBoleto[] = [],
     ): Promise<{
         etapa: EtapaReal;
         motivo: string;
@@ -1100,9 +1144,14 @@ export default class RemessaService {
         // reais reporta `titulosCount = 1`; em produção, TODOS os lotes reportam 1. O que
         // bate é a `soma`. Serve só como booleano "tem alguma coisa?" — quem responde
         // QUANTOS e QUAIS é `listarChavesDoLote`.
-        const esperados = lote.itens.length;
+        const loteAvulso = this.semGrupo(lote);
+        const esperados = loteAvulso.itens.length;
         if (estado.titulosCount === 0) {
-            return { ...reusar, etapa: 'importar', motivo: `lote ${flpCod} aberto e vazio` };
+            return {
+                ...reusar,
+                etapa: grupos.length > 0 ? 'preparar_bordero' : 'importar',
+                motivo: `lote ${flpCod} aberto e vazio`,
+            };
         }
         // O lote tem ALGUMA coisa. Quais, só a lista diz — e a partir daí a diferença
         // entre o que o lote local quer e o que o ERP já tem é computável: importa-se só o
@@ -1123,7 +1172,13 @@ export default class RemessaService {
         }
 
         // Mesma chave com FILIAL usada no import — as duas pontas têm que falar a mesma língua.
-        const nossas = new Set(lote.itens.map((i) => `${i.filCod}:${i.docCod}:${i.titCod}`));
+        // ADR-0077 (I21s): o item de borderô de cada grupo, `{fil}:bor:{borCod}`, só vale com a
+        // identidade (`borTimCad`) conferida ao vivo; qualquer outro `bor` no rascunho é estranho.
+        const nativasDoGrupo = await this.borderoGrupo.chavesNativasConfirmadas({ lote, grupos });
+        const nossas = new Set([
+            ...loteAvulso.itens.map((i) => `${i.filCod}:${i.docCod}:${i.titCod}`),
+            ...nativasDoGrupo.values(),
+        ]);
         const intrusos = [...jaNoErp].filter((k) => !nossas.has(k));
         // I16h: intrusos = no rascunho e fora do lote local. RESÍDUOS são os que a guarda de
         // código de barras retirou DESTE lote (par marca ATIVA + evento do sistema); o resto são
@@ -1142,11 +1197,34 @@ export default class RemessaService {
         }
         const comResiduos = residuos.size > 0 ? { residuos: residuos.size } : {};
 
-        const faltando = new Set([...nossas].filter((k) => !jaNoErp.has(k)));
+        const faltando = new Set(
+            loteAvulso.itens
+                .map((i) => `${i.filCod}:${i.docCod}:${i.titCod}`)
+                .filter((k) => !jaNoErp.has(k)),
+        );
+        const gruposSemItem = grupos.filter((g) => {
+            const chave = nativasDoGrupo.get(g.id);
+            return chave === undefined || !jaNoErp.has(chave);
+        });
+        if (gruposSemItem.length > 0) {
+            // O rascunho ainda não tem o item de borderô de algum grupo: a retomada começa em
+            // `preparar_bordero` (o `preparar` reconhece o borderô já criado) e depois importa
+            // só os avulsos que faltam.
+            return {
+                ...reusar,
+                ...comResiduos,
+                etapa: 'preparar_bordero',
+                motivo: `lote ${flpCod} sem o item de borderô de ${gruposSemItem.length} grupo(s) de boleto`,
+                apenas: faltando,
+            };
+        }
         if (faltando.size === 0) {
             // ADR-0071 (I17i): rascunho ABERTO e completo, modo `on` e ainda há item a vincular ⇒
             // a retomada começa no vínculo (idempotente: item já vinculado é reconhecido).
-            if (modoVinculo === MODO_VINCULO.ON && (await this.vinculo.existemVinculaveis(lote))) {
+            if (
+                modoVinculo === MODO_VINCULO.ON &&
+                (await this.vinculo.existemVinculaveis(loteAvulso))
+            ) {
                 return {
                     ...reusar,
                     ...comResiduos,
@@ -1176,6 +1254,104 @@ export default class RemessaService {
             motivo: `lote ${flpCod} tem ${jaNoErp.size - residuos.size} de ${esperados}; faltam ${faltando.size}`,
             apenas: faltando,
         };
+    };
+
+    // ── ADR-0077: boleto agrupado na remessa (L8) ───────────────────────────────────────────
+
+    /** O lote sem os itens de grupo: o que vínculo, destino e import por título enxergam. */
+    private semGrupo = (lote: LotePagamento): LotePagamento => ({
+        ...lote,
+        itens: lote.itens.filter((i) => i.grupoBoletoId === undefined),
+    });
+
+    /** Os grupos referenciados pelos itens do lote. Grupo que não existe barra (fail-closed). */
+    private carregarGrupos = async (lote: LotePagamento): Promise<GrupoBoleto[]> => {
+        const ids = [...new Set(lote.itens.map((i) => i.grupoBoletoId).filter((id) => !!id))];
+        const grupos: GrupoBoleto[] = [];
+        for (const id of ids) {
+            const grupo = await this.grupoRepo.buscarPorId(id as string);
+            if (!grupo) {
+                throw new LoteEstadoInvalidoError({
+                    loteId: lote.id,
+                    statusAtual: lote.status,
+                    acao: 'gerar remessa',
+                    motivo: `O boleto agrupado ${id} do lote não existe mais. Retire os títulos dele do lote e gere de novo.`,
+                });
+            }
+            grupos.push(grupo);
+        }
+        return grupos;
+    };
+
+    /**
+     * I21p(1): conferência ao vivo de cada grupo ANTES de qualquer escrita. Grupo que deixou de
+     * estar `CONFIRMADO` (anulado, pago) também barra aqui, com a mesma resposta 409; a retirada
+     * do grupo anulado de um lote comprometido é da guarda da Task 17.
+     */
+    private exigirGruposConferidos = async (
+        lote: LotePagamento,
+        grupos: GrupoBoleto[],
+        dataDebito?: string,
+    ): Promise<void> => {
+        if (grupos.length === 0) return;
+        const fora = grupos.filter((g) => g.estado !== GRUPO_BOLETO_ESTADO.CONFIRMADO);
+        if (fora.length > 0) {
+            throw new GroupedBoletoNotEligibleAtRemittanceError({
+                loteId: lote.id,
+                grupos: fora.map((g) => ({
+                    grupoId: g.id,
+                    codigoMascarado: g.codbarMascarado,
+                    motivo: g.estado,
+                })),
+            });
+        }
+        await this.borderoGrupo.conferirAntesDaEscrita({
+            lote: dataDebito !== undefined ? { ...lote, dataDebito } : lote,
+            grupos,
+        });
+    };
+
+    /**
+     * Prepara o borderô de cada grupo no lote nativo aberto. `pronto` e `simulado` seguem;
+     * `retirar` e `indeterminado` interrompem a remessa ANTES do import e do finalizar, com a
+     * explicação ao operador (a retirada determinística pela guarda é da Task 17).
+     */
+    private prepararBorderosDosGrupos = async (p: {
+        lote: LotePagamento;
+        grupos: GrupoBoleto[];
+        bncCod: number;
+        flpCod: number;
+        gerNum?: number;
+        dataDebito?: string;
+    }): Promise<void> => {
+        if (p.dataDebito === undefined) {
+            throw new LoteEstadoInvalidoError({
+                loteId: p.lote.id,
+                statusAtual: p.lote.status,
+                acao: 'preparar o borderô do boleto agrupado',
+                motivo: 'O lote não tem data de débito definida.',
+            });
+        }
+        for (const grupo of p.grupos) {
+            const r = await this.borderoGrupo.preparar({
+                lote: p.lote,
+                bncCod: p.bncCod,
+                flpCod: p.flpCod,
+                ...(p.gerNum !== undefined ? { gerNum: p.gerNum } : {}),
+                dataDebito: p.dataDebito,
+                grupo,
+            });
+            if (r.desfecho === DESFECHO_PREPARACAO.PRONTO) continue;
+            if (r.desfecho === DESFECHO_PREPARACAO.SIMULADO) continue;
+            throw new LoteEstadoInvalidoError({
+                loteId: p.lote.id,
+                statusAtual: p.lote.status,
+                acao: 'preparar o borderô do boleto agrupado',
+                motivo:
+                    r.detalhe ??
+                    `O borderô do boleto agrupado ${grupo.codbarMascarado} não ficou pronto (${r.desfecho}). Nada foi finalizado.`,
+            });
+        }
     };
 
     /**
@@ -1344,7 +1520,10 @@ export default class RemessaService {
         // importaríamos o pagamento de outro fornecedor, com outro valor.
         const chaveDe = (t: { filCod: number; docCod: string; titCod: string }): string =>
             `${t.filCod}:${t.docCod}:${t.titCod}`;
-        const alvo = apenas ? lote.itens.filter((i) => apenas.has(chaveDe(i))) : lote.itens;
+        const avulsos = lote.itens.filter((i) => i.grupoBoletoId === undefined);
+        const alvo = apenas ? avulsos.filter((i) => apenas.has(chaveDe(i))) : avulsos;
+        // Só título de grupo (ou nada a importar): sem leitura do grid de pendentes.
+        if (alvo.length === 0) return [];
         // As chaves deixam o cliente parar assim que achar todas, em vez de varrer o grid
         // inteiro — e garantem que ele NÃO pare na primeira página se faltar alguma.
         const chavesDesejadas = new Set(alvo.map(chaveDe));

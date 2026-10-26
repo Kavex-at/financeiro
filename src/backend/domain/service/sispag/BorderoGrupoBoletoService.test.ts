@@ -1588,3 +1588,64 @@ describe('BorderoGrupoBoletoService — limpar (I21q, emenda 2026-10-21)', () =>
         expect(m.alertas).toHaveLength(1);
     });
 });
+
+describe('BorderoGrupoBoletoService — chavesNativasConfirmadas (I21s, Task 15)', () => {
+    const TIM = AGORA - 58_000;
+    const chaves = (m: Montado) =>
+        m.service.chavesNativasConfirmadas({ lote: lotePedroni(), grupos: [grupoPedroni()] });
+
+    it('execução deste lote com borCod + borTimCad e o borderô presente com o mesmo borTimCad ⇒ chave nativa `fil:bor:borCod`', async () => {
+        const m = novo();
+        m.borderoCompleto({ borCod: 251, borTimCad: TIM });
+        m.execucao({ etapa: ETAPA_BORDERO_GRUPO.IMPORTADO, borCod: 251, borTimCad: TIM });
+        expect(await chaves(m)).toEqual(new Map([['G1', `${FIL}:bor:251`]]));
+        semEscrita(m);
+    });
+
+    it('execução que falhou depois do import (failed) também é reconhecida: o item pode estar no rascunho', async () => {
+        const m = novo();
+        m.borderoCompleto({ borCod: 251, borTimCad: TIM });
+        m.execucao({ etapa: ETAPA_BORDERO_GRUPO.FAILED, borCod: 251, borTimCad: TIM });
+        expect((await chaves(m)).get('G1')).toBe(`${FIL}:bor:251`);
+    });
+
+    it('o ERP reusou o borCod (outro borTimCad) ⇒ o borderô é alheio: nenhuma chave', async () => {
+        const m = novo();
+        m.borderoCompleto({ borCod: 251, borTimCad: TIM + 5_000 });
+        m.execucao({ etapa: ETAPA_BORDERO_GRUPO.IMPORTADO, borCod: 251, borTimCad: TIM });
+        expect((await chaves(m)).size).toBe(0);
+    });
+
+    it('borderô ausente no ERP ⇒ nenhuma chave', async () => {
+        const m = novo();
+        m.execucao({ etapa: ETAPA_BORDERO_GRUPO.IMPORTADO, borCod: 251, borTimCad: TIM });
+        expect((await chaves(m)).size).toBe(0);
+    });
+
+    it('execução de OUTRO lote não vale para este (o item de borderô de lote antigo é estranho)', async () => {
+        const m = novo();
+        m.borderoCompleto({ borCod: 251, borTimCad: TIM });
+        m.execucao({
+            loteId: 'L0',
+            etapa: ETAPA_BORDERO_GRUPO.IMPORTADO,
+            borCod: 251,
+            borTimCad: TIM,
+        });
+        expect((await chaves(m)).size).toBe(0);
+    });
+
+    it('execução limpa ou simulada não tem borderô nosso: nenhuma chave e nenhuma leitura ao ERP', async () => {
+        const limpa = novo();
+        limpa.execucao({ etapa: ETAPA_BORDERO_GRUPO.LIMPO, borCod: 251, borTimCad: TIM });
+        expect((await chaves(limpa)).size).toBe(0);
+        const simulada = novo();
+        simulada.execucao({ etapa: ETAPA_BORDERO_GRUPO.SIMULADO });
+        expect((await chaves(simulada)).size).toBe(0);
+        expect(limpa.erp.baixa.buscarBorderoPorIdentidade).not.toHaveBeenCalled();
+    });
+
+    it('grupo sem execução ⇒ nenhuma chave', async () => {
+        const m = novo();
+        expect((await chaves(m)).size).toBe(0);
+    });
+});

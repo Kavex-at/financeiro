@@ -40,6 +40,7 @@ import {
     type MotivoGrupoInelegivel,
 } from '../../interface/sispag/GrupoBoletoInterface.js';
 import {
+    type LotePagamento,
     SISPAG_SYSTEM_ACTOR,
     SYSTEM_REMOVAL_REASON,
     type SystemRemovalReason,
@@ -159,6 +160,35 @@ export default class BorderoGrupoBoletoService implements LimpezaBorderoGrupoInt
             loteId: pedido.lote.id,
             grupos: inelegiveis,
         });
+    };
+
+    // ── I21s: reconhecimento do item de borderô no rascunho (retomada da remessa) ───────────
+
+    /**
+     * Chave nativa `{fil}:bor:{borCod}` do item de borderô de cada grupo, só para o borderô que
+     * esta remessa pode ter importado: execução DESTE lote, com `borCod` + `borTimCad` gravados e
+     * a identidade (`filCod + borCod + borTimCad`) confirmada AO VIVO. O ERP reusa `borCod`:
+     * borderô presente com outro `borTimCad` é alheio e não gera chave. Só leitura.
+     */
+    public chavesNativasConfirmadas = async (pedido: {
+        lote: LotePagamento;
+        grupos: GrupoBoleto[];
+    }): Promise<Map<string, string>> => {
+        const chaves = new Map<string, string>();
+        for (const grupo of pedido.grupos) {
+            const exec = await this.ledger.ultimaPorGrupo(grupo.id);
+            if (!exec || exec.loteId !== pedido.lote.id) continue;
+            if (exec.borCod === undefined || exec.borTimCad === undefined) continue;
+            if (SEM_BORDERO_A_LIMPAR.has(exec.etapa) || exec.etapa === E.RETIRADO) continue;
+            const busca = await this.baixa.buscarBorderoPorIdentidade({
+                filCod: exec.filCod,
+                borCod: exec.borCod,
+                borTimCad: exec.borTimCad,
+            });
+            if (busca.situacao !== IDENTIDADE_BORDERO.PRESENTE) continue;
+            chaves.set(grupo.id, `${exec.filCod}:bor:${exec.borCod}`);
+        }
+        return chaves;
     };
 
     private motivoInelegivel = async (

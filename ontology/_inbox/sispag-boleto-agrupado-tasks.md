@@ -428,16 +428,24 @@ Paralelismo: **Fase A inteira** em paralelo; na Fase D, T9/T10/T11/T12/T13 em pa
 - `src/backend/domain/repository/sispag/RemessaExecucaoRepository.ts` + teste (aceita a etapa nova)
 
 **Acceptance criteria:**
-- [ ] RED primeiro. `ORDEM_ETAPAS`: `criar_lote → preparar_bordero → importar → vincular_codbar → limpar_retirados → finalizar → gerar_remessa → concluido`; `preparar_bordero` **persistida** no ledger
-- [ ] Antes de qualquer escrita (junto do preflight de destinos, antes do `criarLote`): `conferirAntesDaEscrita` dos grupos do lote; inelegível ⇒ 409, ledger sem `criarLote`
-- [ ] Grupo anulado com o lote comprometido: a remessa retira os N itens antes do `finalizar` (espelho I17l); lote nativo já finalizado ⇒ erro nomeado
-- [ ] `montarItensImport` exclui os títulos de grupo (I21k); teste: lote com 2 avulsos + 1 grupo de 3 ⇒ `importarTitulos` recebe 2, `importarBorderoPendente` 1
-- [ ] `sincronizarComErp`: `nossas` = avulsos ∪ `"{fil}:bor:{borCod}"` das execuções do lote (o `borCod` só vale com o `borTimCad` conferido: `borCod` reutilizado pelo ERP é alheio); grupo sem item no rascunho ⇒ retoma em `preparar_bordero` (reconhecimento I21s); borderô de outra execução/terceiro ⇒ estranho ⇒ `indeterminado`
-- [ ] Retirada determinística devolvida pela Task 14 passa pela guarda (Task 17) com os N itens e o motivo; a remessa segue com os demais
-- [ ] `valorFinal`/`valorTotal` continuam somando os itens locais (Σ do grupo == boleto)
-- [ ] Dry-run (`sispagLiveWriteEnabled=false` ou `conexosDryRun=true`): nenhuma chamada de escrita do grupo
-- [ ] V2 (Task 1) refletido: nenhum caminho importa título de grupo avulso
-- [ ] Testes existentes da `RemessaService` verdes sem mudança de expectativa para lote sem grupo
+- [x] RED primeiro. `ORDEM_ETAPAS`: `criar_lote → preparar_bordero → importar → vincular_codbar → limpar_retirados → finalizar → gerar_remessa → concluido`; `preparar_bordero` **persistida** no ledger
+- [x] Antes de qualquer escrita (junto do preflight de destinos, antes do `criarLote`): `conferirAntesDaEscrita` dos grupos do lote; inelegível ⇒ 409, ledger sem `criarLote`
+- [x] Grupo anulado com o lote comprometido: a remessa retira os N itens antes do `finalizar` (espelho I17l); lote nativo já finalizado ⇒ erro nomeado
+- [x] `montarItensImport` exclui os títulos de grupo (I21k); teste: lote com 2 avulsos + 1 grupo de 3 ⇒ `importarTitulos` recebe 2, `importarBorderoPendente` 1
+- [x] `sincronizarComErp`: `nossas` = avulsos ∪ `"{fil}:bor:{borCod}"` das execuções do lote (o `borCod` só vale com o `borTimCad` conferido: `borCod` reutilizado pelo ERP é alheio); grupo sem item no rascunho ⇒ retoma em `preparar_bordero` (reconhecimento I21s); borderô de outra execução/terceiro ⇒ estranho ⇒ `indeterminado`
+- [x] Retirada determinística devolvida pela Task 14 passa pela guarda (Task 17) com os N itens e o motivo; a remessa segue com os demais
+- [x] `valorFinal`/`valorTotal` continuam somando os itens locais (Σ do grupo == boleto)
+- [x] Dry-run (`sispagLiveWriteEnabled=false` ou `conexosDryRun=true`): nenhuma chamada de escrita do grupo
+- [x] V2 (Task 1) refletido: nenhum caminho importa título de grupo avulso
+- [x] Testes existentes da `RemessaService` verdes sem mudança de expectativa para lote sem grupo
+
+**Desvios e notas da entrega (2026-10-26):**
+- `ORDEM_ETAPAS` segue a ADR: `preparar_bordero` fica ENTRE `criar_lote` e `importar` (o borderô é preparado antes do import dos avulsos); o ledger grava `preparar_bordero` e volta a `importar` ao terminar.
+- Grupo que deixou de estar `CONFIRMADO` (anulado) barra a remessa antes da escrita com `GroupedBoletoNotEligibleAtRemittanceError` (409); **a retirada dos N itens antes do `finalizar` e o erro nomeado para lote nativo já finalizado ficam na Task 17**, junto da guarda.
+- Desfecho `retirar` ou `indeterminado` do `preparar` interrompe a remessa antes do import e do `finalizar` (`LoteEstadoInvalidoError` com o `detalhe` ao operador); a retirada determinística passando pela guarda é da **Task 17**.
+- Novo método `BorderoGrupoBoletoService.chavesNativasConfirmadas({ lote, grupos })`: chave `{fil}:bor:{borCod}` só da execução DESTE lote com `borTimCad` conferido ao vivo (7 testes).
+- A guarda I16 (`retirada.garantir`) e o vínculo por título (modo `on`) só enxergam os avulsos (`semGrupo`) até a Task 16/17.
+- `RemessaService` ganhou `GrupoBoletoRepository` e `BorderoGrupoBoletoService` no construtor.
 
 **Dependencies:** Task 14
 
