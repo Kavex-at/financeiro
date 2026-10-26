@@ -8,11 +8,25 @@
  */
 
 /** As fases da prova, na ordem em que fazem sentido. */
-export const FASES_E2E = ['plano', 'canonico', 'falha', 'retomada', 'v7', 'estado'] as const;
+export const FASES_E2E = [
+    'plano',
+    'canonico',
+    'falha',
+    'retomada',
+    'retomada-varredura',
+    'v7',
+    'estado',
+] as const;
 export type FaseE2e = (typeof FASES_E2E)[number];
 
 /** As que ESCREVEM em HML: exigem a autorização datada de hoje. */
-export const FASES_QUE_ESCREVEM: readonly FaseE2e[] = ['canonico', 'falha', 'retomada', 'v7'];
+export const FASES_QUE_ESCREVEM: readonly FaseE2e[] = [
+    'canonico',
+    'falha',
+    'retomada',
+    'retomada-varredura',
+    'v7',
+];
 
 export interface EntradaGuardaE2e {
     conexosBaseUrl?: string;
