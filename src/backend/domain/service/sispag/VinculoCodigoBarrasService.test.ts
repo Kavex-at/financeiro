@@ -6,7 +6,9 @@ import type ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import ConexosError from '../../errors/ConexosError.js';
 import ItemEditadoPorTerceiroError from '../../errors/ItemEditadoPorTerceiroError.js';
+import GroupBorderoIncompleteError from '../../errors/GroupBorderoIncompleteError.js';
 import VinculoCodigoBarrasIncompletoError from '../../errors/VinculoCodigoBarrasIncompletoError.js';
+import type { GrupoBoleto } from '../../interface/sispag/GrupoBoletoInterface.js';
 import type { ItemLote, LotePagamento } from '../../interface/sispag/SispagInterface.js';
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
 import CodigoBarrasSintetico from '../../libs/boleto/CodigoBarrasSintetico.js';
@@ -106,11 +108,26 @@ const build = (c: Cenario) => {
                 completa: true,
                 itens: rascunho.map((row) => ({
                     filCod: Number(row.filCod),
-                    docCod: String(row.docCod),
-                    titCod: String(row.titCod),
+                    docCod: row.docCod === undefined ? '' : String(row.docCod),
+                    titCod: row.titCod === undefined ? '' : String(row.titCod),
+                    ...(row.borCod !== undefined ? { borCod: Number(row.borCod) } : {}),
                     itsCodSeq: Number(row.itsCodSeq),
                     row: { ...row },
                 })),
+            };
+        }),
+        /** Item de borderô (boleto agrupado): a row com `borCod` e sem `docCod/titCod`. */
+        lerItemDeBordero: jest.fn(async (p: { borCod: number }) => {
+            ordem.push('ler');
+            const row = rascunho.find((r) => Number(r.borCod) === p.borCod);
+            if (!row) return undefined;
+            return {
+                filCod: Number(row.filCod),
+                borCod: p.borCod,
+                itsCodSeq: Number(row.itsCodSeq),
+                itsMnyValor: Number(row.itsMnyValor),
+                itsVldModalidade: Number(row.itsVldModalidade),
+                row: { ...row },
             };
         }),
         validarCodigoBarras: jest.fn(
@@ -188,6 +205,10 @@ const build = (c: Cenario) => {
             return { inserido: true };
         }),
         existeVinculoAplicado: jest.fn(async () => false),
+        buscarParPorId: jest.fn(
+            async (id: string) =>
+                (c.pares ?? [{ id: 'par-1', estado: 'VIGENTE' }]).find((x) => x.id === id) ?? null,
+        ),
         buscarDecisaoPorId: jest.fn(
             async (id: string) => decisoes.find((d) => d.id === id) ?? null,
         ),
@@ -1041,5 +1062,215 @@ describe('VinculoCodigoBarrasService — não-regressão do passo 2 (ADR-0072, I
         expect(fonte).not.toMatch(
             /SITUACAO_SUGESTAO|situacao|ancorad|VENCE_ANTES|RECONHECEU|MotorSugestaoBoleto|reconheceAvisos/,
         );
+    });
+});
+
+describe('VinculoCodigoBarrasService.vincularItemDeBordero (I21o, I17o)', () => {
+    const BOR = 251;
+    const grupo = (over: Record<string, unknown> = {}): GrupoBoleto =>
+        ({
+            id: 'G1',
+            filCod: 2,
+            pesCod: '7001',
+            credor: 'ACME',
+            ddcCod: 10,
+            ditCod: 3,
+            estado: 'CONFIRMADO',
+            valorBoletoCentavos: 102_880,
+            vencimentoBoleto: VENC,
+            confirmacaoEmissorId: 'par-1',
+            codbarMascarado: MASCARA,
+            titulos: [],
+            ...over,
+        }) as unknown as GrupoBoleto;
+    const itemBordero = (over: Record<string, unknown> = {}) => ({
+        filCod: 2,
+        borCod: BOR,
+        bncCod: 4,
+        flpCod: 36,
+        itsCodSeq: 91,
+        itsMnyValor: 1028.8,
+        itsVldModalidade: 6,
+        itsNumCodbar: null,
+        itsNumBanco: 0,
+        bncDesNome: null,
+        itsMnyVlrPgto: 1028.8,
+        itsDtaPgto: VENC_EPOCH,
+        ...over,
+    });
+    const cenario = (over: Partial<Cenario> = {}) =>
+        build({ itens: [], rascunho: [itemBordero()], decisoes: [], ...over });
+    const vincular = (
+        h: ReturnType<typeof build>,
+        g: GrupoBoleto = grupo(),
+        extra: { bancoLote?: number } = {},
+    ) =>
+        h.service.vincularItemDeBordero({
+            lote: h.lote,
+            grupo: g,
+            borCod: BOR,
+            ...CTX,
+            ...extra,
+        });
+
+    it('caminho feliz: ler → validar → confirmar → ler → PUT → releitura; sem decisão por título e sem gravar coluna no item local', async () => {
+        const h = cenario();
+        const r = await vincular(h);
+        expect(h.ordem).toEqual(['ler', 'validar', 'confirmar', 'ler', 'editar', 'ler']);
+        expect(r).toMatchObject({
+            tipo: 'vinculado',
+            codigoMascarado: MASCARA,
+            jaVinculado: false,
+        });
+        const put = h.write.editarItemDoRascunho.mock.calls[0]?.[0];
+        expect(put?.alteracoes).toEqual({
+            itsNumCodbar: LINHA,
+            itsNumBanco: 341,
+            bncDesNome: 'ITAU UNIBANCO S.A.',
+            itsMnyVlrPgto: 1028.8,
+            itsDtaPgto: VENC_EPOCH,
+        });
+        expect(h.loteRepo.gravarVinculoCodigoBarras).not.toHaveBeenCalled();
+        expect(h.sugestoes.listarDecisoes).not.toHaveBeenCalled();
+    });
+
+    it('a I17n não se aplica: o valor vem do item do borderô, o fin064 do título nunca é lido', async () => {
+        const h = cenario();
+        await vincular(h);
+        expect(h.sispag.lerValoresAberto).not.toHaveBeenCalled();
+        const validar = h.write.validarCodigoBarras.mock.calls[0]?.[0] as unknown as {
+            valorLiquido: number;
+        };
+        expect(validar.valorLiquido).toBe(1028.8);
+    });
+
+    it('modalidade: banco da barra == banco do lote ⇒ 6; outro banco ⇒ 7 (validação, confirmação e item)', async () => {
+        const mesmo = cenario();
+        await vincular(mesmo, grupo(), { bancoLote: 341 });
+        expect(
+            (mesmo.write.validarCodigoBarras.mock.calls[0]?.[0] as { modalidade: number })
+                .modalidade,
+        ).toBe(6);
+        expect(mesmo.write.editarItemDoRascunho.mock.calls[0]?.[0].alteracoes).not.toHaveProperty(
+            'itsVldModalidade',
+        );
+        const outro = cenario();
+        await vincular(outro, grupo(), { bancoLote: 237 });
+        expect(
+            (outro.write.validarCodigoBarras.mock.calls[0]?.[0] as { modalidade: number })
+                .modalidade,
+        ).toBe(7);
+        expect(
+            (outro.write.confirmarCodigoBarras.mock.calls[0]?.[0] as { modalidade: number })
+                .modalidade,
+        ).toBe(7);
+        expect(outro.write.editarItemDoRascunho.mock.calls[0]?.[0].alteracoes).toMatchObject({
+            itsVldModalidade: 7,
+        });
+    });
+
+    it('item que já traz o código esperado ⇒ idempotente (I17f): vinculado, jaVinculado, nenhuma chamada de escrita', async () => {
+        const h = cenario({
+            rascunho: [
+                itemBordero({
+                    itsNumCodbar: LINHA,
+                    itsNumBanco: 341,
+                    itsMnyVlrPgto: 1028.8,
+                    itsDtaPgto: VENC_EPOCH,
+                }),
+            ],
+        });
+        const r = await vincular(h);
+        expect(r).toMatchObject({ tipo: 'vinculado', jaVinculado: true });
+        expect(h.write.validarCodigoBarras).not.toHaveBeenCalled();
+        expect(h.write.editarItemDoRascunho).not.toHaveBeenCalled();
+    });
+
+    it('item com OUTRO código ⇒ ItemEditadoPorTerceiroError, nada sobrescrito (I17f)', async () => {
+        const h = cenario({ rascunho: [itemBordero({ itsNumCodbar: LINHA_2 })] });
+        await expect(vincular(h)).rejects.toBeInstanceOf(ItemEditadoPorTerceiroError);
+        expect(h.write.editarItemDoRascunho).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['grupo anulado', grupo({ estado: 'ANULADO' }), 'GRUPO_NAO_CONFIRMADO'],
+        ['par do emissor revogado', grupo({ confirmacaoEmissorId: 'par-x' }), 'PAR_NAO_VIGENTE'],
+    ])('%s ⇒ retirar (determinístico), nenhuma chamada ao ERP de validação', async (_n, g, motivo) => {
+        const h = cenario();
+        const r = await vincular(h, g);
+        expect(r).toMatchObject({ tipo: 'retirar', campo: 'ELEGIBILIDADE', motivo });
+        expect(h.write.validarCodigoBarras).not.toHaveBeenCalled();
+        expect(h.write.editarItemDoRascunho).not.toHaveBeenCalled();
+    });
+
+    it('boleto fora do pool ⇒ retirar BOLETO_INDISPONIVEL; boleto com vínculo do ERP ⇒ retirar GRUPO_ORFAO', async () => {
+        const fora = cenario({ boletoPool: { '10:3': null } });
+        expect(await vincular(fora)).toMatchObject({
+            tipo: 'retirar',
+            motivo: 'BOLETO_INDISPONIVEL',
+        });
+        const vinculado = cenario({
+            boletoPool: {
+                '10:3': {
+                    ddcCod: 10,
+                    ditCod: 3,
+                    valor: 1028.8,
+                    vencimento: VENC,
+                    codbar: BARRAS,
+                    docCod: '999',
+                },
+            },
+        });
+        expect(await vincular(vinculado)).toMatchObject({
+            tipo: 'retirar',
+            motivo: 'GRUPO_ORFAO',
+        });
+    });
+
+    it('item do borderô com valor diferente do boleto ⇒ retirar VALOR_DIFERENTE antes de qualquer validação', async () => {
+        const h = cenario({ rascunho: [itemBordero({ itsMnyValor: 1000 })] });
+        const r = await vincular(h);
+        expect(r).toMatchObject({ tipo: 'retirar', motivo: 'VALOR_DIFERENTE' });
+        expect(h.write.validarCodigoBarras).not.toHaveBeenCalled();
+    });
+
+    it('recusa de negócio na validação ⇒ retirar ERP_RECUSOU_VALIDACAO; transitória ⇒ GroupBorderoIncompleteError (nunca retira)', async () => {
+        const recusa = cenario();
+        recusa.write.validarCodigoBarras.mockRejectedValueOnce(rejeicao());
+        expect(await vincular(recusa)).toMatchObject({
+            tipo: 'retirar',
+            motivo: 'ERP_RECUSOU_VALIDACAO',
+        });
+        const transit = cenario();
+        transit.write.validarCodigoBarras.mockRejectedValueOnce(transitorio());
+        await expect(vincular(transit)).rejects.toBeInstanceOf(GroupBorderoIncompleteError);
+        expect(transit.write.editarItemDoRascunho).not.toHaveBeenCalled();
+    });
+
+    it('item do borderô ausente no rascunho ⇒ GroupBorderoIncompleteError (ambíguo: nunca retira)', async () => {
+        const h = cenario({ rascunho: [] });
+        await expect(vincular(h)).rejects.toBeInstanceOf(GroupBorderoIncompleteError);
+        expect(h.write.validarCodigoBarras).not.toHaveBeenCalled();
+    });
+
+    it('PUT que a releitura não observa ⇒ GroupBorderoIncompleteError; sucesso é o que se observa, não o status do PUT', async () => {
+        const h = cenario({ put: async () => undefined });
+        await expect(vincular(h)).rejects.toBeInstanceOf(GroupBorderoIncompleteError);
+        const ok = cenario();
+        // O PUT falha, mas o código está lá na releitura: aplicar a edição "por baixo".
+        ok.write.editarItemDoRascunho.mockImplementationOnce(async (p) => {
+            Object.assign(ok.rascunho[0] as Record<string, unknown>, p.alteracoes);
+            throw transitorio();
+        });
+        await expect(vincular(ok)).resolves.toMatchObject({ tipo: 'vinculado' });
+    });
+
+    it('código só mascarado em resultado, log e erro (I17j)', async () => {
+        const h = cenario({ put: async () => undefined });
+        const erro = await vincular(h).catch((e: unknown) => e);
+        const ok = cenario();
+        const r = await vincular(ok);
+        const saida = JSON.stringify([r, h.logs, ok.logs, (erro as Error).message]);
+        expect(saida).not.toMatch(/\d{44}|\d{47}/);
     });
 });

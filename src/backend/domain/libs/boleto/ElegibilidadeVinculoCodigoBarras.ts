@@ -32,6 +32,9 @@ export const MOTIVO_INELEGIVEL_VINCULO = {
     DATA_ANTES_DO_TITULO: 'DATA_ANTES_DO_TITULO',
     DATA_FORA_DA_JANELA: 'DATA_FORA_DA_JANELA',
     BARRA_VENCIDA: 'BARRA_VENCIDA',
+    /** Item de borderô (ADR-0077, I21o): o grupo não está confirmado ou perdeu o boleto. */
+    GRUPO_NAO_CONFIRMADO: 'GRUPO_NAO_CONFIRMADO',
+    GRUPO_ORFAO: 'GRUPO_ORFAO',
 } as const;
 export type MotivoInelegivelVinculo =
     (typeof MOTIVO_INELEGIVEL_VINCULO)[keyof typeof MOTIVO_INELEGIVEL_VINCULO];
@@ -80,6 +83,34 @@ export interface ResultadoElegibilidadeVinculo {
     decisaoId?: string;
     /** Banco emissor (3 dígitos, FEBRABAN). */
     banco?: string;
+}
+
+/**
+ * Entrada da variante "item de borderô" (ADR-0077, I21o/I17o): o item nativo com `borCod` de um
+ * grupo de boleto. Sem decisão por título e sem líquido do título: o valor que vale é o do boleto
+ * do grupo (I21b, conferido na confirmação e ao vivo na remessa) e o do próprio item do borderô.
+ */
+export interface EntradaElegibilidadeItemDeBordero {
+    /** O item de borderô está no rascunho nativo (nunca em lote finalizado, I17i). */
+    noRascunho: boolean;
+    grupo: {
+        estado: string;
+        /** Boleto fora do pool ou com vínculo do ERP (I21u). */
+        orfao: boolean;
+        /** O par credor × emissor continua vigente. */
+        parVigente: boolean;
+        valorBoletoCentavos: number;
+        /** Vencimento do boleto, data civil `YYYY-MM-DD`. */
+        vencimentoBoleto: string;
+    };
+    /** Linha digitável (47) ou barras (44) do pool. SÓ em memória. */
+    codigo?: string;
+    poolValor?: number;
+    poolVencimento?: string;
+    /** `itsMnyValor` do item do borderô, em centavos; ausente = ilegível. */
+    itsMnyValorCentavos?: number;
+    /** Data de débito do lote, data civil `YYYY-MM-DD`. */
+    dataDebito: string;
 }
 
 const DIA_MS = 24 * 60 * 60 * 1000;
@@ -163,6 +194,61 @@ export default class ElegibilidadeVinculoCodigoBarras {
         }
 
         return { elegivel: true, decisaoId: decisao.id, ...dados };
+    };
+
+    /**
+     * Elegibilidade do item de borderô (I21o): grupo `CONFIRMADO`, não órfão, par vigente; valor
+     * da barra == boleto do grupo (I21b) == item do borderô (H6); vencimento da barra == o do
+     * boleto e não anterior à data de débito (I21g/h). Pura, como `avaliar`.
+     */
+    public avaliarItemDeBordero = (
+        entrada: EntradaElegibilidadeItemDeBordero,
+    ): ResultadoElegibilidadeVinculo => {
+        const nega = (
+            motivo: MotivoInelegivelVinculo,
+            extra: Partial<ResultadoElegibilidadeVinculo> = {},
+        ): ResultadoElegibilidadeVinculo => ({ elegivel: false, motivo, ...extra });
+        const { grupo } = entrada;
+        if (!entrada.noRascunho) return nega(MOTIVO_INELEGIVEL_VINCULO.FORA_DO_RASCUNHO);
+        if (grupo.estado !== 'CONFIRMADO') {
+            return nega(MOTIVO_INELEGIVEL_VINCULO.GRUPO_NAO_CONFIRMADO);
+        }
+        if (grupo.orfao) return nega(MOTIVO_INELEGIVEL_VINCULO.GRUPO_ORFAO);
+        if (!grupo.parVigente) return nega(MOTIVO_INELEGIVEL_VINCULO.PAR_NAO_VIGENTE);
+
+        const lido = this.lerCodigo({
+            codigo: entrada.codigo,
+            poolValor: entrada.poolValor,
+            poolVencimento: entrada.poolVencimento,
+            vencimentoTitulo: grupo.vencimentoBoleto,
+        } as EntradaElegibilidadeVinculo);
+        if ('motivo' in lido) return nega(lido.motivo, lido.extra);
+        const { decodificado, comCodigo } = lido;
+
+        const deltaCentavos = decodificado.valorCentavos - grupo.valorBoletoCentavos;
+        if (deltaCentavos !== 0) {
+            return nega(MOTIVO_INELEGIVEL_VINCULO.VALOR_DIFERENTE, { ...comCodigo, deltaCentavos });
+        }
+        if (entrada.itsMnyValorCentavos === undefined) {
+            return nega(MOTIVO_INELEGIVEL_VINCULO.VALOR_ABERTO_INDISPONIVEL, comCodigo);
+        }
+        const deltaItem = decodificado.valorCentavos - entrada.itsMnyValorCentavos;
+        if (deltaItem !== 0) {
+            return nega(MOTIVO_INELEGIVEL_VINCULO.VALOR_DIFERENTE, {
+                ...comCodigo,
+                deltaCentavos: deltaItem,
+            });
+        }
+        if (decodificado.vencimento === undefined) {
+            return nega(MOTIVO_INELEGIVEL_VINCULO.DATA_INDISPONIVEL, comCodigo);
+        }
+        if (decodificado.vencimento !== grupo.vencimentoBoleto) {
+            return nega(MOTIVO_INELEGIVEL_VINCULO.BOLETO_INCONSISTENTE, comCodigo);
+        }
+        if (diasEntre(entrada.dataDebito, decodificado.vencimento) < 0) {
+            return nega(MOTIVO_INELEGIVEL_VINCULO.BARRA_VENCIDA, comCodigo);
+        }
+        return { elegivel: true, deltaCentavos: 0, deltaDias: 0, ...comCodigo };
     };
 
     /** I17a: modalidade, rascunho, DDA do ERP e a decisão humana vigente. */

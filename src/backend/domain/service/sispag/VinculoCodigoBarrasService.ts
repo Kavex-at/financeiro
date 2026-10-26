@@ -14,13 +14,16 @@ import VinculoCodigoBarrasDivergenteError, {
 import VinculoCodigoBarrasIncompletoError, {
     type TituloDoVinculo,
 } from '../../errors/VinculoCodigoBarrasIncompletoError.js';
+import GroupBorderoIncompleteError from '../../errors/GroupBorderoIncompleteError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import {
     DECISAO_SUGESTAO_BOLETO,
     type DecisaoSugestao,
     EVENTO_SUGESTAO_BOLETO,
 } from '../../interface/sispag/ConfirmacaoEmissorBoleto.js';
-import type { ItemDoRascunho } from '../../interface/sispag/Fin015Write.js';
+import type { ItemDeBordero, ItemDoRascunho } from '../../interface/sispag/Fin015Write.js';
+import type { GrupoBoleto } from '../../interface/sispag/GrupoBoletoInterface.js';
+import { ESTADO_CONFIRMACAO_EMISSOR } from '../../interface/sispag/ConfirmacaoEmissorBoleto.js';
 import {
     type ChaveTitulo,
     type ItemLote,
@@ -96,6 +99,26 @@ export const MODALIDADE_ITEM = { MESMO_BANCO: 6, OUTRO_BANCO: 7 } as const;
 
 /** Tamanho de página medido em HML; lote com mais itens aborta o vínculo (Q9). */
 export const LIMITE_ITENS_DO_LOTE = 500;
+
+/** Desfecho do vínculo da barra no item de borderô de UM grupo (ADR-0077, I21o). */
+export type ResultadoVinculoBordero =
+    | {
+          tipo: 'vinculado';
+          codigoMascarado: string;
+          /** `true` = o item já trazia o código esperado (I17f): nenhuma chamada nova. */
+          jaVinculado: boolean;
+      }
+    | {
+          /** Falha DETERMINÍSTICA: o chamador retira o grupo inteiro (I21p(3), Task 17). */
+          tipo: 'retirar';
+          grupoId: string;
+          campo: CampoDivergenteVinculo;
+          motivo: string;
+          codigoMascarado?: string;
+          itsCodSeq?: number;
+          /** Mensagem pt-BR ao operador, sem o código completo. */
+          aviso: string;
+      };
 
 export interface ResultadoExecucaoVinculo {
     vinculados: VinculoAplicado[];
@@ -399,6 +422,289 @@ export default class VinculoCodigoBarrasService {
         });
         return { vinculados, retirar, preferidos };
     };
+
+    // ── Item de borderô do grupo de boleto (ADR-0077, I21o) ─────────────────────────────────
+
+    /**
+     * Vincula a barra do boleto ao item de borderô de UM grupo, pela mesma sequência da I17e
+     * (`ler → validacao → confirma → releitura → PUT → releitura`), sem decisão por título: vale o
+     * grupo `CONFIRMADO`, o par `VIGENTE` e o boleto relido do pool. O valor é o do item do
+     * borderô (H6); a I17n não se aplica. Independe do modo I17k: quem decide rodar é o chamador
+     * (kill-switch). Transitória/ambígua ⇒ `GroupBorderoIncompleteError` (nunca retira);
+     * determinística ⇒ `retirar`.
+     */
+    public vincularItemDeBordero = async (input: {
+        lote: LotePagamento;
+        grupo: GrupoBoleto;
+        borCod: number;
+        bncCod: number;
+        flpCod: number;
+        bancoLote?: number;
+    }): Promise<ResultadoVinculoBordero> => {
+        const { lote, grupo, borCod, bncCod, flpCod, bancoLote } = input;
+        const ctxNativo = { filCod: grupo.filCod, bncCod, flpCod, borCod };
+        const abortar = async (causa: string, mascarado?: string): Promise<never> => {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'barra do boleto agrupado: execução interrompida (retomável)',
+                data: { grupoId: grupo.id, borCod, flpCod, causa, codigo: mascarado },
+            });
+            throw new GroupBorderoIncompleteError({
+                grupoId: grupo.id,
+                filCod: grupo.filCod,
+                borCod,
+                flpCod,
+                etapa: 'vincular_codbar',
+            });
+        };
+        const lerItem = async (mascarado?: string): Promise<ItemDeBordero> => {
+            let item: ItemDeBordero | undefined;
+            try {
+                item = await this.write.lerItemDeBordero(ctxNativo);
+            } catch {
+                return abortar('LEITURA_FALHOU', mascarado);
+            }
+            return item ?? abortar('ITEM_AUSENTE_NO_RASCUNHO', mascarado);
+        };
+        const retirar = async (
+            campo: CampoDivergenteVinculo,
+            motivo: string,
+            item: ItemDeBordero,
+            codigoMascarado?: string,
+        ): Promise<ResultadoVinculoBordero> => {
+            const aviso =
+                `O código do boleto agrupado${codigoMascarado ? ` ${codigoMascarado}` : ''} não ` +
+                `pôde ser vinculado ao borderô ${borCod} (${motivo}). O grupo sai da remessa.`;
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'barra do boleto agrupado recusada: o grupo será retirado',
+                data: { grupoId: grupo.id, borCod, flpCod, campo, motivo, codigo: codigoMascarado },
+            });
+            return {
+                tipo: 'retirar',
+                grupoId: grupo.id,
+                campo,
+                motivo,
+                ...(codigoMascarado ? { codigoMascarado } : {}),
+                itsCodSeq: item.itsCodSeq,
+                aviso,
+            };
+        };
+
+        // 1. O item de borderô vivo e o boleto/par ATUAIS (nunca cache).
+        const item = await lerItem();
+        const boleto = await this.boletos.buscarPorChave({
+            ddcCod: grupo.ddcCod,
+            ditCod: grupo.ditCod,
+        });
+        const par = grupo.confirmacaoEmissorId
+            ? await this.sugestoes.buscarParPorId(grupo.confirmacaoEmissorId)
+            : null;
+
+        // 2. Item que já traz código: idempotência (I17f) ou edição de terceiro.
+        const codigoNoItem = soDigitos(item.row.itsNumCodbar);
+        if (codigoNoItem !== '') {
+            return this.reconhecerBorderoComCodigo({ grupo, borCod, flpCod, item, boleto });
+        }
+
+        // 3. Elegibilidade (I21o) recalculada AGORA.
+        const itsValor = Number(item.itsMnyValor);
+        const elegibilidade = this.elegibilidade.avaliarItemDeBordero({
+            noRascunho: true,
+            grupo: {
+                estado: grupo.estado,
+                orfao: boleto?.docCod !== undefined && boleto.docCod !== null,
+                parVigente: par?.estado === ESTADO_CONFIRMACAO_EMISSOR.VIGENTE,
+                valorBoletoCentavos: grupo.valorBoletoCentavos,
+                vencimentoBoleto: grupo.vencimentoBoleto,
+            },
+            ...(boleto?.codbar ? { codigo: boleto.codbar } : {}),
+            ...(boleto?.valor !== undefined ? { poolValor: boleto.valor } : {}),
+            ...(boleto?.vencimento !== undefined ? { poolVencimento: boleto.vencimento } : {}),
+            ...(Number.isFinite(itsValor) ? { itsMnyValorCentavos: centavos(itsValor) } : {}),
+            dataDebito: lote.dataDebito ?? grupo.vencimentoBoleto,
+        });
+        if (!elegibilidade.elegivel || !boleto?.codbar) {
+            return retirar(
+                CAMPO_DIVERGENTE_VINCULO.ELEGIBILIDADE,
+                elegibilidade.motivo ?? MOTIVO_INELEGIVEL_VINCULO.BOLETO_INDISPONIVEL,
+                item,
+                elegibilidade.codigoMascarado,
+            );
+        }
+        const decodificado = this.codigoBarras.decodificar(
+            boleto.codbar.replace(/[\s.]/g, ''),
+            grupo.vencimentoBoleto,
+        );
+        const mascarado = elegibilidade.codigoMascarado as string;
+        if (!decodificado) {
+            return retirar(
+                CAMPO_DIVERGENTE_VINCULO.ELEGIBILIDADE,
+                MOTIVO_INELEGIVEL_VINCULO.CODIGO_INVALIDO,
+                item,
+                mascarado,
+            );
+        }
+        const barras = decodificado.barras;
+        const valorCentavos = decodificado.valorCentavos;
+
+        // 4. validacao → confirma. O ERP só decodifica; julgamos nós.
+        const linha = this.codigoBarras.paraLinhaDigitavel(barras) as string;
+        const vencimentoEpoch = this.calendar.toErpEpoch(grupo.vencimentoBoleto);
+        const modalidade =
+            bancoLote === undefined
+                ? Number(item.itsVldModalidade) || MODALIDADE_ITEM.MESMO_BANCO
+                : Number(decodificado.banco) === bancoLote
+                  ? MODALIDADE_ITEM.MESMO_BANCO
+                  : MODALIDADE_ITEM.OUTRO_BANCO;
+        const base = {
+            filCod: grupo.filCod,
+            bncCod,
+            codigo: linha,
+            valorLiquido: valorCentavos / 100,
+            vencimento: vencimentoEpoch,
+            modalidade,
+        };
+        let validacao: Awaited<ReturnType<ConexosSispagWriteClient['validarCodigoBarras']>>;
+        try {
+            validacao = await this.write.validarCodigoBarras(base);
+        } catch (err) {
+            if (this.ehRecusaDeNegocio(err)) {
+                return retirar(
+                    CAMPO_DIVERGENTE_VINCULO.ELEGIBILIDADE,
+                    'ERP_RECUSOU_VALIDACAO',
+                    item,
+                    mascarado,
+                );
+            }
+            return abortar('VALIDACAO_TRANSITORIA', mascarado);
+        }
+        if (centavos(validacao.barraVlrPgto) !== valorCentavos) {
+            return retirar(CAMPO_DIVERGENTE_VINCULO.VALOR, 'VALOR_DA_VALIDACAO', item, mascarado);
+        }
+        let confirma: Awaited<ReturnType<ConexosSispagWriteClient['confirmarCodigoBarras']>>;
+        try {
+            confirma = await this.write.confirmarCodigoBarras({ ...base, validacao });
+        } catch (err) {
+            if (this.ehRecusaDeNegocio(err)) {
+                return retirar(
+                    CAMPO_DIVERGENTE_VINCULO.ELEGIBILIDADE,
+                    'ERP_RECUSOU_CONFIRMACAO',
+                    item,
+                    mascarado,
+                );
+            }
+            return abortar('CONFIRMACAO_TRANSITORIA', mascarado);
+        }
+        const divergencia = this.divergenciaPosConfirma({
+            confirma,
+            banco: decodificado.banco,
+            valorBarraCentavos: valorCentavos,
+            vencimentoEpoch,
+        });
+        if (divergencia) return retirar(divergencia.campo, divergencia.campo, item, mascarado);
+
+        // 5. Releitura IMEDIATAMENTE antes do PUT (sem lock otimista no ERP, V3).
+        const fresco = await lerItem(mascarado);
+        if (fresco.itsCodSeq !== item.itsCodSeq)
+            return abortar('ITEM_MUDOU_ANTES_DO_PUT', mascarado);
+        if (soDigitos(fresco.row.itsNumCodbar) !== '') {
+            throw this.terceiroNoBordero(borCod, flpCod, CAMPO_EDITADO_POR_TERCEIRO.CODIGO);
+        }
+
+        // 6. PUT de tentativa ÚNICA; a falha NÃO decide, a releitura decide.
+        const trocaModalidade = Number(fresco.row.itsVldModalidade) !== modalidade;
+        const esperado = {
+            itsNumBanco: confirma.itsBncNumCodbancoResult,
+            bncDesNome: confirma.itsBncDesNomeResult,
+            itsMnyVlrPgto: confirma.itsMnyVlrPgtoResult,
+            itsDtaPgto: confirma.itsDtaPgtoResult,
+            ...(trocaModalidade ? { itsVldModalidade: modalidade } : {}),
+        };
+        let putRecusado = false;
+        try {
+            await this.write.editarItemDoRascunho({
+                filCod: grupo.filCod,
+                bncCod,
+                flpCod,
+                item: fresco.row,
+                alteracoes: { itsNumCodbar: linha, ...esperado },
+            });
+        } catch (err) {
+            putRecusado = this.ehRecusaDeNegocio(err);
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'barra do boleto agrupado: PUT do item falhou — a releitura decide',
+                data: { grupoId: grupo.id, borCod, flpCod, recusaDeNegocio: putRecusado },
+            });
+        }
+
+        // 7. Sucesso = o que se OBSERVA (código, banco, valor, data e modalidade).
+        const depois = await lerItem(mascarado);
+        const observado =
+            this.bate(depois.row, barras, esperado) &&
+            centavos(depois.row.itsMnyVlrPgto) === valorCentavos;
+        if (!observado) {
+            if (soDigitos(depois.row.itsNumCodbar) !== '') {
+                throw this.terceiroNoBordero(borCod, flpCod, CAMPO_EDITADO_POR_TERCEIRO.CODIGO);
+            }
+            if (putRecusado) {
+                return retirar(
+                    CAMPO_DIVERGENTE_VINCULO.ELEGIBILIDADE,
+                    'ERP_RECUSOU_PUT',
+                    item,
+                    mascarado,
+                );
+            }
+            return abortar('PUT_NAO_OBSERVADO', mascarado);
+        }
+        return { tipo: 'vinculado', codigoMascarado: mascarado, jaVinculado: false };
+    };
+
+    /** Item de borderô que já traz código: igual ao esperado ⇒ idempotente; diferente ⇒ terceiro. */
+    private reconhecerBorderoComCodigo = (p: {
+        grupo: GrupoBoleto;
+        borCod: number;
+        flpCod: number;
+        item: ItemDeBordero;
+        boleto: { codbar?: string } | null;
+    }): ResultadoVinculoBordero => {
+        const { grupo, borCod, flpCod, item, boleto } = p;
+        const terceiro = (campo: keyof typeof CAMPO_EDITADO_POR_TERCEIRO): never => {
+            throw this.terceiroNoBordero(borCod, flpCod, CAMPO_EDITADO_POR_TERCEIRO[campo]);
+        };
+        if (!boleto?.codbar) return terceiro('CODIGO');
+        const dec = this.codigoBarras.decodificar(
+            boleto.codbar.replace(/[\s.]/g, ''),
+            grupo.vencimentoBoleto,
+        );
+        if (!dec) return terceiro('CODIGO');
+        const noItem = this.codigoBarras.paraBarras(soDigitos(item.row.itsNumCodbar));
+        if (noItem !== dec.barras) return terceiro('CODIGO');
+        if (centavos(item.row.itsMnyVlrPgto) !== dec.valorCentavos) return terceiro('VALOR');
+        const dataEsperada = dec.vencimento ? this.calendar.toErpEpoch(dec.vencimento) : undefined;
+        if (dataEsperada !== undefined && Number(item.row.itsDtaPgto) !== dataEsperada) {
+            return terceiro('DATA');
+        }
+        return {
+            tipo: 'vinculado',
+            codigoMascarado: AnaliseCodigoBarrasRepetido.mascarar(dec.barras),
+            jaVinculado: true,
+        };
+    };
+
+    /** O item de borderô não tem `docCod/titCod`: o erro de terceiro o identifica pelo `borCod`. */
+    private terceiroNoBordero = (
+        borCod: number,
+        flpCod: number,
+        campo: (typeof CAMPO_EDITADO_POR_TERCEIRO)[keyof typeof CAMPO_EDITADO_POR_TERCEIRO],
+    ): ItemEditadoPorTerceiroError =>
+        new ItemEditadoPorTerceiroError({
+            docCod: `borderô ${borCod}`,
+            titCod: '-',
+            campo,
+            flpCod,
+        });
 
     /**
      * Item com código vinculado POR NÓS (`DECISAO_HUMANA`) cuja decisão deixou de ser `CONFIRMADA`
