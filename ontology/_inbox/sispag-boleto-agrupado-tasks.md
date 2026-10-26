@@ -623,11 +623,18 @@ Paralelismo: **Fase A inteira** em paralelo; na Fase D, T9/T10/T11/T12/T13 em pa
 - `ontology/_inbox/sispag-boleto-agrupado-hml-achados.md` (seção "PRD só leitura" com os números)
 
 **Acceptance criteria:**
-- [ ] GT1: roda o `MotorGrupoBoleto` sobre carteira + pool reais; registra grupos sugeridos, confirmáveis, não confirmáveis por motivo, intercambiáveis e cruzados; PEDRONI 38883–38885 × 332841 presente (se ainda em aberto) ou justificada a ausência; zero subconjunto
-- [ ] GT2: para cada título dos grupos sugeridos, `fin064` ao vivo pela régua líquida × `valor` local; quantos grupos a confirmação recusaria (alimenta G1)
+- [~] GT1: roda o `MotorGrupoBoleto` sobre carteira + pool reais; registra grupos sugeridos, confirmáveis, não confirmáveis por motivo, intercambiáveis e cruzados; PEDRONI 38883–38885 × 332841 presente (se ainda em aberto) ou justificada a ausência; zero subconjunto
+- [~] GT2: para cada título dos grupos sugeridos, `fin064` ao vivo pela régua líquida × `valor` local; quantos grupos a confirmação recusaria (alimenta G1)
 - [ ] V1 (opcional, não portão): permissão do CLONEX para `fin010` borderô/baixa e `fin015 borderosPendentes` lida pela matriz (`ger014`) ou pedida à Columbia; aviso no topo do job de que o login derruba a sessão viva (modelo `probe-prd-readonly-permissao-fin015.ts`)
-- [ ] Roda com `databaseConnectionString=""` quando não precisa do banco, sem contaminar a sessão do robô; fora do horário de remessa, com OK do maintainer; saída sem código completo; datas com `at time zone 'UTC'`
+- [~] Roda com `databaseConnectionString=""` quando não precisa do banco, sem contaminar a sessão do robô; fora do horário de remessa, com OK do maintainer; saída sem código completo; datas com `at time zone 'UTC'`
 - [ ] **Bloqueia o merge** (GT1/GT2); V1 não
+
+**Desvios e notas da entrega (Task 22, 2026-10-26):** job e testes entregues (`jobs/validate-sispag-boleto-agrupado-v1.ts`, 25 testes); **não executado em PRD**. Critérios `[~]` = pronto, medição pendente do go do maintainer. V1 (opcional) fora do job.
+- Reaproveita `GuardaSomenteLeituraConexos`, `SessaoUnicaConexos` e `TravaSomenteLeituraPg` do job do ajuste de centavos; só `fin064/list` sai para o Conexos; `conferirGuardasBoletoAgrupado` recusa HML, CLONEX e banco local.
+- Não sobe `bootstrapAppContainer`: resolve só os repositórios de leitura e confere `SHOW default_transaction_read_only`.
+- "Zero subconjunto": a UNIÃO das sugestões de um conjunto (intercambiáveis dividem o conjunto entre K boletos) precisa cobrir todos os títulos abertos dele.
+- Aviso do Biome (não bloqueia): complexidade cognitiva de `gt2` (26 > 15).
+- Premissa não verificada: os repositórios só fazem SELECT nos métodos usados (`listAtivos`, `listBoletos`, `listarParesVigentes`, `listarChaveadas`, `listarConfirmados`, `listTitulosEmLotesComprometidos`); a trava do pg garante que uma escrita falharia.
 
 **Dependencies:** Task 9 (pode rodar em paralelo às Fases F–H)
 
