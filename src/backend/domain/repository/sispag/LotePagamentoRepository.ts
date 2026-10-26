@@ -114,6 +114,9 @@ interface ItemRow {
     vinculo_flp_cod?: number | null;
     // ── 0090: grupo de boleto (ADR-0077, I21j) ──
     grupo_boleto_id?: string | null;
+    vinculo_caminho?: string | null;
+    vinculo_delta_dias?: number | null;
+    vinculo_reconhecimento_id?: string | null;
 }
 
 /** Um título do grupo no momento da inclusão (snapshot para o item local). */
@@ -242,6 +245,15 @@ export default class LotePagamentoRepository {
                 codigoMascarado: r.vinculo_codigo_mascarado,
                 aplicadoEm: new Date(r.vinculo_aplicado_em).toISOString(),
                 flpCod: Number(r.vinculo_flp_cod),
+                ...(r.vinculo_caminho != null
+                    ? { caminho: r.vinculo_caminho as VinculoCodigoBarrasItem['caminho'] }
+                    : {}),
+                ...(r.vinculo_delta_dias != null
+                    ? { deltaDias: Number(r.vinculo_delta_dias) }
+                    : {}),
+                ...(r.vinculo_reconhecimento_id != null
+                    ? { reconhecimentoId: r.vinculo_reconhecimento_id }
+                    : {}),
             },
         };
     };
@@ -488,7 +500,8 @@ export default class LotePagamentoRepository {
                     i.baixa_fonte, i.divergencia, i.divergencia_detalhe, i.sincronizado_em,
                     i.verificacao_estado, i.verificado_em, i.destino_mascarado, i.autorizacao_aviso,
                     i.vinculo_origem, i.vinculo_decisao_id, i.vinculo_codigo_mascarado,
-                    i.vinculo_aplicado_em, i.vinculo_flp_cod, i.grupo_boleto_id
+                    i.vinculo_aplicado_em, i.vinculo_flp_cod, i.grupo_boleto_id,
+                    i.vinculo_caminho, i.vinculo_delta_dias, i.vinculo_reconhecimento_id
              FROM lote_pagamento_item i
              WHERE i.lote_id = $id ORDER BY i.incluido_em ASC, i.id ASC`,
             { id },
@@ -1450,6 +1463,10 @@ export default class LotePagamentoRepository {
             decisaoId?: string;
             codigoMascarado: string;
             flpCod: number;
+            /** ADR-0078 (0091): caminho do vínculo; ausente = `JANELA_PADRAO` legado (colunas nulas). */
+            caminho?: VinculoCodigoBarrasItem['caminho'];
+            deltaDias?: number;
+            reconhecimentoId?: string;
         },
         tx?: TransactionClient,
     ): Promise<boolean> => {
@@ -1460,7 +1477,9 @@ export default class LotePagamentoRepository {
             `UPDATE lote_pagamento_item
                 SET vinculo_origem = $origem, vinculo_decisao_id = $decisaoId::uuid,
                     vinculo_codigo_mascarado = $codigoMascarado, vinculo_aplicado_em = now(),
-                    vinculo_flp_cod = $flpCod
+                    vinculo_flp_cod = $flpCod, vinculo_caminho = $caminho,
+                    vinculo_delta_dias = $deltaDias,
+                    vinculo_reconhecimento_id = $reconhecimentoId::uuid
               WHERE lote_id = $loteId AND fil_cod = $filCod
                 AND doc_cod = $docCod AND tit_cod = $titCod`,
             {
@@ -1472,6 +1491,9 @@ export default class LotePagamentoRepository {
                 decisaoId: params.decisaoId ?? null,
                 codigoMascarado: params.codigoMascarado,
                 flpCod: params.flpCod,
+                caminho: params.caminho ?? null,
+                deltaDias: params.deltaDias ?? null,
+                reconhecimentoId: params.reconhecimentoId ?? null,
             },
         );
         if (n === 0) return false;

@@ -7,6 +7,7 @@ import {
     type ResumoSituacao,
     type SituacaoPagamento,
 } from '../../interface/sispag/SituacaoPagamento.js';
+import type { PrazoBoleto } from '../../interface/sispag/PrazoBoleto.js';
 import type { SituacaoSugestaoTitulo } from '../../interface/sispag/SugestaoBoleto.js';
 import type { EtapaAjuste } from '../../libs/boleto/EtapaAjusteCentavos.js';
 import ModoVinculoCodigoBarras, {
@@ -19,6 +20,7 @@ import BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDupli
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
 import BoletoSuggestionService from './BoletoSuggestionService.js';
+import PrazoBoletoCalculador from './PrazoBoletoCalculador.js';
 import SituacaoPagamentoResolver, {
     type ContextoSituacaoPagamento,
 } from './SituacaoPagamentoResolver.js';
@@ -34,6 +36,8 @@ const chaveDe = (t: { filCod: number; docCod: string; titCod: string }): string 
 interface ContextoCarregado {
     contexto: ContextoSituacaoPagamento;
     fontesIndisponiveis: FonteSituacao[];
+    /** Prazo efetivo pelo boleto por título (I19t); vazio se a fonte `BOLETO` falhou (fail-open). */
+    prazos: ReadonlyMap<string, PrazoBoleto>;
 }
 
 /** Desfecho da avaliação na inclusão (I19s): só `AVALIADA` traz uma situação. */
@@ -81,6 +85,26 @@ export default class SituacaoPagamentoService {
             ? t
             : { ...t, diasAteVencimento: this.calendar.diasAteVencimento(t.vencimento) };
 
+    /**
+     * Prazo efetivo do título (I19t, derivado, nunca persistido). Título com desfecho de boleto traz
+     * o prazo do cenário; sem ele (fonte `BOLETO` indisponível, ou título sem sugestão) o prazo é o
+     * vencimento do título — fail-open com aviso em `fontesIndisponiveis`. Título sem vencimento
+     * não tem prazo.
+     */
+    private prazoDe = (
+        t: TituloAPagar,
+        prazos: ReadonlyMap<string, PrazoBoleto>,
+    ): PrazoBoleto | undefined => {
+        const doCenario = prazos.get(chaveDe(t));
+        if (doCenario) return doCenario;
+        if (t.vencimento === undefined) return undefined;
+        return PrazoBoletoCalculador.paraTitulo({
+            vencimentoTitulo: this.calendar.fromErpEpoch(t.vencimento),
+            desfecho: undefined,
+            hoje: this.calendar.todayBrt(),
+        });
+    };
+
     /** Lê uma fonte; falha vira `undefined` + registro da fonte indisponível. */
     private ler = async <T>(
         fonte: FonteSituacao,
@@ -102,7 +126,7 @@ export default class SituacaoPagamentoService {
 
     private carregarContexto = async (): Promise<ContextoCarregado> => {
         const fontesIndisponiveis: FonteSituacao[] = [];
-        const [bloqueios, ajustes, desfechos, env] = await Promise.all([
+        const [bloqueios, ajustes, doBoleto, env] = await Promise.all([
             this.ler(FONTE_SITUACAO.DUPLICIDADE, fontesIndisponiveis, async () => {
                 const lista = await this.bloqueioRepo.listAtivos();
                 return new Map<string, { origem: DuplicateHoldOrigin }>(
@@ -112,8 +136,9 @@ export default class SituacaoPagamentoService {
             this.ler(FONTE_SITUACAO.AJUSTE_CENTAVOS, fontesIndisponiveis, () =>
                 this.ajusteRepo.listarUltimaEtapaPorTitulo(),
             ),
+            // Um só batch do cenário: situação, motivo da órfã por ack inválido e prazo (I19t).
             this.ler(FONTE_SITUACAO.BOLETO, fontesIndisponiveis, () =>
-                this.boleto.situacaoPorTitulo(),
+                this.boleto.contextoPorTitulo(),
             ),
             // O modo do vínculo só é lido para decidir "boleto confirmado"; falhou ⇒ `off`
             // (fail-closed): a confirmação não destrava nada.
@@ -127,12 +152,19 @@ export default class SituacaoPagamentoService {
             contexto: {
                 ...(bloqueios ? { bloqueios } : {}),
                 ...(ajustes ? { ajustes: ajustes as ReadonlyMap<string, EtapaAjuste> } : {}),
-                ...(desfechos
-                    ? { desfechos: desfechos as ReadonlyMap<string, SituacaoSugestaoTitulo> }
+                ...(doBoleto
+                    ? {
+                          desfechos: doBoleto.situacoes as ReadonlyMap<
+                              string,
+                              SituacaoSugestaoTitulo
+                          >,
+                          motivosOrfa: doBoleto.motivosOrfa,
+                      }
                     : {}),
                 modoVinculo,
             },
             fontesIndisponiveis,
+            prazos: doBoleto?.prazos ?? new Map<string, PrazoBoleto>(),
         };
     };
 
@@ -141,8 +173,12 @@ export default class SituacaoPagamentoService {
      * devolve o resumo por estado, motivo e dono.
      */
     public avaliarCarteira = async (titulos: TituloAPagar[]): Promise<ResumoSituacao> => {
-        const { contexto, fontesIndisponiveis } = await this.carregarContexto();
-        for (const t of titulos) t.situacaoPagamento = this.resolver.avaliar(t, contexto);
+        const { contexto, fontesIndisponiveis, prazos } = await this.carregarContexto();
+        for (const t of titulos) {
+            t.situacaoPagamento = this.resolver.avaliar(t, contexto);
+            const prazo = this.prazoDe(t, prazos);
+            if (prazo) t.prazoBoleto = prazo;
+        }
         // Título em lote FINALIZADO/REMESSA_GERADA já está comprometido (ADR-0064): não é "pronto
         // para pagar" nem "precisa de ação", e a tabela o esconde por padrão. Fora das contagens,
         // senão os cards mostrariam mais prontos do que a tela deixa selecionar.

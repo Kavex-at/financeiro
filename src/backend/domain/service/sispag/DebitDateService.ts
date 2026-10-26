@@ -9,7 +9,9 @@ import {
     LOTE_STATUS,
     type LotePagamento,
     type TituloLimitante,
+    VINCULO_CAMINHO,
 } from '../../interface/sispag/SispagInterface.js';
+import DataCandidataItem from '../../libs/boleto/DataCandidataItem.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 
@@ -25,6 +27,9 @@ import LotePagamentoRepository from '../../repository/sispag/LotePagamentoReposi
  * - O dia civil de um vencimento é o dia UTC (`fromErpEpoch`): o ERP grava 00:00Z/15:00Z do dia
  *   pretendido, e converter para BRT encolheria a janela em um dia.
  * - Na dúvida, fecha: item sem vencimento torna a janela vazia.
+ * - I8c (ADR-0078): item vinculado pelo caminho `DATA_DIVERGENTE` conta com a sua data candidata,
+ *   `min(título, prazo final da barra)`; vale só para os itens DESTE lote (Δ<0 não puxa outro lote).
+ *   Item sem `caminho` (legado, `JANELA_PADRAO`) tem a janela de sempre.
  *
  * Fonte única do calendário: a rota expõe a janela já recortada e a tela só exibe.
  */
@@ -177,10 +182,36 @@ export default class DebitDateService {
         let melhor: { item: ItemLote; civil: string } | undefined;
         for (const item of itens) {
             if (item.vencimento === undefined) continue;
-            const civil = this.calendar.fromErpEpoch(item.vencimento);
+            const civil = this.vencimentoEfetivo(item, item.vencimento);
             if (!melhor || civil < melhor.civil) melhor = { item, civil };
         }
         return melhor;
+    };
+
+    /**
+     * Vencimento que limita a janela (R2): o do título, ou — no caminho `DATA_DIVERGENTE` — a data
+     * candidata (I8c). Sem data possível, o item limita em `hoje - 1` só se a barra já passou (a
+     * janela fica vazia por `TITULO_VENCIDO`, fail-closed); a formação não deve vinculá-lo (I8c).
+     */
+    private vencimentoEfetivo = (item: ItemLote, vencimento: number): string => {
+        const civilTitulo = this.calendar.fromErpEpoch(vencimento);
+        const v = item.vinculoCodigoBarras;
+        if (
+            v?.caminho !== VINCULO_CAMINHO.DATA_DIVERGENTE ||
+            v.deltaDias === undefined ||
+            !Number.isInteger(v.deltaDias)
+        ) {
+            return civilTitulo;
+        }
+        const barra = this.calendar.addDays(civilTitulo, v.deltaDias);
+        const data = DataCandidataItem.calcular({
+            vencimentoTitulo: civilTitulo,
+            vencimentoBarra: barra,
+            hoje: this.calendar.todayBrt(),
+        });
+        // Sem data possível: nada a relaxar — mantém o menor dos dois, que a janela rejeita.
+        if (!data.possivel) return barra < civilTitulo ? barra : civilTitulo;
+        return data.candidata;
     };
 
     private limitante = (item: ItemLote): TituloLimitante => ({
@@ -188,7 +219,7 @@ export default class DebitDateService {
         ...(item.credor ? { credor: item.credor } : {}),
         documento: `${item.docCod}/${item.titCod}`,
         ...(item.vencimento !== undefined
-            ? { vencimento: this.calendar.fromErpEpoch(item.vencimento) }
+            ? { vencimento: this.vencimentoEfetivo(item, item.vencimento) }
             : {}),
     });
 }

@@ -176,7 +176,10 @@ describe('RegraSugestaoBoleto — boleto vencido na data de débito (I15h)', () 
     it('data de débito ajustada (fim de semana): vencimento sábado, débito segunda', () => {
         // 2026-10-31 é sábado; o lote debita na segunda 2026-11-02 (I8)
         const base = { vencTitulo: '2026-10-31', dataDebito: '2026-11-02' };
-        expect(avaliar({ ...base, vencBoleto: '2026-10-31' }).resultado).toBe(
+        // ADR-0078: a barra de sábado vence no próximo dia útil (segunda) ⇒ NÃO está vencida no débito.
+        expect(avaliar({ ...base, vencBoleto: '2026-10-31' }).resultado).toBe('FORTE');
+        // Barra de sexta (dia útil, sem rolagem) com débito na segunda segue vencida.
+        expect(avaliar({ ...base, vencBoleto: '2026-10-30' }).resultado).toBe(
             'VENCIDO_INFORMATIVO',
         );
         // boleto vence na segunda: +2 dias, valor igual, não antes do débito → FORTE
@@ -257,12 +260,12 @@ describe('RegraSugestaoBoleto — aviso VENCE_ANTES_DO_TITULO (I15o, ADR-0072)',
     });
 
     it('caso A: boleto antes da data de débito → VENCIDO_INFORMATIVO, não confirmável, com dias de atraso', () => {
-        // título 20/10, boleto 17/10, débito 20/10 → vencido há 3 dias no débito
-        const r = avaliar({ vencBoleto: '2026-10-17', dataDebito: '2026-10-20' });
+        // título 20/10, boleto 15/10 (quinta, dia útil), débito 20/10 → vencido há 5 dias no débito
+        const r = avaliar({ vencBoleto: '2026-10-15', dataDebito: '2026-10-20' });
         expect(r.resultado).toBe('VENCIDO_INFORMATIVO');
         expect(r.confirmavel).toBe(false);
         expect(r.sinais).toContain('VENCE_ANTES_DO_TITULO');
-        expect(r.diasVencidoNoDebito).toBe(3);
+        expect(r.diasVencidoNoDebito).toBe(5);
     });
 
     it('caso B: Δ < 0, boleto ainda vale no débito antecipado → ATENCAO, sinal, 0 dia vencido', () => {
@@ -369,8 +372,106 @@ describe('RegraSugestaoBoleto — âncora DPS (I15p, ADR-0073)', () => {
     });
 
     it('ordemDps não alarga I15h: boleto vencido no débito segue VENCIDO_INFORMATIVO', () => {
-        const r = avaliar({ ...multilog, ordemDps: true, dataDebito: '2026-10-25' });
+        const r = avaliar({ ...multilog, ordemDps: true, dataDebito: '2026-10-27' });
         expect(r.resultado).toBe('VENCIDO_INFORMATIVO');
         expect(r.confirmavel).toBe(false);
+    });
+});
+
+describe('RegraSugestaoBoleto — prazo final da barra e exigência de reconhecimento (ADR-0078)', () => {
+    // 2026-10-20 é terça; 2026-10-24 é sábado; 2026-10-26 é segunda.
+    it('barra de sábado com débito na segunda NÃO é vencida (rolagem ao próximo dia útil)', () => {
+        const r = avaliar({
+            vencTitulo: '2026-10-23',
+            vencBoleto: '2026-10-24',
+            dataDebito: '2026-10-26',
+        });
+        expect(r.resultado).not.toBe('VENCIDO_INFORMATIVO');
+        expect(r.prazoFinalBoleto).toBe('2026-10-26');
+        expect(r.diasVencidoNoDebito).toBe(0);
+    });
+
+    it('barra de sábado com débito na terça seguinte É vencida', () => {
+        const r = avaliar({
+            vencTitulo: '2026-10-23',
+            vencBoleto: '2026-10-24',
+            dataDebito: '2026-10-27',
+        });
+        expect(r.resultado).toBe('VENCIDO_INFORMATIVO');
+        expect(r.diasVencidoNoDebito).toBe(1);
+        expect(r.exigeReconhecimento).toBe('NENHUM');
+    });
+
+    it('prazo final de barra em dia útil é o próprio vencimento', () => {
+        expect(avaliar({}).prazoFinalBoleto).toBe('2026-10-20');
+    });
+
+    it('título não rola: título de sábado com débito no sábado segue sem rolagem', () => {
+        const r = avaliar({ vencTitulo: '2026-10-24', vencBoleto: '2026-10-24' });
+        expect(r.resultado).toBe('FORTE');
+    });
+
+    describe('exigeReconhecimento', () => {
+        it.each([
+            [-10, 'DATA_DIVERGENTE'],
+            [-3, 'DATA_DIVERGENTE'],
+            [-1, 'DATA_DIVERGENTE'],
+            [0, 'NENHUM'],
+            [1, 'NENHUM'],
+            [5, 'NENHUM'],
+            [6, 'DATA_DIVERGENTE'],
+            [7, 'DATA_DIVERGENTE'],
+            [10, 'DATA_DIVERGENTE'],
+            [11, 'NENHUM'],
+            [-11, 'NENHUM'],
+        ])('valor igual com Δdias %i ⇒ %s', (delta, esperado) => {
+            // Débito antecipado: nunca antes de "hoje" do teste e antes de qualquer barra.
+            const venc = '2026-11-10';
+            const barra = new Date(Date.parse(`${venc}T00:00:00Z`) + delta * 86_400_000)
+                .toISOString()
+                .slice(0, 10);
+            const r = avaliar({ vencTitulo: venc, vencBoleto: barra, dataDebito: '2026-10-01' });
+            expect(r.exigeReconhecimento).toBe(esperado);
+        });
+
+        it('valor diferente (ATENCAO) nunca exige o reconhecimento tipado', () => {
+            const r = avaliar({
+                valorTitulo: 100,
+                valorBoleto: 100.5,
+                vencTitulo: '2026-11-10',
+                vencBoleto: '2026-11-07',
+                dataDebito: '2026-10-01',
+            });
+            expect(r.resultado).toBe('ATENCAO');
+            expect(r.exigeReconhecimento).toBe('NENHUM');
+        });
+
+        it('boleto vencido na data de débito nunca exige (segue informativo)', () => {
+            const r = avaliar({ vencTitulo: '2026-10-20', vencBoleto: '2026-10-14' });
+            expect(r.resultado).toBe('VENCIDO_INFORMATIVO');
+            expect(r.exigeReconhecimento).toBe('NENHUM');
+        });
+
+        it('fora do envelope (SEM_RELACAO) nunca exige', () => {
+            const r = avaliar({
+                vencTitulo: '2026-11-10',
+                vencBoleto: '2026-12-10',
+                dataDebito: '2026-10-01',
+            });
+            expect(r.resultado).toBe('SEM_RELACAO');
+            expect(r.exigeReconhecimento).toBe('NENHUM');
+        });
+    });
+
+    it('tier, limites e confirmabilidade da tabela atual seguem iguais (regressão)', () => {
+        expect(avaliar({ vencBoleto: '2026-10-25', dataDebito: '2026-10-20' }).resultado).toBe(
+            'FORTE',
+        );
+        expect(avaliar({ vencBoleto: '2026-10-26', dataDebito: '2026-10-20' }).resultado).toBe(
+            'ATENCAO',
+        );
+        expect(avaliar({ vencBoleto: '2026-10-26', dataDebito: '2026-10-20' }).confirmavel).toBe(
+            true,
+        );
     });
 });

@@ -5,6 +5,8 @@ import { container } from 'tsyringe';
 import BoletoAlreadySuggestedToOtherTitleError from '../../errors/BoletoAlreadySuggestedToOtherTitleError.js';
 import BoletoSuggestionNotAvailableError from '../../errors/BoletoSuggestionNotAvailableError.js';
 import DecisionNotConfirmedError from '../../errors/DecisionNotConfirmedError.js';
+import DivergenceAcknowledgementRequiredError from '../../errors/DivergenceAcknowledgementRequiredError.js';
+import DivergenceAcknowledgementStaleError from '../../errors/DivergenceAcknowledgementStaleError.js';
 import IssuerConfirmationNotFoundError from '../../errors/IssuerConfirmationNotFoundError.js';
 import IssuerConfirmationReasonRequiredError from '../../errors/IssuerConfirmationReasonRequiredError.js';
 import IssuerConfirmationVersionConflictError from '../../errors/IssuerConfirmationVersionConflictError.js';
@@ -1306,12 +1308,12 @@ describe('BoletoSuggestionService — desfecho por título e aviso (I15m–I15o,
                 avisoVenceAntes: 'ATENCAO',
                 diasVencidoNoDebito: 0,
             });
-            const a = montar({ boletos: [{ ...BOLETO, vencimento: '2026-10-17' }] });
+            const a = montar({ boletos: [{ ...BOLETO, vencimento: '2026-10-15' }] });
             const ra = await a.service.listarSugestoes({});
             expect(ra.titulos[0]).toMatchObject({
                 situacao: 'SO_VENCIDA',
                 avisoVenceAntes: 'CRITICO',
-                diasVencidoNoDebito: 3,
+                diasVencidoNoDebito: 5,
             });
         });
 
@@ -1464,8 +1466,10 @@ describe('BoletoSuggestionService — desfecho por título e aviso (I15m–I15o,
     });
 
     describe('confirmar: aviso VENCE_ANTES_DO_TITULO exige reconhecimento (422)', () => {
+        // Valor DIFERENTE (+R$ 0,50): sem passo 2 por valor, vale o aviso SIMPLES de hoje (I15o).
+        const BOLETO_ANTES_VALOR = { ...BOLETO_ANTES, valor: 100.5 };
         const caminhoB = () => {
-            const m = montar({ boletos: [BOLETO_ANTES], pares: [PAR] });
+            const m = montar({ boletos: [BOLETO_ANTES_VALOR], pares: [PAR] });
             comLote(m);
             return m;
         };
@@ -1493,6 +1497,7 @@ describe('BoletoSuggestionService — desfecho por título e aviso (I15m–I15o,
                 expect.arrayContaining(['VENCE_ANTES_DO_TITULO', 'RECONHECEU_VENCE_ANTES']),
             );
             expect(dec).toMatchObject({ tier: 'ATENCAO', deltaDias: -2 });
+            expect(dec).not.toHaveProperty('reconhecimento');
             const confirmado = m.eventos.find((e) => e.tipo === 'DECISAO_CONFIRMADA');
             expect(confirmado?.detalhe).toMatchObject({
                 reconheceu: ['VENCE_ANTES_DO_TITULO'],
@@ -1500,7 +1505,7 @@ describe('BoletoSuggestionService — desfecho por título e aviso (I15m–I15o,
         });
 
         it('ack é conferido contra a avaliação recalculada, nunca contra o cache', async () => {
-            const m = montar({ boletos: [BOLETO_ANTES], pares: [PAR] });
+            const m = montar({ boletos: [BOLETO_ANTES_VALOR], pares: [PAR] });
             // cache quente SEM lote: débito = vencimento do título; o boleto aparece vencido (caso A)
             await m.service.listarSugestoes({});
             // o lote antecipa o débito DEPOIS: agora é o caso B e a releitura vê o sinal
@@ -1532,6 +1537,166 @@ describe('BoletoSuggestionService — desfecho por título e aviso (I15m–I15o,
                 }),
             ).rejects.toBeInstanceOf(OverdueBoletoNotConfirmableError);
             expect(m.repo.inserirDecisao).not.toHaveBeenCalled();
+        });
+
+        it('idempotência: reconfirmar decisão existente devolve criada:false sem exigir ack', async () => {
+            const m = montar({
+                boletos: [BOLETO_ANTES],
+                pares: [PAR],
+                decisoes: [{ ...DECISAO, vencimentoBoleto: '2026-10-18', deltaDias: -2 }],
+            });
+            comLote(m);
+            const r = await m.service.confirmar({ ...CHAVE, ator: 'bia' });
+            expect(r.criada).toBe(false);
+            expect(m.repo.inserirDecisao).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('confirmar: reconhecimento TIPADO da divergência de data (I15q, ADR-0078)', () => {
+        // Valor igual e âncora (par vigente): Δ=-2 (lote antecipa o débito) e Δ=+7 são "data divergente".
+        const antes = () => {
+            const m = montar({ boletos: [BOLETO_ANTES], pares: [PAR] });
+            comLote(m);
+            return m;
+        };
+        const depois = () =>
+            montar({ boletos: [{ ...BOLETO, vencimento: '2026-10-27' }], pares: [PAR] });
+        const ack = (over: Record<string, unknown> = {}) => ({
+            tipo: 'DATA_DIVERGENTE' as const,
+            aceito: true as const,
+            motivo: 'conferi o vencimento no portal do banco',
+            deltaDiasVisto: -2,
+            valorBoletoVisto: 10_000,
+            ...over,
+        });
+
+        it('Δ<0 com valor igual: sem reconhecimento tipado → 422 Required, mesmo com reconheceAvisos', async () => {
+            const m = antes();
+            await expect(
+                m.service.confirmar({
+                    ...CHAVE,
+                    ator: 'ana',
+                    reconheceAvisos: ['VENCE_ANTES_DO_TITULO'],
+                }),
+            ).rejects.toMatchObject({
+                statusCode: 422,
+                code: 'RECONHECIMENTO_DE_DIVERGENCIA_OBRIGATORIO',
+            });
+            expect(m.repo.inserirDecisao).not.toHaveBeenCalled();
+            expect(m.db.withTransaction).not.toHaveBeenCalled();
+        });
+
+        it('Δ>5 com valor igual TAMBÉM exige o reconhecimento (antes confirmava sem ack)', async () => {
+            const m = depois();
+            const lista = await m.service.listarSugestoes({});
+            expect(lista.titulos[0]?.candidatos[0]?.avaliacao).toMatchObject({
+                deltaDias: 7,
+                exigeReconhecimento: 'DATA_DIVERGENTE',
+            });
+            await expect(m.service.confirmar({ ...CHAVE, ator: 'ana' })).rejects.toBeInstanceOf(
+                DivergenceAcknowledgementRequiredError,
+            );
+            expect(m.repo.inserirDecisao).not.toHaveBeenCalled();
+        });
+
+        it('mensagem em português com Δ com sinal, valor e código mascarado, sem barras', async () => {
+            const m = depois();
+            const erro = (await m.service
+                .confirmar({ ...CHAVE, ator: 'ana' })
+                .catch((e: unknown) => e)) as DivergenceAcknowledgementRequiredError;
+            expect(erro.userMessage).toContain('+7 dias');
+            expect(erro.userMessage).toContain('R$ 100,00');
+            expect(erro.userMessage).toMatch(/237…\d{4}/);
+            expect(JSON.stringify([erro.userMessage, erro.details])).not.toMatch(/\d{20,}/);
+        });
+
+        it('ack válido: grava reconhecimento na decisão e no evento, implica RECONHECEU_VENCE_ANTES', async () => {
+            const m = antes();
+            const r = await m.service.confirmar({ ...CHAVE, ator: 'ana', reconhecimento: ack() });
+            expect(r.criada).toBe(true);
+            const dec = m.repo.inserirDecisao.mock.calls[0]?.[0] as Record<string, unknown>;
+            expect(dec.reconhecimento).toEqual({
+                tipo: 'DATA_DIVERGENTE',
+                motivo: 'conferi o vencimento no portal do banco',
+                deltaDiasVisto: -2,
+                valorBoletoVisto: 10_000,
+                reconhecidoPor: 'ana',
+            });
+            expect(dec.sinais).toEqual(
+                expect.arrayContaining([
+                    'VENCE_ANTES_DO_TITULO',
+                    'RECONHECEU_VENCE_ANTES',
+                    'DATA_DIVERGENTE_RECONHECIDA',
+                ]),
+            );
+            const ev = m.eventos.find((e) => e.tipo === 'DECISAO_CONFIRMADA');
+            expect(ev?.detalhe).toMatchObject({
+                reconheceu: ['VENCE_ANTES_DO_TITULO'],
+                reconhecimento: { tipo: 'DATA_DIVERGENTE', deltaDiasVisto: -2 },
+            });
+            // mesma transação da decisão (I15q)
+            expect(m.db.withTransaction).toHaveBeenCalledTimes(1);
+        });
+
+        it('Δ>5: o ack válido grava sem RECONHECEU_VENCE_ANTES', async () => {
+            const m = depois();
+            await m.service.confirmar({
+                ...CHAVE,
+                ator: 'ana',
+                reconhecimento: ack({ deltaDiasVisto: 7 }),
+            });
+            const dec = m.repo.inserirDecisao.mock.calls[0]?.[0] as { sinais: string[] };
+            expect(dec.sinais).toContain('DATA_DIVERGENTE_RECONHECIDA');
+            expect(dec.sinais).not.toContain('RECONHECEU_VENCE_ANTES');
+        });
+
+        it.each([
+            ['Δ visto errado (+1 dia)', { deltaDiasVisto: -1 }],
+            ['Δ visto errado (-1 dia)', { deltaDiasVisto: -3 }],
+            ['valor visto +1 centavo', { valorBoletoVisto: 10_001 }],
+            ['valor visto -1 centavo', { valorBoletoVisto: 9_999 }],
+        ])('ack que não bate com a avaliação ao vivo (%s) → 422 Stale, nada gravado', async (_n, over) => {
+            const m = antes();
+            await expect(
+                m.service.confirmar({ ...CHAVE, ator: 'ana', reconhecimento: ack(over) }),
+            ).rejects.toBeInstanceOf(DivergenceAcknowledgementStaleError);
+            expect(m.repo.inserirDecisao).not.toHaveBeenCalled();
+            expect(m.repo.inserirPar).not.toHaveBeenCalled();
+        });
+
+        it('o autor é o do JWT (`ator`), nunca o do corpo; `sistema` é recusado', async () => {
+            const m = antes();
+            await expect(
+                m.service.confirmar({ ...CHAVE, ator: 'sistema', reconhecimento: ack() }),
+            ).rejects.toBeInstanceOf(InvalidDecisionActorError);
+            expect(m.repo.inserirDecisao).not.toHaveBeenCalled();
+        });
+
+        it('conferido contra a avaliação recalculada, nunca contra o cache', async () => {
+            const m = montar({ boletos: [BOLETO_ANTES], pares: [PAR] });
+            // cache quente sem lote: caso A (vencido); o lote antecipa o débito DEPOIS (caso B)
+            await m.service.listarSugestoes({});
+            comLote(m);
+            await expect(
+                m.service.confirmar({ ...CHAVE, ator: 'ana', reconhecimento: ack() }),
+            ).resolves.toMatchObject({ criada: true });
+        });
+
+        it('zero escrita no ERP e o ajuste de centavos só é agendado após a transação', async () => {
+            const m = antes();
+            await m.service.confirmar({ ...CHAVE, ator: 'ana', reconhecimento: ack() });
+            expect(m.ajuste.agendarAposConfirmar).toHaveBeenCalledTimes(1);
+            const ordemTx = m.db.withTransaction.mock.invocationCallOrder[0] as number;
+            const ordemAjuste = m.ajuste.agendarAposConfirmar.mock.invocationCallOrder[0] as number;
+            expect(ordemAjuste).toBeGreaterThan(ordemTx);
+        });
+
+        it('reconhecimento enviado sem exigência no servidor é inócuo (nada gravado)', async () => {
+            const m = montar();
+            await m.service.confirmar({ ...CHAVE, ator: 'ana', reconhecimento: ack() });
+            const dec = m.repo.inserirDecisao.mock.calls[0]?.[0] as Record<string, unknown>;
+            expect(dec).not.toHaveProperty('reconhecimento');
+            expect(dec.sinais).not.toContain('DATA_DIVERGENTE_RECONHECIDA');
         });
 
         it('idempotência: reconfirmar decisão existente devolve criada:false sem exigir ack', async () => {

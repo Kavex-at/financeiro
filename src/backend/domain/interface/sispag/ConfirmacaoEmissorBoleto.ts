@@ -93,6 +93,28 @@ export type ConfirmacaoEmissorView = Omit<ConfirmacaoEmissor, 'emissorChave'> & 
     elegivelAutomatico: boolean;
 };
 
+/** Tipos de reconhecimento tipado da divergência (I15q, ADR-0078; paridade com o CHECK da 0091). */
+export const RECONHECIMENTO_TIPO = {
+    DATA_DIVERGENTE: 'DATA_DIVERGENTE',
+} as const;
+export type ReconhecimentoTipo = (typeof RECONHECIMENTO_TIPO)[keyof typeof RECONHECIMENTO_TIPO];
+
+/**
+ * Reconhecimento da divergência de data, PROPRIEDADE da decisão (I15q): o que a analista viu
+ * (Δdias e valor do boleto, em centavos), por quê e quem. A validade é derivada, nunca persistida.
+ */
+export interface ReconhecimentoDecisao {
+    tipo: ReconhecimentoTipo;
+    motivo: string;
+    deltaDiasVisto: number;
+    /** Valor do boleto visto, em centavos. */
+    valorBoletoVisto: number;
+    /** Do JWT, nunca do corpo, nunca `sistema`. */
+    reconhecidoPor: string;
+    /** ISO-8601. */
+    reconhecidoEm: string;
+}
+
 export interface DecisaoSugestao {
     id: string;
     filCod: number;
@@ -130,6 +152,8 @@ export interface DecisaoSugestao {
     origemDecisaoId?: string;
     /** ADR-0074 (M1): `sistema` quando transferida; o autor humano fica em `decididoPor`. */
     transferidaPor?: string;
+    /** ADR-0078 (I15q): ausente nas decisões anteriores à 0091 e nas que não o exigiram. */
+    reconhecimento?: ReconhecimentoDecisao;
 }
 
 export interface EventoSugestaoRegistro {
@@ -279,6 +303,16 @@ export const decisaoSugestaoRowSchema = z
             .transform((v) => v ?? undefined),
         origem_decisao_id: textoOpcional,
         transferida_por: textoOpcional,
+        reconhecimento_tipo: z
+            .nativeEnum(RECONHECIMENTO_TIPO)
+            .nullable()
+            .optional()
+            .transform((v) => v ?? undefined),
+        reconhecimento_motivo: textoOpcional,
+        reconhecimento_delta_dias_visto: z.coerce.number().int().nullable().optional(),
+        reconhecimento_valor_boleto_visto_centavos: z.coerce.number().int().nullable().optional(),
+        reconhecido_por: textoOpcional,
+        reconhecido_em: dataIsoOpcional,
     })
     .transform(
         (r): DecisaoSugestao => ({
@@ -314,6 +348,23 @@ export const decisaoSugestaoRowSchema = z
             ...(r.tipo_anulacao ? { tipoAnulacao: r.tipo_anulacao } : {}),
             ...(r.origem_decisao_id ? { origemDecisaoId: r.origem_decisao_id } : {}),
             ...(r.transferida_por ? { transferidaPor: r.transferida_por } : {}),
+            ...(r.reconhecimento_tipo !== undefined &&
+            r.reconhecimento_motivo &&
+            r.reconhecimento_delta_dias_visto != null &&
+            r.reconhecimento_valor_boleto_visto_centavos != null &&
+            r.reconhecido_por &&
+            r.reconhecido_em
+                ? {
+                      reconhecimento: {
+                          tipo: r.reconhecimento_tipo,
+                          motivo: r.reconhecimento_motivo,
+                          deltaDiasVisto: r.reconhecimento_delta_dias_visto,
+                          valorBoletoVisto: r.reconhecimento_valor_boleto_visto_centavos,
+                          reconhecidoPor: r.reconhecido_por,
+                          reconhecidoEm: r.reconhecido_em,
+                      },
+                  }
+                : {}),
         }),
     );
 

@@ -280,6 +280,42 @@ describe('ElegibilidadeVinculoCodigoBarras (I17a–d, só locais)', () => {
         });
     });
 
+    describe('I17d(7) — fator de vencimento × data do DDA (ADR-0078)', () => {
+        it('fator que decodifica para data diferente do DDA é inelegível, também na janela padrão', () => {
+            // Barra com fator de VENC_TITULO; o DDA diz 3 dias depois: o par é contraditório.
+            const r = regra.avaliar(base({ poolVencimento: dia(VENC_TITULO, 3) }));
+            expect(r.elegivel).toBe(false);
+            expect(r.motivo).toBe(MOTIVO_INELEGIVEL_VINCULO.FATOR_VENCIMENTO_DIVERGE);
+            expect(r.codigoMascarado).toMatch(/^\d{5}…\d{4}$/);
+            expect(JSON.stringify(r)).not.toMatch(/\d{20,}/);
+        });
+
+        it('fator igual à data do DDA segue elegível', () => {
+            const r = regra.avaliar(base({ poolVencimento: VENC_TITULO }));
+            expect(r.elegivel).toBe(true);
+        });
+
+        it('a referência do ciclo é a data do DDA, não a do título', () => {
+            // Título com data muito distante da barra: o ciclo vem do DDA e o par bate.
+            const barra = dia(VENC_TITULO, 3);
+            const r = regra.avaliar(base({ poolVencimento: barra }, { vencimento: barra }));
+            expect(r.elegivel).toBe(true);
+            expect(r.deltaDias).toBe(3);
+        });
+
+        it('fator 0000: a janela padrão não muda (DATA_INDISPONIVEL como hoje)', () => {
+            const semFator = CodigoBarrasSintetico.linhaDigitavel({
+                valor: 1028.8,
+                vencimento: VENC_TITULO,
+                serie: 1,
+                fator: 0,
+            });
+            const r = regra.avaliar(base({ codigo: semFator, poolVencimento: VENC_TITULO }));
+            expect(r.elegivel).toBe(false);
+            expect(r.motivo).toBe(MOTIVO_INELEGIVEL_VINCULO.DATA_INDISPONIVEL);
+        });
+    });
+
     describe('escopo do item', () => {
         it('item que o ERP associou ao DDA fica no caminho DDA', () => {
             const r = regra.avaliar(base({ temBoletoDda: true }));

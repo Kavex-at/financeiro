@@ -1130,7 +1130,7 @@ export default class VinculoCodigoBarrasService {
             ...(item.valor !== undefined ? { valorItem: item.valor } : {}),
         });
         const dec = boleto?.codbar
-            ? this.codigoBarras.decodificar(boleto.codbar, p.vencimentoTitulo)
+            ? this.codigoBarras.decodificar(boleto.codbar, boleto.vencimento ?? p.vencimentoTitulo)
             : undefined;
         return {
             elegibilidade,

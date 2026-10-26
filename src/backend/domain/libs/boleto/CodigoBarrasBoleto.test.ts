@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import CodigoBarrasBoleto from './CodigoBarrasBoleto.js';
+import CodigoBarrasSintetico from './CodigoBarrasSintetico.js';
 
 const cb = new CodigoBarrasBoleto();
 
@@ -197,6 +198,27 @@ describe('CodigoBarrasBoleto.decodificar', () => {
         expect(r?.banco).toBe('341');
         // fator 1580: ciclo iniciado em 22/02/2025 (fator 1000) + 580 dias.
         expect(r?.vencimento).toBe('2026-09-25');
+    });
+
+    it('fator 0000: sem vencimento, marcado como `semVencimento` (distinto de não decodificável)', () => {
+        const semFator = CodigoBarrasSintetico.barras({
+            valor: 4815.33,
+            vencimento: '2026-10-20',
+            fator: 0,
+        });
+        const r = cb.decodificar(semFator, '2026-10-20');
+        expect(r?.semVencimento).toBe(true);
+        expect(r).not.toHaveProperty('vencimento');
+        expect(r?.valorCentavos).toBe(481533);
+    });
+
+    it('delega o fator ao FatorVencimentoBoleto: o reinício de 22/02/2025 é o fator 1000', () => {
+        const barras1000 = CodigoBarrasSintetico.barras({
+            valor: 10,
+            vencimento: '2025-02-22',
+        });
+        expect(barras1000.slice(5, 9)).toBe('1000');
+        expect(cb.decodificar(barras1000, '2025-03-01')?.vencimento).toBe('2025-02-22');
     });
 
     it('aceita a linha digitável e recusa DV errado e arrecadação', () => {

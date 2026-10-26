@@ -77,6 +77,9 @@ describe('migrations — segurança do diretório', () => {
                 // item e etapa nova na remessa; CHECKs antigos voltam NOT VALID (marcas e etapas
                 // gravadas ficam).
                 '0090_sispag_grupo_boleto.sql',
+                // Colunas do reconhecimento na decisão e do caminho do vínculo no item (ADR-0078);
+                // o reverse documenta o export prévio — o ack também fica no detalhe do evento.
+                '0091_sispag_reconhecimento_divergencia.sql',
             ].sort(),
         );
         for (const alvo of reverses) {

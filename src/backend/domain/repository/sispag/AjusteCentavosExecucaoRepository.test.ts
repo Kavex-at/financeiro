@@ -113,6 +113,33 @@ describe('SugestaoBoletoRepository.transferirDecisao (I18j, M1)', () => {
         expect(params.motivo).toBe('título renegociado 536/1 → 536/2, frnCod 3');
     });
 
+    it('a decisão nova HERDA o reconhecimento (I15q/I18j): copia as seis colunas; a validade é derivada', async () => {
+        const tx = {
+            selectFirst: jest.fn(async () => linha),
+            selectMany: jest.fn(),
+            update: jest.fn(async () => 1),
+            insert: jest.fn(async () => 1),
+        };
+        await new SugestaoBoletoRepository({} as PostgreeDatabaseClient).transferirDecisao(
+            { decisaoId: 'd-1', titCodNovo: '2', frnCod: 3, ator: 'sistema' },
+            tx as unknown as TransactionClient,
+        );
+        const [sql] = tx.insert.mock.calls[0] as unknown as [string];
+        for (const coluna of [
+            'reconhecimento_tipo',
+            'reconhecimento_motivo',
+            'reconhecimento_delta_dias_visto',
+            'reconhecimento_valor_boleto_visto_centavos',
+            'reconhecido_por',
+            'reconhecido_em',
+        ]) {
+            // aparece na lista de colunas E no SELECT que copia da decisão antiga
+            expect(sql.split(coluna).length - 1).toBe(2);
+        }
+        // O autor do reconhecimento é o humano herdado, nunca `sistema` (parâmetro $ator só em transferida_por).
+        expect(sql).not.toMatch(/reconhecido_por[^,]*\$ator/);
+    });
+
     it('decisão já não CONFIRMADA ⇒ nada muda', async () => {
         const tx = {
             selectFirst: jest.fn(async () => ({

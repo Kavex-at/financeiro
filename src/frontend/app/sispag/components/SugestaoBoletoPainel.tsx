@@ -25,9 +25,13 @@ import { AjusteCentavosSelo } from './AjusteCentavosSelo'
 import { fmtCivil } from './CandidatosBoletoDialog'
 import { MotivoDecisaoDialog } from './MotivoDecisaoDialog'
 import { ReconhecerAvisoDialog } from './ReconhecerAvisoDialog'
+import { ReconhecerDivergenciaDialog } from './ReconhecerDivergenciaDialog'
 import {
   candidatoComoSugestao,
   exigeReconhecimento,
+  exigeReconhecimentoTipado,
+  mensagemDivergenciaData,
+  montarReconhecimentoDivergencia,
   formatDeltaDias,
   formatDeltaPercentual,
   formatDeltaValor,
@@ -87,7 +91,7 @@ function Delta({ rotulo, valor, destaque }: { rotulo: string; valor: string; des
 
 type Aviso = { tipo: 'ok' | 'erro'; texto: string }
 type Dialogo = {
-  tipo: 'rejeitar' | 'revogar' | 'anular' | 'reconhecer'
+  tipo: 'rejeitar' | 'revogar' | 'anular' | 'reconhecer' | 'reconhecer-divergencia'
   sugestao: SugestaoBoleto
 }
 
@@ -454,7 +458,13 @@ export function SugestaoBoletoPainel({
                     aria-label={`Confirmar boleto ${nome}`}
                     onClick={() =>
                       pedeReconhecimento
-                        ? setDialogo({ tipo: 'reconhecer', sugestao: s })
+                        ? setDialogo({
+                            // Valor igual + data divergente (I15q): ack tipado; senão o aviso simples.
+                            tipo: exigeReconhecimentoTipado({ avaliacao: a })
+                              ? 'reconhecer-divergencia'
+                              : 'reconhecer',
+                            sugestao: s,
+                          })
                         : void confirmar(s)
                     }
                   >
@@ -534,6 +544,39 @@ export function SugestaoBoletoPainel({
             try {
               await confirmarSugestaoBoleto(chaveDe(dialogo.sugestao), ['VENCE_ANTES_DO_TITULO'])
             } catch (e) {
+              throw new Error(mensagemDe(e, 'Não foi possível confirmar a sugestão.'))
+            }
+            await concluirDialogo(
+              'Boleto confirmado para este título. Nada foi gravado no Conexos.',
+            )
+          }}
+        />
+      ) : null}
+      {dialogo?.tipo === 'reconhecer-divergencia' ? (
+        <ReconhecerDivergenciaDialog
+          mensagem={mensagemDivergenciaData(dialogo.sugestao, {
+            vencimentoTitulo: desfecho?.vencimentoTitulo ?? dialogo.sugestao.vencimentoTitulo,
+          })}
+          deltaDias={formatDeltaDias(dialogo.sugestao.avaliacao.deltaDias)}
+          valorBoleto={formatBRL(dialogo.sugestao.valorBoleto)}
+          deltaValor={formatDeltaValor(dialogo.sugestao.avaliacao.deltaValor)}
+          onFechar={() => setDialogo(null)}
+          onConfirmar={async (motivo) => {
+            try {
+              await confirmarSugestaoBoleto(
+                chaveDe(dialogo.sugestao),
+                [],
+                montarReconhecimentoDivergencia(dialogo.sugestao, motivo),
+              )
+            } catch (e) {
+              // 422 "desatualizado": o par mudou depois que a tela carregou; relê a lista em
+              // segundo plano e deixa a mensagem do servidor no diálogo, que continua aberto.
+              if (
+                e instanceof AutorizacaoApiError &&
+                e.code === CODIGOS_ERRO_SUGESTAO_BOLETO.DIVERGENCIA_DESATUALIZADA
+              ) {
+                void onDecidido()
+              }
               throw new Error(mensagemDe(e, 'Não foi possível confirmar a sugestão.'))
             }
             await concluirDialogo(

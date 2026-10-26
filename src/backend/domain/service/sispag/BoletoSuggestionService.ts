@@ -23,6 +23,7 @@ import {
     EVENTO_SUGESTAO_BOLETO,
     type EstadoConfirmacaoEmissor,
 } from '../../interface/sispag/ConfirmacaoEmissorBoleto.js';
+import type { ReconhecimentoDivergenciaBody } from '../../interface/sispag/SugestaoBoletoSchemas.js';
 import type { TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 import {
     AVISO_VENCE_ANTES,
@@ -37,6 +38,7 @@ import {
     type FiltroSugestoes,
     LAYOUT_EMISSOR,
     type ListagemSugestoes,
+    MOTIVO_ORFA_RECONHECIMENTO_INVALIDADO,
     RESULTADO_SUGESTAO,
     type ResultadoSugestao,
     SINAL_SUGESTAO,
@@ -62,7 +64,10 @@ import TituloDpsRepository from '../../repository/sispag/TituloDpsRepository.js'
 import LogService from '../LogService.js';
 import AjusteCentavosTituloService from './AjusteCentavosTituloService.js';
 import GrupoBoletoService from './GrupoBoletoService.js';
+import type { PrazoBoleto } from '../../interface/sispag/PrazoBoleto.js';
+import ConferenciaReconhecimento from './ConferenciaReconhecimento.js';
 import MotorSugestaoBoleto from './MotorSugestaoBoleto.js';
+import PrazoBoletoCalculador from './PrazoBoletoCalculador.js';
 import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
 import SugestaoBoletoCache from './SugestaoBoletoCache.js';
 
@@ -87,6 +92,11 @@ export interface ResultadoDecisao {
     /** `false` = a decisão já existia (idempotência, I15j): nada novo foi gravado. */
     criada: boolean;
     decisao: DecisaoSugestao;
+    /**
+     * Só quando a decisão tem reconhecimento tipado (I15q): ele ainda vale (Δ e valor de agora iguais
+     * aos vistos)? Derivado, nunca persistido; ausente = não se sabe (fail-closed na tela).
+     */
+    reconhecimentoValido?: boolean;
 }
 
 /** O que a listagem guarda em cache: o motor + os pares + o frescor do DDA (`ultimaSincronizacao`). */
@@ -236,7 +246,12 @@ export default class BoletoSuggestionService {
     // ── Confirmar ──────────────────────────────────────────────────────────────────────────────
 
     public confirmar = async (
-        input: ChaveSugestao & { ator: string; reconheceAvisos?: SinalSugestao[] },
+        input: ChaveSugestao & {
+            ator: string;
+            reconheceAvisos?: SinalSugestao[];
+            /** Reconhecimento tipado da divergência de data (I15q, ADR-0078). */
+            reconhecimento?: ReconhecimentoDivergenciaBody;
+        },
     ): Promise<ResultadoDecisao> => {
         this.exigirAtor(input.ator);
         const chave = this.chave(input);
@@ -249,7 +264,13 @@ export default class BoletoSuggestionService {
         });
         const donoDoBoleto = doBoleto[0];
         if (donoDoBoleto) {
-            if (mesmoTitulo(donoDoBoleto, chave)) return { criada: false, decisao: donoDoBoleto };
+            if (mesmoTitulo(donoDoBoleto, chave)) {
+                return {
+                    criada: false,
+                    decisao: donoDoBoleto,
+                    ...(await this.validadeDoReconhecimento(donoDoBoleto)),
+                };
+            }
             throw new BoletoAlreadySuggestedToOtherTitleError(chave);
         }
         const doTitulo = await this.repo.listarDecisoes({
@@ -298,10 +319,34 @@ export default class BoletoSuggestionService {
         const tier = sugestao.avaliacao.resultado;
         if (!TIERS.has(tier)) throw new OverdueBoletoNotConfirmableError(chave);
         // Aviso (I15o): conferido contra a avaliação RECALCULADA acima, nunca contra o cache.
-        const sinais = this.exigirReconhecimento(sugestao, input.reconheceAvisos ?? [], chave);
-        const reconhecimento = sinais.includes(SINAL_SUGESTAO.RECONHECEU_VENCE_ANTES)
-            ? { reconheceu: [SINAL_SUGESTAO.VENCE_ANTES_DO_TITULO] }
-            : {};
+        // Divergência de data com valor igual (I15q, ADR-0078): reconhecimento TIPADO, que substitui
+        // o aviso simples e o implica. Sem a exigência, vale o aviso simples de hoje.
+        const codbarMascarado = this.codigoBarras.mascarar(boleto.codbar);
+        const tipado = ConferenciaReconhecimento.conferir({
+            sugestao,
+            chave,
+            ...(input.reconhecimento ? { enviado: input.reconhecimento } : {}),
+            ator: input.ator,
+            ...(codbarMascarado ? { codigoMascarado: codbarMascarado } : {}),
+        });
+        const sinais =
+            tipado?.sinais ??
+            this.exigirReconhecimento(sugestao, input.reconheceAvisos ?? [], chave);
+        const reconhecimento = {
+            ...(sinais.includes(SINAL_SUGESTAO.RECONHECEU_VENCE_ANTES)
+                ? { reconheceu: [SINAL_SUGESTAO.VENCE_ANTES_DO_TITULO] }
+                : {}),
+            ...(tipado
+                ? {
+                      reconhecimento: {
+                          tipo: tipado.reconhecimento.tipo,
+                          motivo: tipado.reconhecimento.motivo,
+                          deltaDiasVisto: tipado.reconhecimento.deltaDiasVisto,
+                          valorBoletoVisto: tipado.reconhecimento.valorBoletoVisto,
+                      },
+                  }
+                : {}),
+        };
 
         const resultado = await this.db.withTransaction(async (tx) => {
             await this.exigirForaDeGrupo(chave, tx);
@@ -338,8 +383,7 @@ export default class BoletoSuggestionService {
                     ddcCod: sugestao.ddcCod,
                     ditCod: sugestao.ditCod,
                     ...(sugestao.numeroBoleto ? { numeroBoleto: sugestao.numeroBoleto } : {}),
-                    codbarMascarado:
-                        this.codigoBarras.mascarar(boleto.codbar) ?? CODBAR_DESCONHECIDO,
+                    codbarMascarado: codbarMascarado ?? CODBAR_DESCONHECIDO,
                     valorTitulo: sugestao.valorTitulo,
                     vencimentoTitulo: sugestao.vencimentoTitulo,
                     valorBoleto: sugestao.valorBoleto,
@@ -353,6 +397,7 @@ export default class BoletoSuggestionService {
                     decisao: DECISAO_SUGESTAO_BOLETO.CONFIRMADA,
                     decididoPor: input.ator,
                     confirmacaoEmissorId: par.id,
+                    ...(tipado ? { reconhecimento: tipado.reconhecimento } : {}),
                 },
                 tx,
             );
@@ -364,7 +409,11 @@ export default class BoletoSuggestionService {
                     v.ddcCod === chave.ddcCod &&
                     v.ditCod === chave.ditCod
                 ) {
-                    return { criada: false, decisao: v };
+                    return {
+                        criada: false,
+                        decisao: v,
+                        ...(await this.validadeDoReconhecimento(v)),
+                    };
                 }
                 if (v.ddcCod === chave.ddcCod && v.ditCod === chave.ditCod) {
                     throw new BoletoAlreadySuggestedToOtherTitleError(chave);
@@ -407,7 +456,12 @@ export default class BoletoSuggestionService {
                 },
                 tx,
             );
-            return { criada: true, decisao: gravada.decisao };
+            // Acabou de ser conferido ao vivo, na mesma leitura que o gravou.
+            return {
+                criada: true,
+                decisao: gravada.decisao,
+                ...(gravada.decisao.reconhecimento ? { reconhecimentoValido: true } : {}),
+            };
         });
 
         this.cache.invalidar();
@@ -433,6 +487,26 @@ export default class BoletoSuggestionService {
             });
         }
         return resultado;
+    };
+
+    /**
+     * I15q: o reconhecimento de uma decisão já existente ainda vale? Lê o cenário (cache) e vê se o
+     * desfecho do título virou órfão por reconhecimento invalidado. Nunca lança.
+     */
+    private validadeDoReconhecimento = async (
+        d: DecisaoSugestao,
+    ): Promise<{ reconhecimentoValido?: boolean }> => {
+        if (!d.reconhecimento) return {};
+        try {
+            const { valor: cenario } = await this.cache.obter(this.calcularCenario);
+            const desfecho = cenario.desfechos.find((x) => mesmoTitulo(x, d));
+            const invalidado =
+                desfecho?.situacao === SITUACAO_SUGESTAO_TITULO.ORFA &&
+                desfecho.motivoOrfa === MOTIVO_ORFA_RECONHECIMENTO_INVALIDADO;
+            return { reconhecimentoValido: !invalidado };
+        } catch {
+            return {};
+        }
     };
 
     // ── Rejeitar ───────────────────────────────────────────────────────────────────────────────
@@ -909,6 +983,37 @@ export default class BoletoSuggestionService {
     public situacaoPorTitulo = async (): Promise<Map<string, SituacaoSugestaoTitulo>> => {
         const { valor: cenario } = await this.cache.obter(this.calcularCenario);
         return new Map(cenario.desfechos.map((d) => [chaveTitulo(d), d.situacao] as const));
+    };
+
+    /**
+     * Insumos de UMA leitura da carteira para a situação de pagamento (ADR-0075/0078), do MESMO
+     * cenário em cache (um batch, sem N+1): a situação do desfecho, o motivo da confirmação órfã por
+     * reconhecimento invalidado (I19i) e o prazo efetivo pelo boleto (I19t, derivado, nunca gravado).
+     */
+    public contextoPorTitulo = async (): Promise<{
+        situacoes: Map<string, SituacaoSugestaoTitulo>;
+        motivosOrfa: Map<string, string>;
+        prazos: Map<string, PrazoBoleto>;
+    }> => {
+        const { valor: cenario } = await this.cache.obter(this.calcularCenario);
+        const hoje = this.calendar.todayBrt();
+        const situacoes = new Map<string, SituacaoSugestaoTitulo>();
+        const motivosOrfa = new Map<string, string>();
+        const prazos = new Map<string, PrazoBoleto>();
+        for (const d of cenario.desfechos) {
+            const chave = chaveTitulo(d);
+            situacoes.set(chave, d.situacao);
+            if (d.motivoOrfa) motivosOrfa.set(chave, d.motivoOrfa);
+            prazos.set(
+                chave,
+                PrazoBoletoCalculador.paraTitulo({
+                    vencimentoTitulo: d.vencimentoTitulo,
+                    desfecho: d,
+                    hoje,
+                }),
+            );
+        }
+        return { situacoes, motivosOrfa, prazos };
     };
 
     /**

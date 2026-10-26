@@ -21,6 +21,7 @@ import {
     type TotalSituacao,
 } from '../../interface/sispag/SituacaoPagamento.js';
 import {
+    MOTIVO_ORFA_RECONHECIMENTO_INVALIDADO,
     SITUACAO_SUGESTAO_TITULO,
     type SituacaoSugestaoTitulo,
 } from '../../interface/sispag/SugestaoBoleto.js';
@@ -63,6 +64,8 @@ export interface ContextoSituacaoPagamento {
     ajustes?: ReadonlyMap<string, EtapaAjuste>;
     /** Situação do desfecho de boleto do título (ADR-0072), por chave. */
     desfechos?: ReadonlyMap<string, SituacaoSugestaoTitulo>;
+    /** `motivoOrfa` das confirmações órfãs, por chave (I19i): o detalhe do reconhecimento invalidado. */
+    motivosOrfa?: ReadonlyMap<string, string>;
     /** Modo do vínculo do código de barras na filial (ADR-0071). */
     modoVinculo: (filCod: number) => ModoVinculo;
 }
@@ -242,10 +245,17 @@ export default class SituacaoPagamentoResolver {
         };
     };
 
-    private regraConfirmacaoARevisar: Regra = (t, ctx) =>
-        ctx.desfechos?.get(chaveDe(t)) === SITUACAO_SUGESTAO_TITULO.ORFA
-            ? { detalhe: 'o Conexos mudou o título depois da confirmação do boleto' }
-            : undefined;
+    private regraConfirmacaoARevisar: Regra = (t, ctx) => {
+        if (ctx.desfechos?.get(chaveDe(t)) !== SITUACAO_SUGESTAO_TITULO.ORFA) return undefined;
+        // I19i (ADR-0078): reconhecimento de data divergente invalidado explica a si mesmo.
+        const motivo = ctx.motivosOrfa?.get(chaveDe(t));
+        return {
+            detalhe:
+                motivo === MOTIVO_ORFA_RECONHECIMENTO_INVALIDADO
+                    ? motivo
+                    : 'o Conexos mudou o título depois da confirmação do boleto',
+        };
+    };
 
     /**
      * Boleto sem DDA associado no Conexos. Sem a fonte de desfechos (`undefined`) não dá para saber

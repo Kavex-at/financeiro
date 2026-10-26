@@ -240,3 +240,75 @@ describe('DebitDateService', () => {
         });
     });
 });
+
+describe('DebitDateService — I8c: item de data divergente (ADR-0078)', () => {
+    const divergente = (delta: number, over: Partial<ItemLote> = {}): ItemLote =>
+        item({
+            vinculoCodigoBarras: {
+                origem: 'DECISAO_HUMANA',
+                caminho: 'DATA_DIVERGENTE',
+                deltaDias: delta,
+                codigoMascarado: '34191…0001',
+                aplicadoEm: '2026-09-22T12:00:00.000Z',
+                flpCod: 1,
+            },
+            ...over,
+        });
+
+    it('Δ<0: a janela do lote acaba no prazo final da barra (data efetiva do item)', () => {
+        // título 30/09 (qua); barra 28/09 (seg) ⇒ max = 28/09
+        const { service } = make();
+        const w = service.computeWindow(lote({ itens: [divergente(-2)] }));
+        expect(w.max).toBe('2026-09-28');
+        expect(w.limitante?.vencimento).toBe('2026-09-28');
+    });
+
+    it('Δ<0 de um item não puxa a janela de OUTRO lote', () => {
+        const { service } = make();
+        const a = service.computeWindow(lote({ id: 'A', itens: [divergente(-5)] }));
+        const b = service.computeWindow(lote({ id: 'B', itens: [item()] }));
+        expect(a.max).toBe('2026-09-25');
+        expect(b.max).toBe('2026-09-30');
+    });
+
+    it('Δ>0: o título segue limitando (data candidata = menor dos dois)', () => {
+        const { service } = make();
+        const w = service.computeWindow(lote({ itens: [divergente(7)] }));
+        expect(w.max).toBe('2026-09-30');
+    });
+
+    it('barra de sábado rola para a segunda antes de limitar', () => {
+        const { service } = make();
+        // título 30/09; barra 26/09 (sáb) ⇒ prazo 28/09 (seg)
+        const w = service.computeWindow(lote({ itens: [divergente(-4)] }));
+        expect(w.max).toBe('2026-09-28');
+    });
+
+    it('item sem `caminho` ou JANELA_PADRAO: janela idêntica à de hoje (regressão)', () => {
+        const { service } = make();
+        const legado = service.computeWindow(lote({ itens: [item()] }));
+        const padrao = service.computeWindow(
+            lote({
+                itens: [
+                    item({
+                        vinculoCodigoBarras: {
+                            origem: 'DECISAO_HUMANA',
+                            caminho: 'JANELA_PADRAO',
+                            deltaDias: 3,
+                            codigoMascarado: '34191…0001',
+                            aplicadoEm: '2026-09-22T12:00:00.000Z',
+                            flpCod: 1,
+                        },
+                    }),
+                ],
+            }),
+        );
+        expect(padrao).toEqual(legado);
+    });
+
+    it('barra já vencida (sem data possível): a janela fica vazia, fail-closed', () => {
+        const { service } = make();
+        const w = service.computeWindow(lote({ itens: [divergente(-12)] }));
+        expect(w.vazia).toBeDefined();
+    });
+});

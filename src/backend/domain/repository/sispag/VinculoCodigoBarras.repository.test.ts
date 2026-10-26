@@ -83,6 +83,87 @@ describe('LotePagamentoRepository — vínculo do código ao item (ADR-0071)', (
         });
     });
 
+    describe('caminho do vínculo (ADR-0078, 0091)', () => {
+        it('vínculo antigo (sem caminho) não expõe caminho, Δ nem reconhecimento', async () => {
+            const db = buildDb();
+            db.selectFirst.mockResolvedValue(header);
+            db.selectMany.mockResolvedValue([
+                itemRow({
+                    vinculo_origem: 'DECISAO_HUMANA',
+                    vinculo_decisao_id: DECISAO,
+                    vinculo_codigo_mascarado: MASCARA,
+                    vinculo_aplicado_em: new Date('2026-10-14T12:00:00Z'),
+                    vinculo_flp_cod: 36,
+                }),
+            ]);
+            const lote = await makeLote(db).getLoteComItens('L1');
+            const v = lote?.itens[0]?.vinculoCodigoBarras;
+            expect(v).not.toHaveProperty('caminho');
+            expect(v).not.toHaveProperty('deltaDias');
+            expect(v).not.toHaveProperty('reconhecimentoId');
+        });
+
+        it('lê caminho, deltaDias e reconhecimentoId e seleciona as colunas novas', async () => {
+            const db = buildDb();
+            db.selectFirst.mockResolvedValue(header);
+            db.selectMany.mockResolvedValue([
+                itemRow({
+                    vinculo_origem: 'DECISAO_HUMANA',
+                    vinculo_decisao_id: DECISAO,
+                    vinculo_codigo_mascarado: MASCARA,
+                    vinculo_aplicado_em: new Date('2026-10-14T12:00:00Z'),
+                    vinculo_flp_cod: 36,
+                    vinculo_caminho: 'DATA_DIVERGENTE',
+                    vinculo_delta_dias: -3,
+                    vinculo_reconhecimento_id: DECISAO,
+                }),
+            ]);
+            const lote = await makeLote(db).getLoteComItens('L1');
+            expect(lote?.itens[0]?.vinculoCodigoBarras).toMatchObject({
+                caminho: 'DATA_DIVERGENTE',
+                deltaDias: -3,
+                reconhecimentoId: DECISAO,
+            });
+            const [sql] = db.selectMany.mock.calls[0];
+            expect(String(sql)).toContain('i.vinculo_caminho');
+            expect(String(sql)).toContain('i.vinculo_reconhecimento_id');
+        });
+
+        it('grava caminho, Δ e reconhecimento parametrizados; sem eles grava nulos', async () => {
+            const db = buildDb();
+            const base = {
+                loteId: LOTE,
+                filCod: 2,
+                docCod: '636',
+                titCod: '1',
+                origem: 'DECISAO_HUMANA' as const,
+                decisaoId: DECISAO,
+                codigoMascarado: MASCARA,
+                flpCod: 36,
+            };
+            await makeLote(db).gravarVinculoCodigoBarras({
+                ...base,
+                caminho: 'DATA_DIVERGENTE',
+                deltaDias: 7,
+                reconhecimentoId: DECISAO,
+            });
+            await makeLote(db).gravarVinculoCodigoBarras(base);
+            expect(String(db.update.mock.calls[0][0])).toMatch(/vinculo_caminho = \$caminho/);
+            expect(db.update.mock.calls[0][1]).toMatchObject({
+                caminho: 'DATA_DIVERGENTE',
+                deltaDias: 7,
+                reconhecimentoId: DECISAO,
+            });
+            expect(
+                db.update.mock.calls.filter(([q]) => /vinculo_caminho/.test(String(q)))[1][1],
+            ).toMatchObject({
+                caminho: null,
+                deltaDias: null,
+                reconhecimentoId: null,
+            });
+        });
+    });
+
     describe('gravarVinculoCodigoBarras', () => {
         const params = {
             loteId: LOTE,

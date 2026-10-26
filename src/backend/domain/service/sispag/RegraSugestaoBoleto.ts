@@ -1,7 +1,10 @@
 import { injectable } from 'tsyringe';
+import PrazoFinalBoleto from '../../libs/boleto/PrazoFinalBoleto.js';
 import {
     type AvaliacaoSugestao,
     type AvaliacaoSugestaoEntrada,
+    EXIGE_RECONHECIMENTO,
+    type ExigeReconhecimento,
     RESULTADO_SUGESTAO,
     type ResultadoSugestao,
     SINAL_SUGESTAO,
@@ -31,6 +34,12 @@ export const DIAS_DEPOIS_MAX = 5;
 export const ENVELOPE_VALOR_ABSOLUTO = 10;
 export const ENVELOPE_VALOR_PERCENTUAL = 2;
 export const ENVELOPE_DIAS = 10;
+
+/** Δdias (boleto − título) que, com valor igual, exigem o reconhecimento tipado (I15q, ADR-0078). */
+const RECONHECIMENTO_ANTES_MIN = -ENVELOPE_DIAS;
+const RECONHECIMENTO_ANTES_MAX = -1;
+const RECONHECIMENTO_DEPOIS_MIN = DIAS_DEPOIS_MAX + 1;
+const RECONHECIMENTO_DEPOIS_MAX = ENVELOPE_DIAS;
 
 /**
  * Texto estático da regra de candidato para a tela — um único lugar, vindo das constantes acima.
@@ -92,10 +101,17 @@ export default class RegraSugestaoBoleto {
                 : Math.round((deltaCentavos / tituloCentavos) * 100 * 10_000) / 10_000;
 
         const sinais: SinalSugestao[] = [];
+        // Prazo final da barra: vencimento rolado ao próximo dia útil bancário (I15h, ADR-0078).
+        // O título não rola (ADR-0070).
+        const prazoFinal = PrazoFinalBoleto.calcular(boleto.vencimento);
         // Dias em que o boleto já estará vencido na data de débito (I15o): derivado, nunca gravado.
-        const debitoAteBoleto = diasEntre(dataDebito, boleto.vencimento);
-        const diasAtraso = -debitoAteBoleto;
-        const resposta = (resultado: ResultadoSugestao): AvaliacaoSugestao => ({
+        const debitoAtePrazo =
+            prazoFinal === undefined ? Number.NaN : diasEntre(dataDebito, prazoFinal);
+        const diasAtraso = -debitoAtePrazo;
+        const resposta = (
+            resultado: ResultadoSugestao,
+            exigeReconhecimento: ExigeReconhecimento = EXIGE_RECONHECIMENTO.NENHUM,
+        ): AvaliacaoSugestao => ({
             resultado,
             deltaValor: deltaCentavos / 100,
             deltaPercentual,
@@ -103,6 +119,8 @@ export default class RegraSugestaoBoleto {
             sinais,
             confirmavel: CONFIRMAVEIS.has(resultado),
             diasVencidoNoDebito: Number.isNaN(diasAtraso) ? 0 : Math.max(0, diasAtraso),
+            ...(prazoFinal !== undefined ? { prazoFinalBoleto: prazoFinal } : {}),
+            exigeReconhecimento,
         });
 
         if (Number.isNaN(deltaDias) || Number.isNaN(diasEntre(titulo.vencimento, dataDebito))) {
@@ -123,7 +141,7 @@ export default class RegraSugestaoBoleto {
         // Aviso derivado (I15o): só dentro do envelope; não muda tier, deltas nem confirmabilidade.
         if (deltaDias < 0) sinais.push(SINAL_SUGESTAO.VENCE_ANTES_DO_TITULO);
 
-        const venceAntesDoDebito = debitoAteBoleto < 0;
+        const venceAntesDoDebito = debitoAtePrazo < 0;
         const dentroDosLimites =
             !venceAntesDoDebito && this.dentroDosLimites(deltaCentavos, deltaDias);
 
@@ -141,8 +159,24 @@ export default class RegraSugestaoBoleto {
 
         // I15h: boleto vencido na data de débito é só informativo — nunca CONHECIDO nem FORTE.
         if (venceAntesDoDebito) return resposta(RESULTADO_SUGESTAO.VENCIDO_INFORMATIVO);
-        if (!dentroDosLimites) return resposta(RESULTADO_SUGESTAO.ATENCAO);
-        return resposta(parConfirmado ? TIER_SUGESTAO.CONHECIDO : TIER_SUGESTAO.FORTE);
+        const exige = this.exigeReconhecimento(deltaCentavos, deltaDias);
+        if (!dentroDosLimites) return resposta(RESULTADO_SUGESTAO.ATENCAO, exige);
+        return resposta(parConfirmado ? TIER_SUGESTAO.CONHECIDO : TIER_SUGESTAO.FORTE, exige);
+    };
+
+    /**
+     * I15q: valor igual em centavos e Δdias ∈ [-10,-1] ∪ [6,10]. Só chega aqui dentro do envelope e
+     * com a barra vigente na data de débito; o reconhecimento não muda tier nem limite (I15d).
+     */
+    private exigeReconhecimento = (
+        deltaCentavos: number,
+        deltaDias: number,
+    ): ExigeReconhecimento => {
+        const dataDivergente =
+            deltaCentavos === 0 &&
+            ((deltaDias >= RECONHECIMENTO_ANTES_MIN && deltaDias <= RECONHECIMENTO_ANTES_MAX) ||
+                (deltaDias >= RECONHECIMENTO_DEPOIS_MIN && deltaDias <= RECONHECIMENTO_DEPOIS_MAX));
+        return dataDivergente ? EXIGE_RECONHECIMENTO.DATA_DIVERGENTE : EXIGE_RECONHECIMENTO.NENHUM;
     };
 
     private numeroIgual = (doTitulo?: string, doBoleto?: string): boolean =>

@@ -18,6 +18,8 @@ import IssuerConfirmationReasonRequiredError from '../domain/errors/IssuerConfir
 import LineCopyAuditFailedError from '../domain/errors/LineCopyAuditFailedError.js';
 import OverdueBoletoNotConfirmableError from '../domain/errors/OverdueBoletoNotConfirmableError.js';
 import TitleSuggestionNotFoundError from '../domain/errors/TitleSuggestionNotFoundError.js';
+import DivergenceAcknowledgementRequiredError from '../domain/errors/DivergenceAcknowledgementRequiredError.js';
+import DivergenceAcknowledgementStaleError from '../domain/errors/DivergenceAcknowledgementStaleError.js';
 import WarningAcknowledgementRequiredError from '../domain/errors/WarningAcknowledgementRequiredError.js';
 import { PERMISSION, type Permission } from '../domain/interface/auth/Permission.js';
 import BoletoSuggestionService from '../domain/service/sispag/BoletoSuggestionService.js';
@@ -335,6 +337,131 @@ describe('POST /sispag/sugestoes-boleto/confirmar — reconheceAvisos (I15o)', (
             const corpo = (await res.json()) as { code: string; error: string };
             expect(corpo.code).toBe('RECONHECIMENTO_DE_AVISO_OBRIGATORIO');
             expect(corpo.error).toContain('portal do banco');
+        });
+    });
+});
+
+describe('POST /sispag/sugestoes-boleto/confirmar — reconhecimento tipado (I15q, ADR-0078)', () => {
+    const ACK = {
+        tipo: 'DATA_DIVERGENTE',
+        aceito: true,
+        motivo: 'conferi o vencimento no portal do banco',
+        deltaDiasVisto: 7,
+        valorBoletoVisto: 10_000,
+    };
+
+    it('repassa o reconhecimento validado ao serviço, com o ator do TOKEN', async () => {
+        const s = servico();
+        await comApp(VER_EXECUTAR, async (url) => {
+            const res = await post(`${url}/sispag/sugestoes-boleto/confirmar`, {
+                ...CHAVE,
+                reconhecimento: ACK,
+            });
+            expect(res.status).toBe(201);
+        });
+        expect(s.confirmar).toHaveBeenCalledWith({
+            ...CHAVE,
+            reconheceAvisos: [],
+            reconhecimento: ACK,
+            ator: 'bia',
+        });
+    });
+
+    it.each([
+        ['aceito: false', { ...ACK, aceito: false }],
+        ['motivo curto', { ...ACK, motivo: 'curto' }],
+        ['tipo desconhecido', { ...ACK, tipo: 'OUTRO' }],
+        ['autor no corpo', { ...ACK, reconhecidoPor: 'maria' }],
+    ])('corpo inválido (%s) → 400 e o serviço nem é chamado', async (_n, reconhecimento) => {
+        const s = servico();
+        await comApp(VER_EXECUTAR, async (url) => {
+            const res = await post(`${url}/sispag/sugestoes-boleto/confirmar`, {
+                ...CHAVE,
+                reconhecimento,
+            });
+            expect(res.status).toBe(400);
+        });
+        expect(s.confirmar).not.toHaveBeenCalled();
+    });
+
+    it('rejeitar e anular não aceitam o campo `reconhecimento`', async () => {
+        const s = servico();
+        await comApp(VER_EXECUTAR, async (url) => {
+            const a = await post(`${url}/sispag/sugestoes-boleto/rejeitar`, {
+                ...CHAVE,
+                motivo: 'não é',
+                reconhecimento: ACK,
+            });
+            expect(a.status).toBe(400);
+        });
+        expect(s.rejeitar).not.toHaveBeenCalled();
+    });
+
+    it('a decisão devolvida traz o reconhecimento e o derivado `reconhecimentoValido`', async () => {
+        servico({
+            confirmar: jest.fn().mockResolvedValue({
+                criada: true,
+                reconhecimentoValido: true,
+                decisao: {
+                    ...DECISAO,
+                    reconhecimento: {
+                        tipo: 'DATA_DIVERGENTE',
+                        motivo: ACK.motivo,
+                        deltaDiasVisto: 7,
+                        valorBoletoVisto: 10_000,
+                        reconhecidoPor: 'bia',
+                        reconhecidoEm: '2026-10-26T12:00:00.000Z',
+                    },
+                },
+            }),
+        });
+        await comApp(VER_EXECUTAR, async (url) => {
+            const res = await post(`${url}/sispag/sugestoes-boleto/confirmar`, {
+                ...CHAVE,
+                reconhecimento: ACK,
+            });
+            const corpo = (await res.json()) as {
+                decisao: {
+                    reconhecimento: { reconhecidoPor: string };
+                    reconhecimentoValido: boolean;
+                };
+            };
+            expect(corpo.decisao.reconhecimento.reconhecidoPor).toBe('bia');
+            expect(corpo.decisao.reconhecimentoValido).toBe(true);
+        });
+    });
+
+    it.each([
+        [
+            new DivergenceAcknowledgementRequiredError({
+                ...CHAVE,
+                deltaDias: 7,
+                valorBoleto: 10_000,
+                vencimentoTitulo: '2026-10-20',
+                vencimentoBoleto: '2026-10-27',
+                codigoMascarado: '34191…0001',
+            }),
+            'RECONHECIMENTO_DE_DIVERGENCIA_OBRIGATORIO',
+        ],
+        [
+            new DivergenceAcknowledgementStaleError({
+                ...CHAVE,
+                deltaDiasVisto: 7,
+                deltaDiasAtual: 6,
+                valorBoletoVisto: 10_000,
+                valorBoletoAtual: 10_000,
+            }),
+            'RECONHECIMENTO_DE_DIVERGENCIA_DESATUALIZADO',
+        ],
+    ])('mapeia %s para 422 com código estável e mensagem em português', async (erro, code) => {
+        servico({ confirmar: jest.fn().mockRejectedValue(erro) });
+        await comApp(VER_EXECUTAR, async (url) => {
+            const res = await post(`${url}/sispag/sugestoes-boleto/confirmar`, CHAVE);
+            expect(res.status).toBe(422);
+            const corpo = (await res.json()) as { code: string; error: string };
+            expect(corpo.code).toBe(code);
+            expect(corpo.error).toMatch(/boleto/);
+            expect(JSON.stringify(corpo)).not.toMatch(/\d{20,}/);
         });
     });
 });

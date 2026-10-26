@@ -10,8 +10,10 @@ import {
     type DecisaoConfirmadaChaveada,
     type DesfechoTitulo,
     type DpsConhecido,
+    EXIGE_RECONHECIMENTO,
     ESTADO_SUGESTAO,
     type EmissorBoleto,
+    MOTIVO_ORFA_RECONHECIMENTO_INVALIDADO,
     type ParVigenteChave,
     RESULTADO_SUGESTAO,
     SINAL_SUGESTAO,
@@ -22,6 +24,7 @@ import {
 } from '../../interface/sispag/SugestaoBoleto.js';
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
+import ReconhecimentoDivergencia from '../../libs/boleto/ReconhecimentoDivergencia.js';
 import AncoraOrdemDps from './AncoraOrdemDps.js';
 import RegraSugestaoBoleto, { faixaDeCandidatos } from './RegraSugestaoBoleto.js';
 
@@ -330,7 +333,19 @@ export default class MotorSugestaoBoleto {
             resolvidosPorDecisao.add(chave);
             const alvo = elegivelPorChave.get(chave);
             if (alvo) {
-                if (porChave.has(chaveBoleto(d))) {
+                const vivo = porChave.get(chaveBoleto(d));
+                if (vivo && this.reconhecimentoInvalido(d, alvo, vivo, pares)) {
+                    // I15q: o Δ ou o valor mudaram desde o ack. A decisão segue CONFIRMADA (o
+                    // sistema não a anula, I15g) e continua reservando título e boleto; a tela a
+                    // mostra órfã até a analista anular e reconfirmar.
+                    ocupados.add(chaveBoleto(d));
+                    orfas.push({
+                        titulo,
+                        decisao: d,
+                        dataDebito: alvo.dataDebito,
+                        motivo: MOTIVO_ORFA_RECONHECIMENTO_INVALIDADO,
+                    });
+                } else if (vivo) {
                     confirmadaDoTitulo.set(chave, d);
                     ocupados.add(chaveBoleto(d));
                 } else {
@@ -664,6 +679,7 @@ export default class MotorSugestaoBoleto {
                 sinais: d.sinais ?? [],
                 confirmavel: false,
                 diasVencidoNoDebito: 0,
+                exigeReconhecimento: EXIGE_RECONHECIMENTO.NENHUM,
             },
             estado: ESTADO_SUGESTAO.CONFIRMADA,
             orfa: true,
@@ -681,6 +697,19 @@ export default class MotorSugestaoBoleto {
         }
         return 'O boleto confirmado deixou de estar livre no pool DDA. Anule a confirmação.';
     };
+
+    /** I15q: o reconhecimento gravado ainda bate com o Δdias e o valor de AGORA? Derivado, sem coluna. */
+    private reconhecimentoInvalido = (
+        d: DecisaoConfirmadaChaveada,
+        alvo: TituloElegivel,
+        boleto: BoletoLivre,
+        pares: Set<string>,
+    ): boolean =>
+        d.reconhecimento !== undefined &&
+        !ReconhecimentoDivergencia.valido(d.reconhecimento, {
+            deltaDiasAtual: this.avaliar(alvo, boleto, pares).deltaDias,
+            valorBoletoAtual: boleto.centavos,
+        });
 
     private motivoTituloSaiu = (titulo: TituloAPagar): string => {
         if (titulo.temBoleto === true) {

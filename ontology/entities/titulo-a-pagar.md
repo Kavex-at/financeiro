@@ -1,7 +1,7 @@
 ---
 name: TituloAPagar
 type: entity
-ontology_version: "0.46.0"
+ontology_version: "0.49.0"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -51,7 +51,7 @@ relationships:
   - "TituloAPagar 0..N—N DecisaoSugestaoBoleto (decisão humana sobre qual boleto livre do fin124 é o deste título; não altera o título nem `temBoleto`, I15a; ADR-0068, planned)"
   - "TituloAPagar 1—1 (derivado) SituacaoPagamento (PRONTO | BLOQUEADO + motivos, dono e ação; calculada no painel, nunca persistida; I19, ADR-0075, planned)"
   - "TituloAPagar 1—0..1 TituloAPagar (renegociação I18: o título novo nasce no mesmo docCod e consome o antigo; linhagem no ledger sispag_ajuste_centavos_execucao, não em coluna; ADR-0074, planned)"
-last_review: 2026-10-20
+last_review: 2026-10-26
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): pagamentos de importação a vencer/aprovados"
   - "ADR-0021 — SISPAG é DOMÉSTICO: pagamento ao exterior é câmbio manual da tesouraria (não passa pelo SISPAG); internacional (com298 ufEspSigla='EX') é FILTRADO na ingestão e nunca entra na carteira (supersede ADR-0017 / aposenta a classe internacional e o I7)"
@@ -202,6 +202,8 @@ nome do tipo (`tpd_des_nome`) é persistido. Os insumos já existentes são `apr
 `forma_pagamento_conexos`, `tem_boleto`, o bloqueio por duplicidade (ADR-0063), o ledger do ajuste de
 centavos (ADR-0074) e o desfecho de boleto (ADR-0072). `prontoParaRemessa` segue **informativo** e não
 alimenta a situação.
+
+**`prazoBoleto` (ADR-0078, `implemented` Fase 1) — derivado, não é coluna:** prazo efetivo = `min(vencimento, prazo final do boleto acionável)`, com `origem`, `totalCandidatos` e `perdido` (regra I19t). Alimenta a faixa "bloqueados vencem hoje", o filtro "Vencidos" e o de/até; **não altera** `VENCIDO` nem a situação de pagamento.
 
 ## Anti-fantasma (`ativo`)
 

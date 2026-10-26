@@ -295,6 +295,58 @@ describe('SugestaoBoletoRepository (ADR-0068, migration 0084)', () => {
         expect(lidas[0]?.sinais).toEqual(['MESMO_DIA']);
     });
 
+    it('inserirDecisao: grava o reconhecimento tipado parametrizado, com a hora do servidor (ADR-0078)', async () => {
+        const db = buildDb();
+        const reconhecimento = {
+            tipo: 'DATA_DIVERGENTE' as const,
+            motivo: 'conferi o vencimento no portal',
+            deltaDiasVisto: -3,
+            valorBoletoVisto: 10_003,
+            reconhecidoPor: 'ana',
+        };
+        db.selectFirst.mockResolvedValueOnce({ id: 'd1' }).mockResolvedValueOnce({
+            ...DECISAO_ROW,
+            reconhecimento_tipo: 'DATA_DIVERGENTE',
+            reconhecimento_motivo: reconhecimento.motivo,
+            reconhecimento_delta_dias_visto: -3,
+            reconhecimento_valor_boleto_visto_centavos: '10003',
+            reconhecido_por: 'ana',
+            reconhecido_em: new Date('2026-10-26T12:00:00Z'),
+        });
+        const r = await make(db).inserirDecisao({ ...NOVA_DECISAO, reconhecimento });
+        const [sql, params] = db.selectFirst.mock.calls[0];
+        expect(sql).toMatch(/reconhecimento_tipo/);
+        expect(sql).toMatch(/\$reconhecimentoTipo/);
+        expect(sql).not.toContain(reconhecimento.motivo);
+        expect(params).toMatchObject({
+            reconhecimentoTipo: 'DATA_DIVERGENTE',
+            reconhecimentoMotivo: reconhecimento.motivo,
+            reconhecimentoDeltaDiasVisto: -3,
+            reconhecimentoValorBoletoVisto: 10_003,
+            reconhecidoPor: 'ana',
+        });
+        expect(r.decisao.reconhecimento).toEqual({
+            tipo: 'DATA_DIVERGENTE',
+            motivo: reconhecimento.motivo,
+            deltaDiasVisto: -3,
+            valorBoletoVisto: 10_003,
+            reconhecidoPor: 'ana',
+            reconhecidoEm: '2026-10-26T12:00:00.000Z',
+        });
+    });
+
+    it('inserirDecisao sem reconhecimento grava nulos; decisão antiga lê `reconhecimento` ausente', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValueOnce({ id: 'd1' }).mockResolvedValueOnce(DECISAO_ROW);
+        const r = await make(db).inserirDecisao(NOVA_DECISAO);
+        expect(db.selectFirst.mock.calls[0][1]).toMatchObject({
+            reconhecimentoTipo: null,
+            reconhecimentoMotivo: null,
+            reconhecidoPor: null,
+        });
+        expect(r.decisao).not.toHaveProperty('reconhecimento');
+    });
+
     it('inserirDecisao: perdedor relê a vencedora pelo título OU pelo boleto (criada=false)', async () => {
         const db = buildDb();
         db.selectFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(DECISAO_ROW);

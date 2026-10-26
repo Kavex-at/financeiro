@@ -35,6 +35,10 @@ export const MOTIVO_INELEGIVEL_VINCULO = {
     /** Item de borderô (ADR-0077, I21o): o grupo não está confirmado ou perdeu o boleto. */
     GRUPO_NAO_CONFIRMADO: 'GRUPO_NAO_CONFIRMADO',
     GRUPO_ORFAO: 'GRUPO_ORFAO',
+    /** 7º check de I17d (ADR-0078): o fator de vencimento da barra contradiz a data do DDA. */
+    FATOR_VENCIMENTO_DIVERGE: 'FATOR_VENCIMENTO_DIVERGE',
+    /** Fator `0000` no caminho `DATA_DIVERGENTE` (ADR-0078): sem data na barra não há como cruzar. */
+    FATOR_SEM_VENCIMENTO: 'FATOR_SEM_VENCIMENTO',
 } as const;
 export type MotivoInelegivelVinculo =
     (typeof MOTIVO_INELEGIVEL_VINCULO)[keyof typeof MOTIVO_INELEGIVEL_VINCULO];
@@ -281,7 +285,11 @@ export default class ElegibilidadeVinculoCodigoBarras {
         }
         const limpo = e.codigo.replace(/[\s.]/g, '');
         if (limpo.startsWith('8')) return { motivo: MOTIVO_INELEGIVEL_VINCULO.CODIGO_ARRECADACAO };
-        const decodificado = this.codigoBarras.decodificar(limpo, e.vencimentoTitulo);
+        // 7º check de I17d: o ciclo do fator é escolhido pela data do DDA (não pela do título).
+        const decodificado = this.codigoBarras.decodificar(
+            limpo,
+            e.poolVencimento ?? e.vencimentoTitulo,
+        );
         if (!decodificado) return { motivo: MOTIVO_INELEGIVEL_VINCULO.CODIGO_INVALIDO };
         const comCodigo = {
             codigoMascarado: AnaliseCodigoBarrasRepetido.mascarar(decodificado.barras),
@@ -290,12 +298,16 @@ export default class ElegibilidadeVinculoCodigoBarras {
         const valorDiverge =
             e.poolValor !== undefined &&
             Math.round(e.poolValor * 100) !== decodificado.valorCentavos;
-        const dataDiverge =
-            e.poolVencimento !== undefined &&
-            decodificado.vencimento !== undefined &&
-            e.poolVencimento !== decodificado.vencimento;
-        if (valorDiverge || dataDiverge) {
+        if (valorDiverge) {
             return { motivo: MOTIVO_INELEGIVEL_VINCULO.BOLETO_INCONSISTENTE, extra: comCodigo };
+        }
+        // Fator `0000` não cruza (a janela padrão segue como hoje: `DATA_INDISPONIVEL`).
+        const fatorDiverge =
+            e.poolVencimento !== undefined &&
+            decodificado.semVencimento !== true &&
+            decodificado.vencimento !== e.poolVencimento;
+        if (fatorDiverge) {
+            return { motivo: MOTIVO_INELEGIVEL_VINCULO.FATOR_VENCIMENTO_DIVERGE, extra: comCodigo };
         }
         return { decodificado, comCodigo };
     };
