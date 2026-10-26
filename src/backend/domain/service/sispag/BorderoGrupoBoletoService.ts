@@ -499,9 +499,11 @@ export default class BorderoGrupoBoletoService implements LimpezaBorderoGrupoInt
                 usnCodCad,
                 gerNum: exec.gerNum ?? prep.gerNum,
                 borDtaMvto: this.calendar.toErpEpoch(exec.borDtaMvto ?? prep.pedido.dataDebito),
-                t0: exec.escritaIniciadaEm.getTime(),
-                ...(t1 !== undefined ? { t1 } : {}),
-                agora: this.calendar.now().getTime(),
+                // `borTimCad` vem na codificação do ERP (hora de Brasília como UTC): a janela
+                // também, senão erra por 3 h e toda retomada cai em `indeterminado`.
+                t0: this.calendar.toErpInstant(exec.escritaIniciadaEm),
+                ...(t1 !== undefined ? { t1: this.calendar.toErpInstant(t1) } : {}),
+                agora: this.calendar.toErpInstant(this.calendar.now()),
                 margemMs: MARGEM_RELOGIO_BORDERO_MS,
             });
         } catch (err) {
@@ -537,7 +539,7 @@ export default class BorderoGrupoBoletoService implements LimpezaBorderoGrupoInt
         t0: Date,
     ): Promise<Passo> => {
         const { exec } = prep;
-        const agora = this.calendar.now().getTime();
+        const agora = this.calendar.toErpInstant(this.calendar.now());
         let achados: BorderoIdentificado[];
         try {
             achados = await this.baixa.buscarBorderosNaJanela({
@@ -545,7 +547,7 @@ export default class BorderoGrupoBoletoService implements LimpezaBorderoGrupoInt
                 usnCodCad,
                 gerNum: exec.gerNum ?? prep.gerNum,
                 borDtaMvto: this.calendar.toErpEpoch(exec.borDtaMvto ?? prep.pedido.dataDebito),
-                t0: t0.getTime() - FOLGA_VARREDURA_BORDERO_MS,
+                t0: this.calendar.toErpInstant(t0) - FOLGA_VARREDURA_BORDERO_MS,
                 t1: agora + FOLGA_VARREDURA_BORDERO_MS,
                 agora,
                 margemMs: 0,

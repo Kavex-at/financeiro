@@ -68,6 +68,8 @@ const DEBITO_EPOCH = Date.UTC(2026, 9, 21);
 const ROBO_USN = 77;
 /** Relógio do servidor no momento da preparação (e da retomada). */
 const AGORA = Date.UTC(2026, 9, 20, 13, 0, 0);
+/** O ERP carimba `borTimCad` com a hora de Brasília como se fosse UTC (HML, 2026-10-26). */
+const ERP = (instante: number): number => instante - 3 * 3_600_000;
 const MASCARA = '34191…7500';
 const DOCS = ['38883', '38884', '38885'] as const;
 const LIQUIDO = 525;
@@ -177,7 +179,7 @@ const erpFake = (trilha: string[]) => {
             DOCS.map((d) => [d, { pago: false, liberado: true, liquido: LIQUIDO }]),
         ),
         /** Carimbo que o ERP grava no próximo `POST fin010` (ms, ao segundo). */
-        proximoTimCad: AGORA + 2_000,
+        proximoTimCad: ERP(AGORA + 2_000),
         proximoItsCodSeq: 7,
         loteNativoStatus: 0 as number | 'ilegivel',
         arquivosRemessa: [] as Array<{ gabCod: number }>,
@@ -848,7 +850,7 @@ describe('BorderoGrupoBoletoService — preparar (I21l, I21n): canônico PEDRONI
             e.id,
             expect.objectContaining({
                 borCod: 251,
-                borTimCad: AGORA + 2_000,
+                borTimCad: ERP(AGORA + 2_000),
                 escritaConcluidaEm: expect.any(Date),
             }),
         );
@@ -1033,7 +1035,7 @@ describe('BorderoGrupoBoletoService — retomada: tabela de reconhecimento (I21s
             escritaIniciadaEm: new Date(t0),
             escritaConcluidaEm: new Date(t1),
         });
-        m.erp.estado.proximoTimCad = t0 + 1_000;
+        m.erp.estado.proximoTimCad = ERP(t0 + 1_000);
         m.erp.novoBordero();
         const r = await m.service.preparar(m.pedido());
         expect(m.erp.baixa.buscarBorderosNaJanela).toHaveBeenCalledWith({
@@ -1041,15 +1043,15 @@ describe('BorderoGrupoBoletoService — retomada: tabela de reconhecimento (I21s
             usnCodCad: ROBO_USN,
             gerNum: GER_NUM,
             borDtaMvto: DEBITO_EPOCH,
-            t0,
-            t1,
-            agora: AGORA,
+            t0: ERP(t0),
+            t1: ERP(t1),
+            agora: ERP(AGORA),
             margemMs: MARGEM_RELOGIO_BORDERO_MS,
         });
         expect(m.erp.baixa.criarBorderoDoGrupo).not.toHaveBeenCalled();
         expect(m.ledger.repo.registrarBordero).toHaveBeenCalledWith(
             e.id,
-            expect.objectContaining({ borCod: 251, borTimCad: t0 + 1_000 }),
+            expect.objectContaining({ borCod: 251, borTimCad: ERP(t0 + 1_000) }),
         );
         expect(m.erp.baixa.gravarBaixaSimples).toHaveBeenCalledTimes(3);
         expect(r).toMatchObject({ desfecho: DESFECHO_PREPARACAO.PRONTO, borCod: 251 });
@@ -1062,14 +1064,18 @@ describe('BorderoGrupoBoletoService — retomada: tabela de reconhecimento (I21s
             etapa: ETAPA_BORDERO_GRUPO.INTENCAO_GRAVADA,
             escritaIniciadaEm: new Date(t0),
         });
-        m.erp.estado.proximoTimCad = AGORA - 1_000;
+        m.erp.estado.proximoTimCad = ERP(AGORA - 1_000);
         m.erp.novoBordero();
         await m.service.preparar(m.pedido());
         const janela = m.erp.baixa.buscarBorderosNaJanela.mock.calls[0]?.[0] as Record<
             string,
             unknown
         >;
-        expect(janela).toMatchObject({ t0, agora: AGORA, margemMs: MARGEM_RELOGIO_BORDERO_MS });
+        expect(janela).toMatchObject({
+            t0: ERP(t0),
+            agora: ERP(AGORA),
+            margemMs: MARGEM_RELOGIO_BORDERO_MS,
+        });
         expect(janela.t1).toBeUndefined();
         expect(m.erp.baixa.criarBorderoDoGrupo).not.toHaveBeenCalled();
     });
@@ -1077,9 +1083,9 @@ describe('BorderoGrupoBoletoService — retomada: tabela de reconhecimento (I21s
     it('dois ou mais borderôs na janela (ex.: Permutas com o mesmo usuário) ⇒ indeterminado + Alerta, nada escrito', async () => {
         const m = novo();
         const e = m.execucao({ etapa: ETAPA_BORDERO_GRUPO.FAILED });
-        m.erp.estado.proximoTimCad = AGORA - 50_000;
+        m.erp.estado.proximoTimCad = ERP(AGORA - 50_000);
         m.erp.novoBordero();
-        m.erp.estado.proximoTimCad = AGORA - 49_000;
+        m.erp.estado.proximoTimCad = ERP(AGORA - 49_000);
         m.erp.novoBordero();
         const r = await m.service.preparar(m.pedido());
         expect(r.desfecho).toBe(DESFECHO_PREPARACAO.INDETERMINADO);
@@ -1094,7 +1100,7 @@ describe('BorderoGrupoBoletoService — retomada: tabela de reconhecimento (I21s
         const m = novo();
         const e = m.execucao({ etapa: ETAPA_BORDERO_GRUPO.FAILED });
         // borTimCad 10 min depois do t0: fora de [t0 − 2 min, agora + 2 min]
-        m.erp.estado.proximoTimCad = AGORA + 600_000;
+        m.erp.estado.proximoTimCad = ERP(AGORA + 600_000);
         m.erp.novoBordero();
         const r = await m.service.preparar(m.pedido());
         expect(r.desfecho).toBe(DESFECHO_PREPARACAO.INDETERMINADO);
@@ -1109,7 +1115,7 @@ describe('BorderoGrupoBoletoService — retomada: tabela de reconhecimento (I21s
     it('varredura larga ignora o borderô que é de outra execução nossa do mesmo lote ⇒ segue e cria', async () => {
         const m = novo();
         m.execucao({ etapa: ETAPA_BORDERO_GRUPO.FAILED });
-        m.erp.estado.proximoTimCad = AGORA + 600_000;
+        m.erp.estado.proximoTimCad = ERP(AGORA + 600_000);
         const alheio = m.erp.novoBordero();
         m.execucao({
             grupoId: 'G2',

@@ -139,3 +139,16 @@ describe('BankingCalendar', () => {
         });
     });
 });
+
+describe('BankingCalendar.toErpInstant', () => {
+    it('codifica o instante como o Conexos carimba o borTimCad: hora de Brasília como UTC', () => {
+        const cal = BankingCalendar.withClock(() => new Date('2026-10-26T22:52:51Z'));
+        // medido em HML: borderô 255 criado às 22:52:51Z voltou com borTimCad 19:52:52Z
+        expect(cal.toErpInstant(new Date('2026-10-26T22:52:51Z'))).toBe(
+            Date.parse('2026-10-26T19:52:51Z'),
+        );
+        expect(cal.toErpInstant(Date.parse('2026-10-26T22:52:51Z'))).toBe(
+            Date.parse('2026-10-26T19:52:51Z'),
+        );
+    });
+});
