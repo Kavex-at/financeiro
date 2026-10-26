@@ -1,5 +1,21 @@
 # Columbia Financeiro — Changelog
 
+## v0.75.0 (2026-10-26) — SISPAG: um boleto paga vários títulos (boleto agrupado)
+
+- **Boletos agrupados.** Quando um boleto do DDA cobre a soma de vários títulos do mesmo fornecedor,
+  a nova aba "Boletos agrupados" sugere o grupo (títulos com o mesmo vencimento do boleto). Também dá
+  para montar o grupo à mão, com títulos que vencem até 10 dias antes ou depois do boleto. Filiais
+  diferentes não se misturam.
+- **O grupo anda como uma coisa só.** No lote o grupo ocupa uma linha, entra só quando todos os seus
+  títulos estão prontos e sai inteiro se for retirado. A formação automática de lotes respeita isso.
+- **Remessa com borderô.** Ao gerar a remessa, cada grupo vira um borderô no Conexos, com uma baixa por
+  título e total igual ao boleto, e um único pagamento no arquivo do banco. Se a geração cair no meio,
+  ela retoma de onde parou e nunca cria um segundo borderô: na dúvida, o grupo fica "indeterminado" e
+  gera um alerta para conferência.
+- **Retorno do banco.** A linha de retorno do boleto fecha o grupo como pago, rejeitado ou divergente.
+- **Só quem tem a filial.** Confirmar, anular, incluir no lote e retirar um grupo exigem permissão na
+  filial dele.
+
 ## v0.74.0 (2026-10-23) — SISPAG: aba Boletos DDA com resumo e atalhos, botões dos cards visíveis
 
 - **Boletos DDA com resumo clicável.** A aba ganha quatro cards (casados com título, para conferir,
