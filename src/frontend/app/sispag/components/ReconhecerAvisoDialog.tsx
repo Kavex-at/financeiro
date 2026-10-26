@@ -32,6 +32,10 @@ export function ReconhecerAvisoDialog({
   deltaDias,
   onFechar,
   onConfirmar,
+  titulo = 'Boleto vence antes do título',
+  textoReconhecimento = TEXTO_RECONHECIMENTO_VENCE_ANTES,
+  rotuloDeltaValor = 'Valor (boleto − título)',
+  rotuloDeltaDias = 'Vencimento (boleto − título)',
 }: {
   /** Mensagem completa do aviso (datas e dias, em português). */
   mensagem: string
@@ -41,6 +45,11 @@ export function ReconhecerAvisoDialog({
   onFechar: () => void
   /** Rejeita com a mensagem em português para o diálogo mostrar. */
   onConfirmar: () => Promise<void>
+  /** Boleto agrupado (ADR-0077): o mesmo consentimento, com o texto do caso "título antes do boleto". */
+  titulo?: string
+  textoReconhecimento?: string
+  rotuloDeltaValor?: string
+  rotuloDeltaDias?: string
 }) {
   const campoId = React.useId()
   const [marcado, setMarcado] = React.useState(false)
@@ -71,17 +80,17 @@ export function ReconhecerAvisoDialog({
       <DialogContent size="sm">
         <form onSubmit={enviar} noValidate>
           <DialogHeader>
-            <DialogTitle>Boleto vence antes do título</DialogTitle>
+            <DialogTitle>{titulo}</DialogTitle>
             <DialogDescription>{mensagem}</DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-3">
             <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
               <div className="flex flex-col">
-                <dt className="text-xs text-muted-foreground">Valor (boleto − título)</dt>
+                <dt className="text-xs text-muted-foreground">{rotuloDeltaValor}</dt>
                 <dd className="tabular-nums">{deltaValor}</dd>
               </div>
               <div className="flex flex-col">
-                <dt className="text-xs text-muted-foreground">Vencimento (boleto − título)</dt>
+                <dt className="text-xs text-muted-foreground">{rotuloDeltaDias}</dt>
                 <dd className="font-medium tabular-nums text-warning-foreground">{deltaDias}</dd>
               </div>
             </dl>
@@ -98,7 +107,7 @@ export function ReconhecerAvisoDialog({
                 autoFocus
               />
               <Label htmlFor={campoId} className="text-sm font-normal leading-snug">
-                {TEXTO_RECONHECIMENTO_VENCE_ANTES}
+                {textoReconhecimento}
               </Label>
             </div>
             {erro ? (

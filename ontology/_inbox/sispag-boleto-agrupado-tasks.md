@@ -569,15 +569,23 @@ Paralelismo: **Fase A inteira** em paralelo; na Fase D, T9/T10/T11/T12/T13 em pa
 - `src/frontend/app/sispag/page.tsx` (aba de títulos: título de grupo marcado e não selecionável avulso)
 
 **Acceptance criteria:**
-- [ ] Testes primeiro. Sugestão mostra credor, boleto mascarado, valor, vencimento, títulos e soma; `confirmavel = false` mostra o motivo ("aguardando alçada", "não suportado: títulos de filiais diferentes, pagar à mão") sem botão de confirmar; `intercambiavel` explicado em uma linha
-- [ ] Composição manual: soma ao vivo com diferença em centavos; fora da janela de 10 dias desabilita com motivo; aviso de vencimento antes do boleto exige reconhecimento explícito (o servidor revalida)
-- [ ] No lote, o grupo é **uma** linha (boleto mascarado, total, credor, vencimento do boleto, situação) que expande os N títulos; retirar/mover age no grupo; tentativa sobre um título mostra a `userMessage` do 409
-- [ ] Situações `DISPONIVEL`, `EM_LOTE`, `EM_REMESSA`, `REJEITADO` (com "resolva o borderô antigo no Conexos antes de pôr o grupo num lote novo"), `RETIDO`, `DIVERGENTE`, `ORFAO`; anulação com `MotivoDecisaoDialog` (10–500); aviso de grupo anulado em lote comprometido
-- [ ] Ações de escrita só para `sispag:executar`; botões desabilitados durante a chamada
-- [ ] Nenhum código completo na tela além do que já é exibido hoje
-- [ ] Tokens/componentes do design system (`src/frontend/docs/design-system`); `npm run lint`/`typecheck`/`test` do frontend verdes
-- [ ] **DesignSystemReviewer gate** aprovado
+- [x] Testes primeiro. Sugestão mostra credor, boleto mascarado, valor, vencimento, títulos e soma; `confirmavel = false` mostra o motivo ("aguardando alçada", "não suportado: títulos de filiais diferentes, pagar à mão") sem botão de confirmar; `intercambiavel` explicado em uma linha
+- [x] Composição manual: soma ao vivo com diferença em centavos; fora da janela de 10 dias desabilita com motivo; aviso de vencimento antes do boleto exige reconhecimento explícito (o servidor revalida)
+- [x] No lote, o grupo é **uma** linha (boleto mascarado, total, credor, vencimento do boleto, situação) que expande os N títulos; retirar/mover age no grupo; tentativa sobre um título mostra a `userMessage` do 409
+- [x] Situações `DISPONIVEL`, `EM_LOTE`, `EM_REMESSA`, `REJEITADO` (com "resolva o borderô antigo no Conexos antes de pôr o grupo num lote novo"), `RETIDO`, `DIVERGENTE`, `ORFAO`; anulação com `MotivoDecisaoDialog` (10–500); aviso de grupo anulado em lote comprometido
+- [x] Ações de escrita só para `sispag:executar`; botões desabilitados durante a chamada
+- [x] Nenhum código completo na tela além do que já é exibido hoje
+- [x] Tokens/componentes do design system (`src/frontend/docs/design-system`); `npm run lint`/`typecheck`/`test` do frontend verdes
+- [x] **DesignSystemReviewer gate** aprovado
 
+**Desvios e notas da entrega (2026-10-26):**
+- Dependências do frontend não estavam instaladas em lugar nenhum: `npm ci` rodou só neste worktree (`node_modules` é ignorado pelo git). Linha de base: 502 testes de sispag verdes; no fim, o frontend inteiro: 122 suítes, 1352 testes, `tsc` limpo e `eslint` sem erro.
+- Cliente em `lib/sispag.ts` (6 chamadas + `CODIGOS_ERRO_GRUPO_BOLETO` + tipos/schemas Zod); `ItemLote.grupoBoletoId`, `LotePagamento.grupos`, `EM_GRUPO` nas situações da sugestão 1:1.
+- Pontos de entrada: nova aba **Boletos agrupados** (`GrupoBoletoPainel`: sugestões com motivo/confirmar, grupos confirmados com situação/anular) e o botão **Compor grupo** nas linhas livres da aba Boletos DDA (`BoletosDdaTab.onCompor`), que abre o `ComporGrupoBoletoDialog` com os títulos do mesmo credor e filial; o botão "Compor grupo manualmente" do painel leva à aba DDA.
+- `ReconhecerAvisoDialog` ganhou props opcionais (título, texto do reconhecimento, rótulos) para o aviso "título vence antes do boleto" sem mudar o caso 1:1.
+- `RetirarDoLoteDialog` ganhou `grupo`; o `LoteCard` mostra cada grupo como UMA linha (`GrupoBoletoLinha`, expansível) e retira o grupo inteiro; título de grupo não é selecionável avulso (`motivoSelecaoBloqueada`/`podeSelecionar`/`estadoSelecionarTodos` recebem o conjunto de chaves). Não foi feita a variante de grupo do `MoverParaLoteDialog`: o grupo só entra/sai do lote pelas rotas de grupo e os títulos dele nunca chegam ao plano de mover.
+- Sem executar: nenhum botão de escrita (Confirmar/Anular/Compor/Retirar); botões desabilitados durante a chamada; só a máscara 5+4 na tela.
+- Candidatos da composição vêm da carteira carregada na página (mesmo credor/filial, liberados, não pagos, fora de lote comprometido e de grupo).
 **Dependencies:** Task 19
 
 ---

@@ -453,6 +453,8 @@ export interface ItemLote {
    * Vínculo do código de barras ao item (ADR-0071): só a MÁSCARA 5+4. Ausente = sem vínculo.
    */
   vinculoCodigoBarras?: VinculoCodigoBarrasItem
+  /** Boleto agrupado (ADR-0077): o item é um dos N títulos de um grupo; ausente = título avulso. */
+  grupoBoletoId?: string
 }
 
 /** Origem do vínculo do código de barras ao item (ADR-0071, I17). */
@@ -580,6 +582,25 @@ export interface LotePagamento {
   itens: ItemLote[]
   /** Só em RASCUNHO. Ausente = backend antigo ou prontidão indisponível: não conta como pronto. */
   prontidao?: ProntidaoLote
+  /** Boletos agrupados do lote, um bloco por grupo (ADR-0077, I21j). Ausente = nenhum. */
+  grupos?: GrupoNoLote[]
+}
+
+/**
+ * Boleto agrupado como UM bloco do lote (ADR-0077): máscara 5+4 (nunca o código), total do boleto
+ * em reais, vencimento do boleto e a situação derivada. Os N itens seguem em `itens`, cada um com
+ * `grupoBoletoId`.
+ */
+export interface GrupoNoLote {
+  grupoId: string
+  codbarMascarado: string
+  /** Valor do boleto em reais (a mesma unidade de `ItemLote.valor`). */
+  valorBoleto: number
+  /** Data civil `YYYY-MM-DD`. */
+  vencimentoBoleto: string
+  credor?: string
+  situacao: string
+  titulos: Array<{ filCod: number; docCod: string; titCod: string }>
 }
 
 export interface FormacaoLotesResult {
@@ -2322,6 +2343,8 @@ export type SugestaoBoleto = z.infer<typeof sugestaoBoletoSchema>
  * `SO_ATENCAO` têm candidato confirmável; as demais são informação.
  */
 export const SITUACOES_SUGESTAO_TITULO = [
+  /** O título está num boleto agrupado confirmado (I15q): só informativo. */
+  'EM_GRUPO',
   'UNICA_SEGURA',
   'AMBIGUA',
   'SO_ATENCAO',
@@ -2746,4 +2769,218 @@ export async function retomarAjustesCentavos(): Promise<void> {
     if (e instanceof AutorizacaoApiError && e.status === 403) return
     throw e
   }
+}
+
+// ===================================================== ADR-0077 — boleto agrupado (1 boleto → N títulos)
+// Espelho de `routes/sispag.ts` (`/grupos-boleto`, `/lotes/:id/grupos`). O ator é sempre o do token
+// (nunca vai no corpo); a resposta traz só a máscara 5+4 do boleto e nunca a conta do emissor.
+
+export const SITUACOES_GRUPO_BOLETO = [
+  'DISPONIVEL',
+  'EM_LOTE',
+  'EM_REMESSA',
+  'REJEITADO',
+  'RETIDO',
+  'DIVERGENTE',
+  'ORFAO',
+  'ANULADO',
+  'PAGO',
+] as const
+export type SituacaoGrupoBoleto = (typeof SITUACOES_GRUPO_BOLETO)[number]
+
+/** Códigos estáveis de erro do boleto agrupado (envelope `{ error, code, retryable }`). */
+export const CODIGOS_ERRO_GRUPO_BOLETO = {
+  SOMA_DIVERGENTE: 'GRUPO_BOLETO_SOMA_DIVERGENTE', // 422
+  TITULO_INELEGIVEL: 'GRUPO_BOLETO_TITULO_INELEGIVEL', // 409
+  CRUZA_FILIAL: 'GRUPO_BOLETO_CRUZA_FILIAL', // 422
+  FORA_DA_JANELA: 'GRUPO_BOLETO_FORA_DA_JANELA', // 422
+  NAO_CONFIRMAVEL: 'GRUPO_BOLETO_NAO_CONFIRMAVEL', // 409
+  INDIVISIVEL: 'GRUPO_BOLETO_INDIVISIVEL', // 409: retirar UM título do grupo
+  NAO_ENCONTRADO: 'GRUPO_BOLETO_NAO_ENCONTRADO', // 404
+  ESTADO_INCOMPATIVEL: 'GRUPO_BOLETO_ESTADO_INCOMPATIVEL', // 409
+  INELEGIVEL_NA_REMESSA: 'GRUPO_BOLETO_INELEGIVEL_NA_REMESSA', // 409
+} as const
+
+const chaveTituloGrupoSchema = z.object({
+  filCod: z.number(),
+  docCod: z.string(),
+  titCod: z.string(),
+})
+export type ChaveTituloGrupo = z.infer<typeof chaveTituloGrupoSchema>
+
+/** `GET /sispag/grupos-boleto/sugestoes`: grupo fechado no mesmo vencimento (I21e); valores em CENTAVOS. */
+export const sugestaoGrupoBoletoSchema = z.object({
+  filCod: z.number(),
+  pesCod: z.string(),
+  credor: z.string().optional(),
+  ddcCod: z.number(),
+  ditCod: z.number(),
+  numeroBoleto: z.string().optional(),
+  /** Só a máscara 5+4. */
+  codbarMascarado: z.string().optional(),
+  valorBoletoCentavos: z.number(),
+  /** Data civil `YYYY-MM-DD`. */
+  vencimentoBoleto: z.string(),
+  somaTitulosCentavos: z.number().optional(),
+  titulos: z.array(
+    chaveTituloGrupoSchema.extend({
+      motivos: z.array(z.string()),
+      valorCentavos: z.number(),
+      vencimento: z.string(),
+      valorLiquidoCentavos: z.number().optional(),
+      deltaDias: z.number().optional(),
+    }),
+  ),
+  /** K boletos iguais × títulos de mesmo valor: a partição é fixa e a analista confirma cada grupo. */
+  intercambiavel: z.boolean(),
+  parVigente: z.boolean(),
+  confirmavel: z.boolean(),
+  motivo: z.string().optional(),
+  motivos: z.array(z.string()),
+})
+export type SugestaoGrupoBoleto = z.infer<typeof sugestaoGrupoBoletoSchema>
+
+/** Um grupo confirmado, com a situação derivada e o órfão (I21u). Sem a conta do emissor. */
+export const grupoBoletoListadoSchema = z.object({
+  id: z.string(),
+  filCod: z.number(),
+  pesCod: z.string(),
+  credor: z.string().optional(),
+  ddcCod: z.number(),
+  ditCod: z.number(),
+  numeroBoleto: z.string().optional(),
+  codbarMascarado: z.string(),
+  valorBoletoCentavos: z.number(),
+  vencimentoBoleto: z.string(),
+  titulos: z.array(
+    chaveTituloGrupoSchema.extend({
+      valorLiquidoCentavos: z.number().optional(),
+      vencimento: z.string().optional(),
+    }),
+  ),
+  somaTitulosCentavos: z.number(),
+  origem: z.enum(['SUGERIDO', 'MANUAL']),
+  intercambiavel: z.boolean(),
+  estado: z.string(),
+  confirmadoPor: z.string(),
+  motivoAnulacao: z.string().optional(),
+  versao: z.number(),
+  situacao: z.string(),
+  orfao: z.object({ orfao: z.boolean(), motivo: z.string().optional() }),
+  loteId: z.string().optional(),
+  loteStatus: z.string().optional(),
+})
+export type GrupoBoletoListado = z.infer<typeof grupoBoletoListadoSchema>
+
+/** Corpo de `POST /grupos-boleto/confirmar`. `reconheceAvisos` só vai quando há aviso reconhecido. */
+export interface ConfirmarGrupoBoletoEntrada {
+  origem: 'SUGERIDO' | 'MANUAL'
+  ddcCod: number
+  ditCod: number
+  titulos: ChaveTituloGrupo[]
+  reconheceAvisos?: readonly string[]
+}
+
+export const resultadoConfirmacaoGrupoSchema = z.object({
+  /** `false` = o mesmo boleto e os mesmos títulos já estavam confirmados (200). */
+  criado: z.boolean(),
+  grupo: grupoBoletoListadoSchema.partial().passthrough(),
+})
+export type ResultadoConfirmacaoGrupoBoleto = z.infer<typeof resultadoConfirmacaoGrupoSchema>
+
+/** Aviso do servidor quando o grupo anulado estava num lote comprometido (a remessa o retira). */
+export const resultadoAnulacaoGrupoSchema = z.object({
+  /** `false` = o grupo já estava anulado. */
+  anulado: z.boolean(),
+  grupo: grupoBoletoListadoSchema.partial().passthrough(),
+  retiradoDoLoteId: z.string().optional(),
+  avisoLoteComprometido: z
+    .object({ loteId: z.string(), status: z.string(), mensagem: z.string() })
+    .optional(),
+})
+export type ResultadoAnulacaoGrupoBoleto = z.infer<typeof resultadoAnulacaoGrupoSchema>
+
+/** Aviso da inclusão do grupo no lote (não barra a inclusão). */
+export interface AvisoInclusaoGrupo {
+  tipo: string
+  mensagem: string
+}
+
+const gruposBase = '/sispag/grupos-boleto'
+const qsFilial = (filCod?: number): string =>
+  filCod !== undefined ? `?${new URLSearchParams({ filCod: String(filCod) }).toString()}` : ''
+
+/** `GET /sispag/grupos-boleto/sugestoes` (`sispag:ver`). Sugestão calculada; nunca persistida. */
+export async function fetchSugestoesGrupoBoleto(filCod?: number): Promise<SugestaoGrupoBoleto[]> {
+  const r = await autorizacaoRequest(
+    `${gruposBase}/sugestoes${qsFilial(filCod)}`,
+    z.object({ sugestoes: z.array(sugestaoGrupoBoletoSchema) }),
+    { cache: 'no-store' },
+  )
+  return r.sugestoes
+}
+
+/** `GET /sispag/grupos-boleto` (`sispag:ver`): confirmados, com situação e órfão. */
+export async function fetchGruposBoleto(filCod?: number): Promise<GrupoBoletoListado[]> {
+  const r = await autorizacaoRequest(
+    `${gruposBase}${qsFilial(filCod)}`,
+    z.object({ grupos: z.array(grupoBoletoListadoSchema) }),
+    { cache: 'no-store' },
+  )
+  return r.grupos
+}
+
+/** `POST .../confirmar` (`sispag:executar`). Nada é escrito no ERP: o borderô nasce na remessa. */
+export async function confirmarGrupoBoleto(
+  entrada: ConfirmarGrupoBoletoEntrada,
+): Promise<ResultadoConfirmacaoGrupoBoleto> {
+  const { reconheceAvisos, ...resto } = entrada
+  return autorizacaoRequest(
+    `${gruposBase}/confirmar`,
+    resultadoConfirmacaoGrupoSchema,
+    post(reconheceAvisos && reconheceAvisos.length > 0 ? { ...resto, reconheceAvisos } : resto),
+  )
+}
+
+/** `POST .../:id/anular` (`sispag:executar`): motivo de 10 a 500 caracteres. */
+export async function anularGrupoBoleto(
+  grupoId: string,
+  motivo: string,
+): Promise<ResultadoAnulacaoGrupoBoleto> {
+  return autorizacaoRequest(
+    `${gruposBase}/${encodeURIComponent(grupoId)}/anular`,
+    resultadoAnulacaoGrupoSchema,
+    post({ motivo }),
+  )
+}
+
+/** `POST /sispag/lotes/:id/grupos`: inclui o grupo INTEIRO no lote RASCUNHO (`mover` o tira do outro). */
+export async function incluirGrupoNoLote(
+  loteId: string,
+  entrada: { grupoId: string; mover?: boolean; versaoEsperada?: number },
+): Promise<{ lote: LotePagamento; avisos: AvisoInclusaoGrupo[] }> {
+  const r = await autorizacaoRequest(
+    `/sispag/lotes/${encodeURIComponent(loteId)}/grupos`,
+    z.object({
+      lote: z.custom<LotePagamento>((v) => typeof v === 'object' && v !== null),
+      avisos: z.array(z.object({ tipo: z.string(), mensagem: z.string() })).default([]),
+    }),
+    post(entrada),
+  )
+  return { lote: r.lote, avisos: r.avisos }
+}
+
+/** `DELETE /sispag/lotes/:id/grupos/:grupoId`: retira o grupo inteiro; UM título só é 409 `INDIVISIVEL`. */
+export async function retirarGrupoDoLote(
+  loteId: string,
+  grupoId: string,
+  versaoEsperada?: number,
+): Promise<LotePagamento> {
+  const qs = versaoEsperada !== undefined ? `?versaoEsperada=${versaoEsperada}` : ''
+  const r = await autorizacaoRequest(
+    `/sispag/lotes/${encodeURIComponent(loteId)}/grupos/${encodeURIComponent(grupoId)}${qs}`,
+    z.object({ lote: z.custom<LotePagamento>((v) => typeof v === 'object' && v !== null) }),
+    { method: 'DELETE' },
+  )
+  return r.lote
 }

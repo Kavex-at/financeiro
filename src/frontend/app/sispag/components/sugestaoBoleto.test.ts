@@ -1,4 +1,4 @@
-import type { SugestaoBoleto } from '@/lib/sispag'
+import { type SugestaoBoleto, SITUACOES_SUGESTAO_TITULO } from '@/lib/sispag'
 import {
   agruparPorTitulo,
   chaveTitulo,
@@ -6,6 +6,9 @@ import {
   formatDeltaPercentual,
   formatDeltaValor,
   resumoDoTitulo,
+  ROTULO_SITUACAO,
+  SITUACAO_SEM_PAINEL,
+  TOM_SITUACAO,
 } from './sugestaoBoleto'
 
 const base = (over: Partial<SugestaoBoleto> = {}): SugestaoBoleto => ({
@@ -79,5 +82,14 @@ describe('resumo por título', () => {
     const m = agruparPorTitulo([base(), base({ ditCod: 9 }), base({ titCod: '2' })])
     expect(m.get(chaveTitulo({ filCod: 1, docCod: '10', titCod: '1' }))).toHaveLength(2)
     expect(m.size).toBe(2)
+  })
+})
+
+describe('EM_GRUPO — título dentro de um boleto agrupado confirmado (I15q, ADR-0077)', () => {
+  it('é uma situação conhecida, só informativa: sem painel e sem tom de ação', () => {
+    expect(SITUACOES_SUGESTAO_TITULO).toContain('EM_GRUPO')
+    expect(ROTULO_SITUACAO.EM_GRUPO).toBe('em boleto agrupado')
+    expect(TOM_SITUACAO.EM_GRUPO).toBe('mudo')
+    expect(SITUACAO_SEM_PAINEL.has('EM_GRUPO')).toBe(true)
   })
 })

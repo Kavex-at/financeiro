@@ -1,4 +1,5 @@
 import type { LotePagamento, TituloAPagar } from '@/lib/sispag'
+import { tituloEmGrupo } from './grupoBoleto'
 import { rotuloVencimentoLote } from './loteDoTitulo'
 
 /**
@@ -10,14 +11,24 @@ import { rotuloVencimentoLote } from './loteDoTitulo'
  * Por que o título não pode ser selecionado, ou `undefined` se pode. Título num lote RASCUNHO pode:
  * ele se move para o lote novo. Título num lote finalizado ou com remessa gerada não pode.
  */
-export const motivoSelecaoBloqueada = (t: TituloAPagar): string | undefined => {
-  if (!t.loteComprometido) return undefined
-  return t.loteComprometido.status === 'FINALIZADO'
-    ? 'Está num lote finalizado. Reabra aquele lote para retirá-lo antes de usá-lo em outro.'
-    : 'Está num lote com remessa gerada: o pagamento já foi para o banco e não pode mudar de lote.'
+export const motivoSelecaoBloqueada = (
+  t: TituloAPagar,
+  emGrupo?: ReadonlySet<string>,
+): string | undefined => {
+  if (t.loteComprometido) {
+    return t.loteComprometido.status === 'FINALIZADO'
+      ? 'Está num lote finalizado. Reabra aquele lote para retirá-lo antes de usá-lo em outro.'
+      : 'Está num lote com remessa gerada: o pagamento já foi para o banco e não pode mudar de lote.'
+  }
+  // ADR-0077 (I21j): o título de um boleto agrupado se move e se retira com o grupo inteiro.
+  if (emGrupo && tituloEmGrupo(emGrupo, t)) {
+    return 'Faz parte de um boleto agrupado: o grupo inteiro é incluído, movido ou retirado de uma vez, não um título só.'
+  }
+  return undefined
 }
 
-export const podeSelecionar = (t: TituloAPagar): boolean => motivoSelecaoBloqueada(t) === undefined
+export const podeSelecionar = (t: TituloAPagar, emGrupo?: ReadonlySet<string>): boolean =>
+  motivoSelecaoBloqueada(t, emGrupo) === undefined
 
 /** Um lote de origem e os títulos selecionados que sairão dele. */
 export interface SaidaDeLote {
