@@ -30,6 +30,18 @@ import type { AuthorizedPayee } from '../domain/interface/sispag/AuthorizedPayee
 type AuthorizedPayeeApiView = Omit<AuthorizedPayee, 'fingerprint' | 'fingerprintObservado'>;
 import LotePagamentoApiView from '../domain/service/sispag/LotePagamentoApiView.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
+import GrupoBoletoService from '../domain/service/sispag/GrupoBoletoService.js';
+import {
+    AnularGrupoBodySchema,
+    ConfirmarGrupoBodySchema,
+    GrupoBoletoIdSchema,
+    GruposQuerySchema,
+    IncluirGrupoNoLoteBodySchema,
+    LoteGrupoParamsSchema,
+    LoteIdSchema,
+    RetirarGrupoQuerySchema,
+} from '../domain/interface/sispag/GrupoBoletoSchemas.js';
+import { FilialForbiddenError, assertUserCanActOnFilial } from '../http/filialAuthz.js';
 import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetornoService.js';
 import DebitDateService from '../domain/service/sispag/DebitDateService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
@@ -1069,6 +1081,192 @@ router.post(
                 ator: ator(req),
             });
             res.json({ confirmacao });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// ===================================================== ADR-0077 — boleto agrupado (1 boleto → N títulos)
+// Sugerir e listar leem (`sispag:ver`); confirmar, anular e mexer no lote são `sispag:executar`.
+// O ator é SEMPRE o do token (body estrito). Nenhuma rota escreve no Conexos: a escrita do borderô
+// é da geração da remessa. Resposta sem código completo (só a máscara 5+4) e sem a conta do emissor.
+
+const gruposBoleto = (): GrupoBoletoService => container.resolve(GrupoBoletoService);
+const limiteGrupoBoleto = buildSugestaoBoletoLimiter({}, 'grupo');
+
+/** O grupo/sugestão para a API: sem `emissorChave` (carrega a conta completa do emissor). */
+const semChaveDoEmissor = <T extends object>(x: T): Omit<T, 'emissorChave'> => {
+    const { emissorChave: _chave, ...resto } = x as T & { emissorChave?: unknown };
+    return resto as Omit<T, 'emissorChave'>;
+};
+
+/** 403 se a filial está fora da allow-list do usuário; `true` = pode seguir. */
+const filialPermitida = (req: Request, res: Response, filCods: Iterable<number>): boolean => {
+    try {
+        for (const filCod of new Set(filCods)) assertUserCanActOnFilial(req.user, filCod);
+        return true;
+    } catch (err) {
+        if (!(err instanceof FilialForbiddenError)) throw err;
+        res.status(403).json({ error: 'Forbidden: filial não autorizada', code: err.code });
+        return false;
+    }
+};
+
+// GET /sispag/grupos-boleto/sugestoes?filCod= — `sispag:ver`. Sugestão calculada (grupo fechado no
+// mesmo vencimento), nunca persistida; `confirmavel = false` traz o motivo.
+router.get(
+    '/grupos-boleto/sugestoes',
+    exigirPermissao(PERMISSION.SISPAG_VER),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const query = GruposQuerySchema.safeParse(req.query);
+        if (!query.success) return respostaInvalida(res, query.error);
+        if (query.data.filCod !== undefined && !filialPermitida(req, res, [query.data.filCod])) {
+            return;
+        }
+        const sugestoes = await gruposBoleto().sugerir(
+            query.data.filCod !== undefined ? { filCod: query.data.filCod } : {},
+        );
+        res.json({ sugestoes: sugestoes.map(semChaveDoEmissor) });
+    }),
+);
+
+// GET /sispag/grupos-boleto?filCod= — `sispag:ver`. Grupos confirmados com a situação derivada
+// (DISPONIVEL, EM_LOTE, REJEITADO, RETIDO, DIVERGENTE, ORFAO…) e o órfão (I21u).
+router.get(
+    '/grupos-boleto',
+    exigirPermissao(PERMISSION.SISPAG_VER),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const query = GruposQuerySchema.safeParse(req.query);
+        if (!query.success) return respostaInvalida(res, query.error);
+        if (query.data.filCod !== undefined && !filialPermitida(req, res, [query.data.filCod])) {
+            return;
+        }
+        const grupos = await gruposBoleto().listar(
+            query.data.filCod !== undefined ? { filCod: query.data.filCod } : {},
+        );
+        res.json({ grupos: grupos.map(semChaveDoEmissor) });
+    }),
+);
+
+// POST /sispag/grupos-boleto/confirmar — `sispag:executar`. 201 grupo novo · 200 já confirmado
+// (idempotente) · 409 título/boleto indisponível ou não confirmável · 422 soma, janela, filial,
+// aviso sem reconhecimento.
+router.post(
+    '/grupos-boleto/confirmar',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    limiteGrupoBoleto,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const body = ConfirmarGrupoBodySchema.safeParse(req.body);
+        if (!body.success) return respostaInvalida(res, body.error);
+        if (
+            !filialPermitida(
+                req,
+                res,
+                body.data.titulos.map((t) => t.filCod),
+            )
+        )
+            return;
+        try {
+            const r = await gruposBoleto().confirmar({ ...body.data, ator: ator(req) });
+            res.status(r.criado ? 201 : 200).json({
+                criado: r.criado,
+                grupo: semChaveDoEmissor(r.grupo),
+            });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// POST /sispag/grupos-boleto/:id/anular — `sispag:executar`. Motivo de 10 a 500 caracteres. Sai do
+// lote RASCUNHO na mesma transação; em lote comprometido a resposta traz o aviso (a remessa retira).
+router.post(
+    '/grupos-boleto/:id/anular',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    limiteGrupoBoleto,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const params = GrupoBoletoIdSchema.safeParse(req.params);
+        const body = AnularGrupoBodySchema.safeParse(req.body);
+        if (!params.success || !body.success) {
+            return respostaInvalida(
+                res,
+                params.success ? undefined : params.error,
+                body.success ? undefined : body.error,
+            );
+        }
+        try {
+            const r = await gruposBoleto().anular({
+                grupoId: params.data.id,
+                motivo: body.data.motivo,
+                ator: ator(req),
+            });
+            res.json({ ...r, grupo: semChaveDoEmissor(r.grupo) });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// POST /sispag/lotes/:id/grupos — `sispag:executar`. Inclui o grupo INTEIRO no lote RASCUNHO da
+// mesma filial (`mover: true` o tira do outro rascunho). 409 lote comprometido / título em outro lote.
+router.post(
+    '/lotes/:id/grupos',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const params = LoteIdSchema.safeParse(req.params);
+        const body = IncluirGrupoNoLoteBodySchema.safeParse(req.body);
+        if (!params.success || !body.success) {
+            return respostaInvalida(
+                res,
+                params.success ? undefined : params.error,
+                body.success ? undefined : body.error,
+            );
+        }
+        try {
+            const r = await container.resolve(LotePagamentoService).incluirGrupo({
+                loteId: params.data.id,
+                ...body.data,
+                ator: ator(req),
+            });
+            res.json({ lote: apiView().lote(r.lote), avisos: r.avisos });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// DELETE /sispag/lotes/:id/grupos/:grupoId?versaoEsperada= — `sispag:executar`. Retira o grupo
+// inteiro do lote RASCUNHO; retirar UM título dele é 409 (`GroupedBoletoIndivisibleError`).
+router.delete(
+    '/lotes/:id/grupos/:grupoId',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const params = LoteGrupoParamsSchema.safeParse(req.params);
+        const query = RetirarGrupoQuerySchema.safeParse(req.query);
+        if (!params.success || !query.success) {
+            return respostaInvalida(
+                res,
+                params.success ? undefined : params.error,
+                query.success ? undefined : query.error,
+            );
+        }
+        try {
+            const lote = await container.resolve(LotePagamentoService).removerGrupo({
+                loteId: params.data.id,
+                grupoId: params.data.grupoId,
+                ...(query.data.versaoEsperada !== undefined
+                    ? { versaoEsperada: query.data.versaoEsperada }
+                    : {}),
+                ator: ator(req),
+            });
+            res.json({ lote: apiView().lote(lote) });
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }

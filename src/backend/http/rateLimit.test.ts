@@ -339,4 +339,28 @@ describe('limitador das decisões de boleto sugerido (ADR-0068)', () => {
         expect(copiaLivre.status).toBe(200);
         expect(outraPessoa.status).toBe(200);
     });
+
+    it('escopo "grupo" (boleto agrupado, ADR-0077): 30/min por usuário, balde próprio — o grupo não gasta a cota da decisão 1:1 e vice-versa', async () => {
+        const store = new MemoryStore();
+        const grupo = buildSugestaoBoletoLimiter({ skip: () => false, store }, 'grupo');
+        const confirmar = buildSugestaoBoletoLimiter({ skip: () => false, store }, 'confirmar');
+        const app = express();
+        app.use((req: Request, _res: Response, next) => {
+            req.user = { sub: 'ana' };
+            next();
+        });
+        app.post('/grupo', grupo, (_req: Request, res: Response) => res.json({}));
+        app.post('/confirmar', confirmar, (_req: Request, res: Response) => res.json({}));
+        const server: Server = await new Promise((r) => {
+            const s = app.listen(0, '127.0.0.1', () => r(s));
+        });
+        const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+        for (let i = 0; i < 30; i++) await fetch(`${base}/grupo`, { method: 'POST' });
+        const bloqueada = await fetch(`${base}/grupo`, { method: 'POST' });
+        const decisaoLivre = await fetch(`${base}/confirmar`, { method: 'POST' });
+        server.close();
+        expect(bloqueada.status).toBe(429);
+        expect(await bloqueada.json()).toMatchObject({ codigo: 'MUITAS_DECISOES' });
+        expect(decisaoLivre.status).toBe(200);
+    });
 });
