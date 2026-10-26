@@ -7,6 +7,7 @@ const CIVIL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 /** Fuso do sistema de pagamentos brasileiro (SPB). É domínio, não tenant (ADR-0049 D5). */
 const BRT_TIME_ZONE = 'America/Sao_Paulo';
+const BRT_OFFSET_MS = 3 * 3_600_000;
 
 /** Feriados bancários nacionais de data fixa (`MM-DD`). */
 const FIXED_HOLIDAYS = ['01-01', '04-21', '05-01', '09-07', '10-12', '11-02', '11-15', '12-25'];
@@ -134,6 +135,15 @@ export default class BankingCalendar {
      * 00:00Z ou 15:00Z do dia pretendido, e converter para BRT recuaria um dia.
      */
     public fromErpEpoch = (epoch: number): CivilDate => this.format(new Date(epoch));
+
+    /**
+     * Instante real → carimbo de instante do Conexos (ex.: `borTimCad`). O ERP grava a hora de
+     * parede de Brasília como se fosse UTC: um borderô criado às 22:52:51Z (19:52 BRT) volta com
+     * `borTimCad` = 19:52:52Z (medido em HML, 2026-10-26). Offset fixo em −03:00 (sem horário de
+     * verão desde 2019), como `startOfTodayBrt`.
+     */
+    public toErpInstant = (instant: Date | number): number =>
+        (typeof instant === 'number' ? instant : instant.getTime()) - BRT_OFFSET_MS;
 
     /**
      * Dias do dia civil de HOJE (Brasília) até o dia civil do vencimento do ERP; negativo = vencido.
