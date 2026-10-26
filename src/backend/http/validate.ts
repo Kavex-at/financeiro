@@ -1,4 +1,4 @@
-import type { ZodSchema, ZodTypeDef } from 'zod';
+import type { ZodType, output } from 'zod';
 
 /**
  * Result of validating an Express request part against a Zod schema.
@@ -14,10 +14,10 @@ export type ValidationResult<T> =
  * handlers in `lambda/api/closing-reports/` (arch-review card security-4 /
  * F-security-6). On failure returns a ready-to-send HTTP 400 payload.
  */
-export const validateInput = <T, D extends ZodTypeDef, I>(
-    schema: ZodSchema<T, D, I>,
+export const validateInput = <S extends ZodType>(
+    schema: S,
     input: unknown,
-): ValidationResult<T> => {
+): ValidationResult<output<S>> => {
     const parsed = schema.safeParse(input);
     if (parsed.success) {
         return { success: true, data: parsed.data };

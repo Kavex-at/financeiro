@@ -44,7 +44,7 @@ export const DecidirAutorizacaoSchema = z.object({
     motivo: z.string().trim().min(1).max(2000),
 });
 
-export const AutorizacaoIdSchema = z.object({ id: z.string().uuid() });
+export const AutorizacaoIdSchema = z.object({ id: z.guid() });
 
 export const FiltroAutorizacoesSchema = z.object({
     estado: z

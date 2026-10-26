@@ -155,7 +155,7 @@ const situacaoTituloSchema = z
     .object({
         docCod: z.union([z.string(), z.number()]).transform(String),
         titCod: z.union([z.string(), z.number()]).transform(String).optional().catch('1'),
-        vldPago: z.unknown(),
+        vldPago: z.unknown().optional(),
         // "Valor em Aberto"/"Valor Pago" por linha. Nos fixtures reais de 2026-08-24/25 os
         // `titMny*` vêm NULL e os `total*` vêm preenchidos — daí a ordem de preferência.
         totalAberto: numOpt,

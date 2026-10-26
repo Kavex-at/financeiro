@@ -99,7 +99,7 @@ export const REACTIVATE_RESULT = {
 export type ReactivateResult = (typeof REACTIVATE_RESULT)[keyof typeof REACTIVATE_RESULT];
 
 /** `auth.users.id` é UUID; qualquer outra coisa nem chega ao SQL. */
-const uuidSchema = z.string().uuid();
+const uuidSchema = z.guid();
 
 /** SQLSTATE de violação de unicidade (`uq_app_user_email_lower` / `uq_app_user_username_lower`). */
 const UNIQUE_VIOLATION = '23505';

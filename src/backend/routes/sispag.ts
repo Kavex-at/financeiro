@@ -522,8 +522,8 @@ const resolucaoAlertaSchema = z
         },
     );
 const alertaParamsSchema = chaveTituloSchema.extend({
-    id: z.string().uuid(),
-    alertaId: z.string().uuid(),
+    id: z.guid(),
+    alertaId: z.guid(),
 });
 const motivoSchema = z.object({ motivo: z.string().trim().min(1).max(2000) });
 
@@ -1491,7 +1491,7 @@ const contextoExport = (req: Request): ContextoExport => ({
     ...(req.acesso ? { userId: req.acesso.userId } : {}),
 });
 const exportarTitulosSchema = z.object({
-    loteIds: z.array(z.string().uuid()).min(1).max(MAX_LOTES_EXPORT),
+    loteIds: z.array(z.guid()).min(1).max(MAX_LOTES_EXPORT),
 });
 router.post(
     '/remessas/titulos/exportar',

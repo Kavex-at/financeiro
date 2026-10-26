@@ -92,7 +92,7 @@ interface ErrorLogger {
 }
 
 /** O `sub` de um token do Supabase é o UUID do `auth.users` (Zod antes de qualquer consulta). */
-const uuidSchema = z.string().uuid();
+const uuidSchema = z.guid();
 
 export interface ResolverAcessoOptions {
     devBypass: boolean;

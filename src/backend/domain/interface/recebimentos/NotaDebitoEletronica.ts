@@ -43,7 +43,7 @@ export const notaDebitoEletronicaSchema = z.object({
         NDE_STATUS_EMISSAO.ERRO,
     ]),
     idempotencyKey: z.string().min(1),
-    erpResponse: z.unknown(),
+    erpResponse: z.unknown().optional(),
     emitidaEm: z.date().optional(),
     emitidaPor: z.string().optional(),
 });
