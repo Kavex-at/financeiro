@@ -614,7 +614,10 @@ const main = async (): Promise<number> => {
 main()
     .then((codigo) => process.exit(codigo))
     .catch((e) => {
+        const userMessage = (e as { userMessage?: unknown } | null)?.userMessage;
         console.error('[hml-e2e] FATAL:', txt(erro(e)));
+        if (typeof userMessage === 'string')
+            console.error(`[hml-e2e] detalhe: ${txt(userMessage)}`);
         process.exit(1);
     });
 

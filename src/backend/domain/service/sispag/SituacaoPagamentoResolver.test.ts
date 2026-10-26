@@ -325,6 +325,22 @@ describe('SituacaoPagamentoResolver', () => {
             expect(s.estado).toBe(ESTADO_PAGAMENTO.PRONTO);
         });
 
+        it.each([
+            MODO_VINCULO.OFF,
+            MODO_VINCULO.SHADOW,
+            MODO_VINCULO.ON,
+        ])('título de GRUPO confirmado (EM_GRUPO) é PRONTO com o vínculo %s: o boleto do grupo paga (ADR-0077, P0-5)', (modo) => {
+            const s = resolver.avaliar(
+                titulo(boleto),
+                ctx({
+                    desfechos: new Map([[CHAVE, SITUACAO_SUGESTAO_TITULO.EM_GRUPO]]),
+                    modoVinculo: () => modo,
+                }),
+            );
+            expect(s.estado).toBe(ESTADO_PAGAMENTO.PRONTO);
+            expect(s.motivos).not.toContain(MOTIVO_PAGAMENTO.BOLETO_SEM_DDA);
+        });
+
         it('forma que não é boleto nunca recebe "boleto sem DDA"', () => {
             const s = resolver.avaliar(
                 titulo({ formaPagamentoConexos: PAGO_POR_CONEXOS.TRANSACAO, temBoleto: false }),

@@ -317,10 +317,17 @@ Job: `src/backend/jobs/probe-hml-boleto-agrupado-e2e.ts`. **Nada foi executado e
 | Fase | Data da autorização | Títulos | Resultado (checagens OK/total) | Estado deixado em HML |
 |------|---------------------|---------|--------------------------------|-----------------------|
 | plano | — | — | — | nada (só leitura) |
-| canonico | — | — | — | — |
+| canonico | 2026-10-26 | 833/1 (R$ 100,00) + 834/1 (R$ 150,00), ZEFERINO (221), boleto sintético R$ 250,00 venc. 30/10 | **6/6 OK** | lote nativo finalizado + `.REM` com UM J (barra == pagamento == Σ = 25000 centavos) + retorno `00` sem J-52 processado; borderô **253** finalizado pelo ERP; 833/1 e 834/1 `vldPago 1`; grupo `PAGO`. NÃO reversível |
 | falha (V3) | — | — | — | — |
 | retomada | — | — | — | — |
 | v7 | — | — | — | — |
 
 Premissas a confirmar na 1ª rodada: `POS_OC`/código de rejeição do `.RET`, colunas lidas direto no banco local, campos do ledger.
 
+
+### Achados da rodada de 2026-10-26
+
+- **Defeito achado só pela prova ponta a ponta:** `SituacaoPagamentoResolver.regraBoletoSemDda` tratava título de grupo confirmado (`EM_GRUPO`) como "boleto sem DDA", e o `finalizarLote` recusava o lote do grupo (`BatchHasBlockedItemsError`: "Boleto sem DDA, sem boleto DDA associado"). Corrigido com RED primeiro (3 testes, um por modo de vínculo); `EM_GRUPO` não é bloqueio, o grupo é conferido na remessa. Os testes unitários das Tasks 9 a 18 não pegaram porque nenhum rodava resolver + finalização juntos.
+- **Título vencido bloqueia** (`Vencido, venceu há N dias`): os títulos de teste precisam de vencimento de hoje em diante. Títulos antigos da MULTILOG ficaram presos a lotes do Bradesco de 2025 e a renegociação `fin070` não finaliza (`O TÍTULO A RENEGOCIAR ESTÁ ASSOCIADO AO LOTE DE PAGAMENTO 13/14`); o item do `fin015` desses lotes não aparece na listagem, então não há como prever.
+- **Rastro em HML (renegociação 9, MULTILOG S/A, em cadastro, não cancelável):** 633/1 a 636/1 com composição para 30/10. Cancelar exige renegociação finalizada.
+- **Criação de título de teste pela tela (`com298`):** processo 46, tipo `RECIBO/BOLETO/FATURA/GUIA - OPERACAO - PROV. CTB`, plano `FORNECEDOR NACIONAIS`, armazém `10`, item (conta `ASSESSORIA E CONSULTORIA`), arquivo no GED, título com `Pago Por = BOLETO`, e aprovação no `fin103` (bloqueio 19).
