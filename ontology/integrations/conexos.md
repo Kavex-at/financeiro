@@ -1,7 +1,7 @@
 ---
 name: conexos
 type: integration
-direction: read-write (read amplo Permutas+SISPAG + write-back fin010 gated; SISPAG escreve fin015/fin052 e, ADR-0077 planned, borderô fin010 do boleto agrupado)
+direction: read-write (read amplo Permutas+SISPAG + write-back fin010 gated; SISPAG escreve fin015/fin052 e, ADR-0077 implemented, borderô fin010 do boleto agrupado)
 ontology_version: "0.48.0"
 implementation_status: partial
 status: draft
@@ -27,8 +27,8 @@ endpoints_read:
   - "fin010 (SISPAG — borderôs a-pagar, contexto; ConexosSispagClient READ-only)"
 endpoints_write:
   - "fin010 (Permutas: write-back Fase 3, gated / SISPAG: só o borderô do boleto agrupado, ver abaixo)"
-  - "fin010 (SISPAG — borderô do boleto agrupado, WRITE, ADR-0077 planned)"
-  - "fin015 borderosPendentes list/importar (WRITE, ADR-0077 planned)"
+  - "fin010 (SISPAG — borderô do boleto agrupado, WRITE, ADR-0077 implemented)"
+  - "fin015 borderosPendentes list/importar (WRITE, ADR-0077 implemented)"
   - "fin015 gerar remessa + fin052 retorno (SISPAG WRITE — FUTURO/gated, próxima fatia)"
 resolved-by:
   - "P0-3 — caminho = listFinanceiroAPagar(PROFORMA) + filtro docVldTipoAdto=1 (FinDocCab); chave wire confirmada por probe de rede (dev tenant Columbia, 2026-06-18, filCod=2, 410 adiantamentos reais)"
@@ -358,7 +358,7 @@ O título novo pode nascer **bloqueado** na `fin103` (HML: regra 19, `vldLib 0`)
 do `fin015` depois de liberado. Em PRD o CLONEX não tem `fin070`/`fin026`/`fin103` no menu; a permissão do
 login do servidor é o portão G1.
 
-### ESCRITA SISPAG — borderô do boleto agrupado (ADR-0077, `planned`)
+### ESCRITA SISPAG — borderô do boleto agrupado (ADR-0077, `implemented`)
 
 Provado em HML em 2026-10-19 e medido de novo em 2026-10-20 (Task 1; `_inbox/sispag-boleto-agrupado-hml-achados.md`).
 Emenda 2026-10-21 da ADR-0077: identidade do borderô = `filCod` + `borCod` + `borTimCad`; guarda da limpeza = lote

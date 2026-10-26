@@ -39,7 +39,7 @@ relationships:
   - "BoletoDda 0..1—1 TituloAPagar (via filCod/docCod/titCod — vínculo gravado PELO CONEXOS na associação do fin015; nunca por nós)"
   - "BoletoDda 0..N—0..N TituloAPagar (candidatos — SUGESTÃO calculada, não persistida: regra em camadas I15c; só o que o ERP não associou)"
   - "BoletoDda 0..N—N DecisaoSugestaoBoleto (snapshot por ddcCod/ditCod; decisão humana registrada, ADR-0068, implemented)"
-  - "BoletoDda 0..1—0..N GrupoBoleto (boleto que paga N títulos do mesmo credor; no máximo um grupo CONFIRMADO por boleto; ADR-0077, planned)"
+  - "BoletoDda 0..1—0..N GrupoBoleto (boleto que paga N títulos do mesmo credor; no máximo um grupo CONFIRMADO por boleto; ADR-0077, implemented)"
 last_review: 2026-10-20
 universality_evidence:
   - "ontology/_inbox/sispag-boleto-dda-sondagem.md — pool fin124 medido em PRD: 100% dos itens com barras de 44 dígitos, ~0% com vínculo"

@@ -75,7 +75,7 @@ canonical_test: src/backend/domain/service/sispag/DecisaoStatusLote.test.ts
 - **I11h — idempotência.** Uma passada que não muda status nem situação de nenhum item **não**
   incrementa `versao` e não emite evento nem alerta. Atualiza apenas `sincronizadoEm`. A transição
   usa o optimistic lock (I6); conflito de versão = pular o lote nesta passada.
-- **I11i — consistência do grupo (ADR-0077, `planned`).** Os N itens de um `GrupoBoleto` são lidos como
+- **I11i — consistência do grupo (ADR-0077, `implemented`).** Os N itens de um `GrupoBoleto` são lidos como
   hoje, por título. O evento do `fin052` do item nativo de borderô vale para os N. Medido em HML (G4, 2026-10-20, gar 7): é
   **uma** linha (o J), com `filCod/bncCod/flpCod/itsCodSeq` + `borCod`, sem `docCod/titCod` e sem valor pago;
   casa-se pela chave do item nativo e/ou pelo `borCod`.

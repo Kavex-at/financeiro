@@ -35,7 +35,7 @@ ADR-0071 (passo 2 do ADR-0068, valor igual). Chamada **apenas** de `RemessaServi
 gera a remessa; a decisão já tem autor próprio (I15g). Idempotente por I17f. Falha transitória aborta e
 retoma; determinística retira o item e segue (I17g). **Planned.**
 
-**Item de borderô (ADR-0077, `planned`, I17o).** A mesma ação vincula a barra do boleto agrupado ao item
+**Item de borderô (ADR-0077, `implemented`, I17o).** A mesma ação vincula a barra do boleto agrupado ao item
 nativo com `borCod` (sem `docCod/titCod`): elegibilidade pelo `GrupoBoleto CONFIRMADO` não órfão e par
 `VIGENTE` (no lugar da decisão por título), valor pela I21b **e** igual a `itsMnyValor` do item (a I17n não
 se aplica), modalidade 7/6 pela I21o; independe do modo I17k. Ver `business-rules/boleto-agrupado-sispag.md`.

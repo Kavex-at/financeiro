@@ -45,7 +45,7 @@ UNIQUE (fil_cod, doc_cod, tit_cod)  WHERE status = 'RASCUNHO'
   se ficar vazia). I3 nunca é violada: em nenhum instante o título está em dois RASCUNHO. Sem
   `mover`, a recusa (`TituloEmOutroLoteError`) segue igual.
 
-## Emenda ADR-0077 (`planned`) — grupos
+## Emenda ADR-0077 (`implemented`) — grupos
 
 - Título em `GrupoBoleto CONFIRMADO` não entra avulso em lote nem em outro grupo (UNIQUE parcial em
   `sispag_grupo_boleto_titulo` `WHERE estado = 'CONFIRMADO'`); o boleto também (um grupo por boleto,

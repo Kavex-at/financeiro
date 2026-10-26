@@ -4,12 +4,30 @@ type: business-rule
 entity: GrupoBoleto
 invariant: I21
 ontology_version: "0.48.0"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
-related_files: []
+related_files:
+  - src/backend/domain/service/sispag/RegraGrupoBoleto.ts
+  - src/backend/domain/service/sispag/MotorGrupoBoleto.ts
+  - src/backend/domain/service/sispag/GrupoBoletoService.ts
+  - src/backend/domain/service/sispag/BorderoGrupoBoletoService.ts
+  - src/backend/domain/service/sispag/FechamentoGrupoBoleto.ts
+  - src/backend/domain/service/sispag/CasamentoRetornoGrupo.ts
+  - src/backend/domain/service/sispag/LeituraGrupoBoleto.ts
+  - src/backend/domain/service/sispag/RemessaService.ts
+  - src/backend/domain/service/sispag/RetiradaCodigoBarrasService.ts
+  - src/backend/domain/repository/sispag/GrupoBoletoRepository.ts
+  - src/backend/domain/repository/sispag/GrupoBoletoExecucaoRepository.ts
+  - src/backend/domain/libs/boleto/SituacaoGrupoBoleto.ts
+  - src/backend/domain/libs/boleto/EtapaBorderoGrupo.ts
+  - src/backend/domain/libs/boleto/EstadoVivoGrupoBoleto.ts
+  - src/backend/migrations/0090_sispag_grupo_boleto.sql
+  - src/backend/routes/sispag.ts
+  - src/backend/jobs/probe-hml-boleto-agrupado-e2e.ts
+  - src/backend/jobs/validate-sispag-boleto-agrupado-v1.ts
 last_review: 2026-10-21
-has_canonical_test: false
+has_canonical_test: true
 universality_evidence:
   - "HML 2026-10-19 (borderô 252, lote 48, PG191081.REM, retorno gar 7); PRD 2026-10-19 (PEDRONI 38883–38885 → boleto 332841)"
   - "HML 2026-10-20, medições da Task 1 (borderôs 253/254, lote flp 51, retorno gar 7): _inbox/sispag-boleto-agrupado-hml-achados.md"
@@ -22,7 +40,7 @@ universality_evidence:
 > pelo **borderô** do `fin010`: em cadastro, uma baixa por título, importado como **um** item do lote
 > SISPAG; o retorno do banco finaliza o borderô e baixa os N. **Sem flag e sem modos** (P0-5): ativo
 > após o merge, sob o kill-switch existente `sispagLiveWriteEnabled` e o dry-run do Conexos.
-> **Status: planned** (ontologia à frente do código; migration prevista 0090).
+> **Status: implemented** (migration 0090; `canonico` provado em HML 2026-10-26; `falha`/`retomada`/`v7` e a medição PRD GT1/GT2 pendentes, bloqueiam o merge).
 > **Emenda 2026-10-21** (medições HML da Task 1): guarda da limpeza = lote nativo, identidade do borderô =
 > `filCod` + `borCod` + `borTimCad`, sem marcador de correlação. Ver a seção da emenda abaixo e a ADR-0077.
 
@@ -97,7 +115,7 @@ duas premissas. O maintainer decidiu em 2026-10-21:
 | **I21t** | **Anulação.** Pessoa com `sispag:executar`, motivo 10–500. Libera títulos e boleto. Em lote `RASCUNHO`, retira os N itens na mesma transação (PI-6). Em lote comprometido, vale o espelho da I17l: a tela avisa, e a próxima `gerarRemessa`/retomada retira o grupo antes do `finalizar` (ou erro nomeado se o lote nativo já finalizou). Revogar o par anula os grupos `CONFIRMADO` dele na mesma transação (cascata I15l(2)). Anular encerra as marcas `GRUPO_BOLETO` dos títulos do grupo. |
 | **I21u** | **Grupo órfão.** `CONFIRMADO` cujo boleto saiu do pool ou ganhou vínculo do ERP, ou com algum título pago, inativo, com DDA do ERP, ou com líquido diferente do snapshot ⇒ `orfao = true` com motivo; não entra em lote; anulável. Nunca some em silêncio. |
 
-## Erros nomeados (planned)
+## Erros nomeados (implemented)
 
 | Erro | Onde | HTTP |
 |---|---|---|

@@ -3,10 +3,13 @@ name: limparBorderoDoGrupo
 type: action
 entity: LotePagamento
 ontology_version: "0.48.0"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
-related_files: []
+related_files:
+  - src/backend/domain/service/sispag/BorderoGrupoBoletoService.ts
+  - src/backend/domain/service/sispag/DisparoLimpezaBorderoGrupo.ts
+  - src/backend/domain/client/ConexosBaixaClient.ts
 last_review: 2026-10-21
 preconditions:
   - "Lote nativo NÃO finalizado e SEM .REM gerado, estado lido ao vivo no fin015 antes de excluir (emenda 2026-10-21). vldHasRemessaPgto não é guarda: reflete o import (1 com o item no lote, 0 quando sai)."
@@ -27,4 +30,4 @@ side_effects:
 ADR-0077 (P0-4, I21q). Desfaz **só o que o sistema criou**, e só enquanto o lote nativo não foi finalizado nem gerou `.REM`. Espelha
 a I16d.3/I16d.6 (local primeiro, ERP depois, releitura, falha parcial fecha). Idempotente: borderô já
 ausente não gera novo evento nem nova chamada (a ausência se decide pela releitura, não pelo status do
-`DELETE`). **Planned.**
+`DELETE`). **Implemented.**

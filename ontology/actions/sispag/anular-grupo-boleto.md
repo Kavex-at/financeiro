@@ -3,10 +3,13 @@ name: anularGrupoBoleto
 type: action
 entity: GrupoBoleto
 ontology_version: "0.48.0"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
-related_files: []
+related_files:
+  - src/backend/domain/service/sispag/GrupoBoletoService.ts
+  - src/backend/domain/repository/sispag/GrupoBoletoRepository.ts
+  - src/backend/routes/sispag.ts
 last_review: 2026-10-20
 preconditions:
   - "Usuário com `sispag:executar`, ou o sistema na cascata da revogação do par (I15l(2), mesma transação)."
@@ -26,4 +29,4 @@ side_effects:
 
 ADR-0077 (I21t). Saída da confirmação: idempotente sobre grupo já `ANULADO`; `PAGO` não se anula. Revogar o
 par (pesCod, emissorChave) anula, na mesma transação, todos os grupos `CONFIRMADO` dele (cascata I15l(2)).
-Anular nunca altera o par, o título nem o ERP. **Planned.**
+Anular nunca altera o par, o título nem o ERP. **Implemented.**

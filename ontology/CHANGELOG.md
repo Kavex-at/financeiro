@@ -3,6 +3,14 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.48.0 — implementação (2026-10-26)
+
+`GrupoBoleto`, `boleto-agrupado-sispag` (I21a–u) e as cinco ações passam de `planned` a `implemented`; emendas
+(I2, I3, I4, I11i, I15q, I16, I17o, retomada, L2/L3/L5/L6/L8/L11, `Alerta`, integração `fin010`/`fin015`) idem.
+`related_files` apontam para o código real. **Provas:** fase `canonico` em HML 6/6 (borderô 253, 2026-10-26),
+que achou e corrigiu o `EM_GRUPO` tratado como "boleto sem DDA" no `SituacaoPagamentoResolver`. **Pendentes
+(bloqueiam o merge):** fases `falha`/`retomada`/`v7` em HML e a medição PRD só leitura GT1/GT2 (Task 22).
+
 ## v0.48.0 — SISPAG: boleto agrupado (1 boleto → N títulos) pelo borderô do fin010 (2026-10-20, ADR-0077)
 
 Feature: `sispag-boleto-agrupado` (`/feature-tweak`). `entity_changed = true`. **Ontologia à frente do código**

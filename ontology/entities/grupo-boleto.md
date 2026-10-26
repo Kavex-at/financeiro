@@ -2,10 +2,15 @@
 name: GrupoBoleto
 type: entity
 ontology_version: "0.48.0"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
-related_files: []   # a preencher pelo TaskScoper (migration 0090)
+related_files:
+  - src/backend/domain/interface/sispag/GrupoBoletoInterface.ts
+  - src/backend/domain/repository/sispag/GrupoBoletoRepository.ts
+  - src/backend/domain/service/sispag/GrupoBoletoService.ts
+  - src/backend/migrations/0090_sispag_grupo_boleto.sql
+  - src/frontend/app/sispag/components/GrupoBoletoPainel.tsx
 properties: [id, filCod, pesCod, credor, emissorChave, ddcCod, ditCod, numeroBoleto, codbarMascarado, valorBoleto, vencimentoBoleto, titulos, somaTitulos, origem, intercambiavel, avisosReconhecidos, confirmacaoEmissorId, estado, confirmadoPor, confirmadoEm, anuladoPor, anuladoEm, motivoAnulacao, pagoObservadoEm, versao, execucao]
 relationships:
   - "GrupoBoleto 1—N(≥2) TituloAPagar (via GrupoBoletoTitulo: filCod/docCod/titCod + snapshot de valor líquido e vencimento)"
@@ -27,7 +32,7 @@ universality_evidence:
 > paga **N ≥ 2** títulos do mesmo credor, com soma exata ao centavo. É a unidade que entra no lote
 > (N `ItemLote` ligados ao grupo) e que vira **um** item nativo no `fin015`, via borderô `fin010`.
 > Code-facing: `GroupedBoleto`. Tabelas propostas: `sispag_grupo_boleto` + `sispag_grupo_boleto_titulo`
-> (migration 0090). **Status: planned.** Regras: `business-rules/boleto-agrupado-sispag.md` (I21).
+> (migration 0090). **Status: implemented.** Regras: `business-rules/boleto-agrupado-sispag.md` (I21).
 
 ## Propriedades
 

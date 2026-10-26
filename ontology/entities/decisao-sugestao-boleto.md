@@ -106,7 +106,7 @@ RECUSADO(motivo)`, lido do ledger `sispag_ajuste_centavos_execucao` e da trilha.
 `finalizada` e `rechaveada`, a decisão do título antigo **não** é mostrada como órfã com "Anular": a tela diz
 "título renegociado, ajuste em andamento". **Não existe** estado `AJUSTADA` em `decisao`.
 
-**Boleto agrupado (ADR-0077, `planned`).** Título em `GrupoBoleto CONFIRMADO` **não tem** decisão 1:1: o
+**Boleto agrupado (ADR-0077, `implemented`).** Título em `GrupoBoleto CONFIRMADO` **não tem** decisão 1:1: o
 desfecho dele na sugestão é `EM_GRUPO` (I15q) e o vínculo da barra é do grupo (I17o). Título com decisão
 `CONFIRMADA` não entra em grupo, e o boleto de um grupo nunca é candidato 1:1. Para levar a grupo um título
 já decidido, anular a decisão antes (I15l). Ver `entities/grupo-boleto.md`.

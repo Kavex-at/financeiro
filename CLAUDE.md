@@ -327,7 +327,7 @@ Every feature or rule change goes through the pipeline. No exceptions.
   (só leitura, com `warn`) se `SISPAG_LIVE_WRITE_ENABLED` estiver desligado, a escrita Conexos desligada,
   `CONEXOS_DRY_RUN` ligado ou sem credencial do servidor. O kill-switch é `SISPAG_LIVE_WRITE_ENABLED`
   (emenda 2026-10-20 da ADR-0074).
-- **Boleto agrupado (ADR-0077, `planned`): o borderô do grupo só aparece pendente no lote se o `gerNum`
+- **Boleto agrupado (ADR-0077): o borderô do grupo só aparece pendente no lote se o `gerNum`
   dele for a conta financeira da conta pagadora do lote; `importar` exige `itemy: 1` (com `0` responde
   `SUCESSO` e não importa); nós nunca finalizamos o borderô.** Quem finaliza e baixa os N títulos é o
   retorno do banco. O sucesso do `importar` é o item observado na releitura, nunca a resposta. Limpeza

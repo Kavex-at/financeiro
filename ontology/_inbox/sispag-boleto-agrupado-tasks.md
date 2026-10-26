@@ -649,9 +649,17 @@ Paralelismo: **Fase A inteira** em paralelo; na Fase D, T9/T10/T11/T12/T13 em pa
 - `DEPLOY.md` (nada de env nova; nota de que o merge ativa o fluxo sob `sispagLiveWriteEnabled`)
 
 **Acceptance criteria:**
-- [ ] Ontologia aponta para arquivos reais; nenhum `planned` restante nas partes entregues; V4/V6/caso 2 seguem no watchlist
-- [ ] ObservabilityAdvisor consultado: logs estruturados por etapa da execução do borderô, alerta para `indeterminado`/`limpeza_pendente`/`REJEITADO`, métrica de grupos pagos × divergentes
-- [ ] Nenhum handler Lambda novo (Express hoje); nada em `jobs/` além dos jobs de verificação; nada no `bootstrapAppContainer` (teste estático: grep de `BorderoGrupoBoletoService`/`GrupoBoletoService` fora de `routes/`, `service/` e testes falha)
+- [x] Ontologia aponta para arquivos reais; nenhum `planned` restante nas partes entregues; V4/V6/caso 2 seguem no watchlist
+- [x] ObservabilityAdvisor consultado: logs estruturados por etapa da execução do borderô, alerta para `indeterminado`/`limpeza_pendente`/`REJEITADO`, métrica de grupos pagos × divergentes
+- [x] Nenhum handler Lambda novo (Express hoje); nada em `jobs/` além dos jobs de verificação; nada no `bootstrapAppContainer` (teste estático: grep de `BorderoGrupoBoletoService`/`GrupoBoletoService` fora de `routes/`, `service/` e testes falha)
+
+**Desvios e notas da entrega (Task 23, 2026-10-26):**
+- Ontologia: `GrupoBoleto`, `boleto-agrupado-sispag` e as 5 ações `planned` → `implemented`, `related_files` com arquivos verificados em disco, `has_canonical_test: true` na regra; as emendas em 19 arquivos (`ADR-0077 ... planned` → `implemented`); `_index.json`, `_coverage.json` (entidades 69→72 %, ações 72→82 %) e o CHANGELOG da ontologia (seção "v0.48.0 — implementação"). Restam `planned` só os da ADR-0069 (fora deste escopo). A versão da ontologia segue 0.48.0.
+- `CLAUDE.md` (sem o `planned`) e `DEPLOY.md` (linha "Boleto agrupado": sem variável nova, o merge é o rollout, kill-switch `SISPAG_LIVE_WRITE_ENABLED`, permissão V1 não é portão).
+- Teste estático `domain/service/sispag/BoletoAgrupadoEscopo.test.ts` (4 testes): os serviços do grupo só em `routes/`, `domain/service|interface|libs` e no job de prova HML; nada em `appContainer`/`recebimentosContainer`; nenhum `lambda/`; jobs do grupo só os cinco de verificação.
+- **ObservabilityAdvisor consultado:** aplicado o P1 (logs de `BAIXAS_GRAVADAS`/`BORDERO_CONFERIDO`, com teste); o "P0" (divergência sem Alerta) estava errado, o alerta sai por `DecisaoStatusLote`; P2 (métrica) e P3 (log do casamento) em `_inbox/sispag-boleto-agrupado-observabilidade-followups.md`.
+- V4/V6/caso 2 seguem no watchlist (conferido).
+- `LeitorDpsService.test.ts` falha por `pdfjs-dist` ausente no `node_modules` deste worktree (preexistente, sem relação).
 
 **Dependencies:** Tasks 1–22
 

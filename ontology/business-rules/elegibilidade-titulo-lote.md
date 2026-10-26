@@ -72,7 +72,7 @@ painel (I19m).
   saiu". A definição estrita de `pago` (aberto = 0) e o resíduo de centavos são o mesmo dilema —
   ver open-gap `residual-pago-centavos`.
 
-## Emenda ADR-0077 (`planned`) — título de boleto agrupado
+## Emenda ADR-0077 (`implemented`) — título de boleto agrupado
 
 A regra vale **por título** do grupo (`GrupoBoleto`), nos dois pontos (inclusão e finalização). Um título
 do grupo inelegível barra a inclusão do grupo inteiro e, no `finalizarLote`, barra a finalização listando o

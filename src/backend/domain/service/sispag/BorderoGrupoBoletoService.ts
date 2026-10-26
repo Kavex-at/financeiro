@@ -642,6 +642,11 @@ export default class BorderoGrupoBoletoService implements LimpezaBorderoGrupoInt
         const parada = await this.completarBaixas(prep, borCod, existentes);
         if (parada) return parada;
         await this.garantirEtapa(prep, E.BAIXAS_GRAVADAS);
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: 'baixas do grupo gravadas no borderô',
+            data: this.dadosDoLog(prep.exec, prep.pedido.grupo),
+        });
         return undefined;
     };
 
@@ -760,6 +765,11 @@ export default class BorderoGrupoBoletoService implements LimpezaBorderoGrupoInt
             );
         }
         await this.garantirEtapa(prep, E.BORDERO_CONFERIDO);
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: 'borderô do grupo conferido (baixas e total)',
+            data: this.dadosDoLog(prep.exec, prep.pedido.grupo),
+        });
         return undefined;
     };
 

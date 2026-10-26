@@ -290,7 +290,7 @@ título serve. Em 2026-09-24 a baixa do 38682/1 (borderô 22320) não passou por
 de `LotePagamento` e sem transição nova: o vínculo só atua no rascunho nativo aberto, enquanto o lote local
 ainda está a caminho de `REMESSA_GERADA`. Ver `business-rules/vinculo-codbar-item-sispag.md` (I17).
 
-## Emenda ADR-0077 (`planned`) — boleto agrupado
+## Emenda ADR-0077 (`implemented`) — boleto agrupado
 
 Sem estado novo de lote. O `GrupoBoleto` (I21) entra no lote como N `ItemLote` ligados ao grupo.
 
