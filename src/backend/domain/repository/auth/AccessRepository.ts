@@ -136,7 +136,7 @@ const accessRowSchema = z.object({
 });
 
 /** O `sub` de um token do Supabase é o UUID do `auth.users`. */
-const uuidSchema = z.string().uuid();
+const uuidSchema = z.guid();
 
 const roleRowSchema = z.object({
     id: z.coerce.number().int(),

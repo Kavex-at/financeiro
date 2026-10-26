@@ -22,12 +22,17 @@ export class MissingSeedAdminEnvError extends Error {
 
 const schema = z.object({
     ADMIN_EMAIL: z
-        .string({ required_error: 'ADMIN_EMAIL é obrigatória' })
+        .string({
+            error: (issue) => (issue.input === undefined ? 'ADMIN_EMAIL é obrigatória' : undefined),
+        })
         .trim()
         .toLowerCase()
         .email('ADMIN_EMAIL inválida: precisa ser um e-mail'),
     ADMIN_PASSWORD: z
-        .string({ required_error: 'ADMIN_PASSWORD é obrigatória' })
+        .string({
+            error: (issue) =>
+                issue.input === undefined ? 'ADMIN_PASSWORD é obrigatória' : undefined,
+        })
         .min(8, 'ADMIN_PASSWORD inválida: precisa ter ao menos 8 caracteres'),
 });
 

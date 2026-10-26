@@ -277,7 +277,7 @@ const MESSAGES_ENVELOPE_SCHEMA = z.object({
                     z.object({
                         valid: z.string().optional(),
                         message: z.string().optional(),
-                        vars: z.record(z.unknown()).optional(),
+                        vars: z.record(z.string(), z.unknown()).optional(),
                     }),
                 )
                 .optional(),
@@ -288,7 +288,7 @@ const MESSAGES_ENVELOPE_SCHEMA = z.object({
             z.object({
                 valid: z.string().optional(),
                 message: z.string().optional(),
-                vars: z.record(z.unknown()).optional(),
+                vars: z.record(z.string(), z.unknown()).optional(),
             }),
         )
         .optional(),

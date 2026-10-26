@@ -24,9 +24,7 @@ import { z } from 'zod';
 const RawAuthEnvSchema = z.object({
     AUTH_PROVIDER: z
         .enum(['local', 'supabase'], {
-            errorMap: () => ({
-                message: 'AUTH_PROVIDER inválida: use "local" ou "supabase".',
-            }),
+            message: 'AUTH_PROVIDER inválida: use "local" ou "supabase".',
         })
         .optional(),
     SUPABASE_URL: z
@@ -92,7 +90,9 @@ export const loadAuthEnv = (env: NodeJS.ProcessEnv = process.env): AuthEnv => {
         // Só as mensagens (fixas) e os caminhos: nenhum valor lido do env entra aqui.
         throw new AuthEnvConfigError(
             result.error.issues.map((i) =>
-                i.message.includes(String(i.path[0])) ? i.message : `${i.path[0]}: ${i.message}`,
+                i.message.includes(String(i.path[0]))
+                    ? i.message
+                    : `${String(i.path[0])}: ${i.message}`,
             ),
         );
     }

@@ -14,14 +14,14 @@ export const supabaseSessionResponseSchema = z.object({
     /** Segundos desde a época. Ausente em versões antigas: calculado pelo `expires_in`. */
     expires_at: z.number().int().positive().optional(),
     user: z.object({
-        id: z.string().uuid(),
+        id: z.guid(),
         email: z.string().nullable().optional(),
     }),
 });
 
 /** Usuário da API admin (`/admin/users`, `/admin/users/:id`). */
 export const supabaseAdminUserResponseSchema = z.object({
-    id: z.string().uuid(),
+    id: z.guid(),
     email: z.string().nullable().optional(),
     banned_until: z.string().nullable().optional(),
 });

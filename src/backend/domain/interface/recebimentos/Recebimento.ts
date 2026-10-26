@@ -78,7 +78,7 @@ export const recebimentoSchema = z.object({
     diferencaNaoAlocada: z.number(),
     regrasAplicadas: z.array(regraRecebimentoSchema),
     rateios: z.array(rateioRecebimentoSchema),
-    resultadoExecucao: z.unknown(),
+    resultadoExecucao: z.unknown().optional(),
     ndeId: z.string().optional(),
     emissaoNde: emissaoNdeSchema.optional(),
     versao: z.number().int().nonnegative(),

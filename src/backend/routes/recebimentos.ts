@@ -226,7 +226,7 @@ router.get(
 const runPipelineSchema = z.object({
     // UUID guard (Regis security-2): impede um ator envenenar uma chave `receb:X` sequencial/curta de
     // outro ator. A idempotency-key é namespaced pelo `sub` do usuário abaixo.
-    correlationId: z.string().uuid(),
+    correlationId: z.guid(),
     filCod: z.coerce.number().int().positive(),
     valorRecebido: z.number(),
     dryRun: z.boolean().optional(),

@@ -108,8 +108,8 @@ export const transacaoBancariaSchema = z.object({
     contraparte: z.string().optional(),
     referenciaBancaria: z.string().optional(),
     naturalKey: z.string().min(1),
-    rawPayload: z.unknown(),
-    normalized: z.unknown(),
+    rawPayload: z.unknown().optional(),
+    normalized: z.unknown().optional(),
     status: z.enum([
         TRANSACAO_BANCARIA_STATUS.IMPORTADA,
         TRANSACAO_BANCARIA_STATUS.CONCILIADA,

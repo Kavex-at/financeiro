@@ -178,7 +178,7 @@ const dataCivil = z.union([z.date(), z.string()]).transform((v) => {
 });
 
 const objeto = z
-    .record(z.unknown())
+    .record(z.string(), z.unknown())
     .nullable()
     .optional()
     .transform((v) => v ?? {});
@@ -331,7 +331,7 @@ export const eventoSugestaoRowSchema = z
         ddc_cod: z.coerce.number().int().nullable().optional(),
         dit_cod: z.coerce.number().int().nullable().optional(),
         motivo: textoOpcional,
-        detalhe: z.record(z.unknown()).nullable().optional(),
+        detalhe: z.record(z.string(), z.unknown()).nullable().optional(),
         lote_id: textoOpcional,
         decisao_id: textoOpcional,
     })

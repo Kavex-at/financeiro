@@ -70,7 +70,7 @@ export const AnularDecisaoBodySchema = z
 
 export const RevogarConfirmacaoBodySchema = z.object({ motivo: z.string().max(500) }).strict();
 
-export const ConfirmacaoEmissorIdSchema = z.object({ id: z.string().uuid() });
+export const ConfirmacaoEmissorIdSchema = z.object({ id: z.guid() });
 
 export const SugestoesQuerySchema = z.object({
     filCod: z.coerce.number().int().positive().optional(),
