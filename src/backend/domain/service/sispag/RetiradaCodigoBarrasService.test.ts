@@ -6,6 +6,10 @@ import type { ItemLote, LotePagamento } from '../../interface/sispag/SispagInter
 import AnaliseCodigoBarrasRepetido from '../../libs/boleto/AnaliseCodigoBarrasRepetido.js';
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
 import CodigoBarrasSintetico from '../../libs/boleto/CodigoBarrasSintetico.js';
+import type { GrupoBoletoExecucao } from '../../repository/sispag/GrupoBoletoExecucaoRepository.js';
+import type GrupoBoletoExecucaoRepository from '../../repository/sispag/GrupoBoletoExecucaoRepository.js';
+import type GrupoBoletoRepository from '../../repository/sispag/GrupoBoletoRepository.js';
+import type BorderoGrupoBoletoService from './BorderoGrupoBoletoService.js';
 import type BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type VerificacaoEventoRepository from '../../repository/sispag/VerificacaoEventoRepository.js';
@@ -46,7 +50,10 @@ const lote = (itens: ItemLote[]): LotePagamento =>
     ({ id: 'L1', filCod: 2, status: 'FINALIZADO', versao: 4, itens }) as unknown as LotePagamento;
 
 interface Nativo {
-    docCod: string;
+    /** Item de título. Ausente quando é item de borderô (`borCod`). */
+    docCod?: string;
+    /** Item de borderô do boleto agrupado (ADR-0077): sem `docCod/titCod`. */
+    borCod?: number;
     seq: number;
     linha?: string;
 }
@@ -56,16 +63,37 @@ const build = (o: {
     lote: LotePagamento;
     marcas?: Array<Record<string, unknown>>;
     retirados?: string[];
+    /** Execuções do borderô por grupo (ledger do grupo). */
+    execucoes?: Array<Partial<GrupoBoletoExecucao> & { grupoId: string }>;
+    /** Grupos (com os títulos) lidos por `buscarPorId`. */
+    grupos?: Array<{
+        id: string;
+        titulos: Array<{ filCod: number; docCod: string; titCod: string }>;
+    }>;
+    /** Desfecho da limpeza do borderô (default: limpo, e o item some do rascunho). */
+    limpeza?: 'limpo' | 'pendente' | 'nada_a_limpar';
 }) => {
     const estado = [...o.nativos];
     const removidos: number[] = [];
     const write = {
         listarLinhasDigitaveisDoLote: jest.fn(async () => {
-            const comCodigo = estado.filter((n) => n.linha !== undefined);
-            const semCodigo = estado.filter((n) => n.linha === undefined);
+            const titulos = estado.filter((n) => n.borCod === undefined);
+            const bordero = estado.filter((n) => n.borCod !== undefined);
+            const comCodigo = titulos.filter((n) => n.linha !== undefined);
+            const semCodigo = titulos.filter((n) => n.linha === undefined);
             return {
+                ...(bordero.length > 0
+                    ? {
+                          itensDeBordero: bordero.map((n) => ({
+                              filCod: 2,
+                              borCod: n.borCod as number,
+                              itsCodSeq: n.seq,
+                              ...(n.linha !== undefined ? { linhaDigitavel: n.linha } : {}),
+                          })),
+                      }
+                    : {}),
                 itens: comCodigo.map((n) => ({
-                    docCod: n.docCod,
+                    docCod: n.docCod as string,
                     titCod: '1',
                     linhaDigitavel: n.linha as string,
                     filCod: 2,
@@ -77,7 +105,7 @@ const build = (o: {
                 ...(semCodigo.length > 0
                     ? {
                           semCodigo: semCodigo.map((n) => ({
-                              docCod: n.docCod,
+                              docCod: n.docCod as string,
                               titCod: '1',
                               filCod: 2,
                               itsCodSeq: n.seq,
@@ -104,6 +132,56 @@ const build = (o: {
             return { removido: true };
         }),
         getLoteComItens: jest.fn(async () => atual),
+        /** ADR-0077: N itens + N marcas + N eventos numa transação; sai do lote local. */
+        retirarGrupoPeloSistema: jest.fn(
+            async (p: { titulos: Array<{ docCod: string }> } & Record<string, unknown>) => {
+                gruposRetirados.push(p);
+                const docs = new Set(p.titulos.map((t) => t.docCod));
+                atual = {
+                    ...atual,
+                    itens: atual.itens.filter((i) => !docs.has(i.docCod)),
+                } as LotePagamento;
+                return { removidos: p.titulos.length };
+            },
+        ),
+    };
+    const gruposRetirados: Array<Record<string, unknown>> = [];
+    const execs = new Map(
+        (o.execucoes ?? []).map((e) => [
+            e.grupoId,
+            {
+                id: `E-${e.grupoId}`,
+                loteId: 'L1',
+                filCod: 2,
+                baixas: [],
+                tentativas: 1,
+                etapa: 'importado',
+                ...e,
+            } as unknown as GrupoBoletoExecucao,
+        ]),
+    );
+    const trilha: string[] = [];
+    const grupoRepo = {
+        registrarEvento: jest.fn(async (e: Record<string, unknown>) => {
+            trilha.push(String(e.tipo));
+            return 'ev';
+        }),
+        buscarPorId: jest.fn(async (id: string) => o.grupos?.find((g) => g.id === id) ?? null),
+    };
+    const execucoesRepo = {
+        ultimaPorGrupo: jest.fn(async (id: string) => execs.get(id) ?? null),
+        listarPorLote: jest.fn(async () => [...execs.values()]),
+    };
+    const borderoGrupo = {
+        limpar: jest.fn(async (p: { execucao: GrupoBoletoExecucao }) => {
+            trilha.push('limpar');
+            const desfecho = o.limpeza ?? 'limpo';
+            if (desfecho === 'limpo') {
+                const i = estado.findIndex((n) => n.borCod === p.execucao.borCod);
+                if (i >= 0) estado.splice(i, 1);
+            }
+            return { desfecho, execucaoId: p.execucao.id };
+        }),
     };
     const db = { withTransaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn({})) };
     const log = {
@@ -123,8 +201,22 @@ const build = (o: {
         log as unknown as LogService,
         bloqueios as unknown as BloqueioDuplicidadeRepository,
         eventos as unknown as VerificacaoEventoRepository,
+        grupoRepo as unknown as GrupoBoletoRepository,
+        execucoesRepo as unknown as GrupoBoletoExecucaoRepository,
+        borderoGrupo as unknown as BorderoGrupoBoletoService,
     );
-    return { service, write, loteRepo, retirados, removidos, log };
+    return {
+        service,
+        write,
+        loteRepo,
+        retirados,
+        removidos,
+        log,
+        grupoRepo,
+        borderoGrupo,
+        gruposRetirados,
+        trilha,
+    };
 };
 
 describe('RetiradaCodigoBarrasService — vínculo falho (ADR-0071, I17g(3))', () => {
@@ -276,5 +368,262 @@ describe('RetiradaCodigoBarrasService — desempate por decisão humana (I17h)',
         });
         const r = await h.service.garantir({ lote: l, ...CTX, rascunhoAberto: true });
         expect(r.retirados.map((x) => x.titulo.docCod)).toEqual(['100']);
+    });
+});
+
+describe('RetiradaCodigoBarrasService — boleto agrupado (ADR-0077, I16, I21p(3), I21q)', () => {
+    const BOR = 251;
+    const TITULOS = ['901', '902', '903'].map((docCod) => ({ filCod: 2, docCod, titCod: '1' }));
+    const itemDoGrupo = (docCod: string): ItemLote => item(docCod, { grupoBoletoId: 'G1' });
+    const loteComGrupo = (): LotePagamento =>
+        lote([item('700'), ...['901', '902', '903'].map(itemDoGrupo)]);
+    const grupoNaGuarda = (over: Record<string, unknown> = {}) => ({
+        grupoId: 'G1',
+        borCod: BOR,
+        titulos: TITULOS,
+        codigoMascarado: MASCARA_A,
+        ...over,
+    });
+    const cenario = (over: Partial<Parameters<typeof build>[0]> = {}) =>
+        build({
+            lote: loteComGrupo(),
+            nativos: [
+                { docCod: '700', seq: 1, linha: LINHA_B },
+                { borCod: BOR, seq: 5, linha: LINHA_A },
+            ],
+            execucoes: [{ grupoId: 'G1', borCod: BOR, borTimCad: 1_790_000_000_000 }],
+            grupos: [{ id: 'G1', titulos: TITULOS }],
+            ...over,
+        });
+    const garantir = (h: ReturnType<typeof cenario>, extra: Record<string, unknown> = {}) =>
+        h.service.garantir({
+            lote: loteComGrupo(),
+            ...CTX,
+            rascunhoAberto: true,
+            grupos: [grupoNaGuarda()],
+            ...extra,
+        });
+
+    it('o grupo conta como UM item nativo: os 3 itens locais não são lidos como código ausente', async () => {
+        const h = cenario();
+        const r = await garantir(h);
+        expect(r.retirados).toEqual([]);
+        expect(h.removidos).toEqual([]);
+        expect(h.gruposRetirados).toEqual([]);
+    });
+
+    it('item de borderô SEM barra antes do finalizar aborta como hoje (CODIGO_AUSENTE, ADR-0040)', async () => {
+        const h = cenario({
+            nativos: [
+                { docCod: '700', seq: 1, linha: LINHA_B },
+                { borCod: BOR, seq: 5 },
+            ],
+        });
+        const erro = await garantir(h).catch((e: unknown) => e);
+        expect(erro).toBeInstanceOf(BoletoCodigoBarrasRetiradaIncompletaError);
+        expect((erro as BoletoCodigoBarrasRetiradaIncompletaError).details).toMatchObject({
+            modo: 'leitura',
+            causa: 'CODIGO_AUSENTE',
+        });
+        expect(h.gruposRetirados).toEqual([]);
+        expect(h.removidos).toEqual([]);
+    });
+
+    it('I16a: a barra do grupo repetida num título avulso é detectada; I16d.1: o item de borderô (decisão humana) fica e o avulso sai', async () => {
+        const h = cenario({
+            nativos: [
+                { docCod: '700', seq: 1, linha: LINHA_A },
+                { borCod: BOR, seq: 5, linha: LINHA_A },
+            ],
+        });
+        const r = await garantir(h);
+        expect(r.retirados.map((x) => x.titulo.docCod)).toEqual(['700']);
+        expect(r.retirados[0]).toMatchObject({
+            motivo: 'CODIGO_BARRAS_REPETIDO',
+            tituloMantido: { filCod: 2, docCod: 'bor', titCod: String(BOR) },
+        });
+        expect(h.removidos).toEqual([1]);
+        expect(h.gruposRetirados).toEqual([]);
+    });
+
+    describe('retirada do grupo inteiro (I21p(3))', () => {
+        const retirar = (motivo = 'GRUPO_BOLETO_FALHOU') => ({ retirar: { motivo } });
+
+        it('local primeiro (N itens + N marcas + N eventos numa transação), GRUPO_RETIRADO na mesma transação, e só então a limpeza do borderô', async () => {
+            const h = cenario();
+            const r = await garantir(h, { grupos: [grupoNaGuarda(retirar())] });
+            expect(h.loteRepo.retirarGrupoPeloSistema).toHaveBeenCalledTimes(1);
+            expect(h.loteRepo.retirarGrupoPeloSistema).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    loteId: 'L1',
+                    grupoId: 'G1',
+                    motivo: 'GRUPO_BOLETO_FALHOU',
+                    titulos: TITULOS,
+                    codigoMascarado: MASCARA_A,
+                }),
+                expect.anything(),
+            );
+            expect(h.grupoRepo.registrarEvento).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    grupoId: 'G1',
+                    tipo: 'GRUPO_RETIRADO',
+                    loteId: 'L1',
+                    borCod: BOR,
+                    codigoMascarado: MASCARA_A,
+                }),
+                expect.anything(),
+            );
+            expect(h.borderoGrupo.limpar).toHaveBeenCalledTimes(1);
+            expect(h.borderoGrupo.limpar).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    execucao: expect.objectContaining({ grupoId: 'G1', borCod: BOR }),
+                }),
+            );
+            // local → evento → limpeza (nunca o DELETE antes de o local sair)
+            expect(h.trilha).toEqual(['GRUPO_RETIRADO', 'limpar']);
+            expect(r.retirados.map((x) => x.titulo.docCod)).toEqual(['901', '902', '903']);
+            expect(r.retirados.every((x) => x.motivo === 'GRUPO_BOLETO_FALHOU')).toBe(true);
+            expect(r.gruposRetirados).toEqual([
+                expect.objectContaining({ grupoId: 'G1', borCod: BOR, limpeza: 'limpo' }),
+            ]);
+            expect(r.lote.itens.map((i) => i.docCod)).toEqual(['700']);
+        });
+
+        it('a guarda NÃO apaga o item de borderô sozinha: quem apaga é a limpeza (ordem V3 do ERP)', async () => {
+            const h = cenario();
+            await garantir(h, { grupos: [grupoNaGuarda(retirar())] });
+            expect(h.write.removerItemDoRascunho).not.toHaveBeenCalled();
+        });
+
+        it('motivo BORDERO_ANTERIOR_NAO_RESOLVIDO sem borderô nosso (borCod ausente): sai só local, sem limpeza nem DELETE no ERP', async () => {
+            const h = cenario({
+                nativos: [{ docCod: '700', seq: 1, linha: LINHA_B }],
+            });
+            const r = await garantir(h, {
+                grupos: [
+                    grupoNaGuarda({
+                        borCod: undefined,
+                        ...retirar('BORDERO_ANTERIOR_NAO_RESOLVIDO'),
+                    }),
+                ],
+            });
+            expect(h.loteRepo.retirarGrupoPeloSistema).toHaveBeenCalledWith(
+                expect.objectContaining({ motivo: 'BORDERO_ANTERIOR_NAO_RESOLVIDO' }),
+                expect.anything(),
+            );
+            expect(h.borderoGrupo.limpar).not.toHaveBeenCalled();
+            expect(h.write.removerItemDoRascunho).not.toHaveBeenCalled();
+            expect(r.retirados.map((x) => x.motivo)).toEqual([
+                'BORDERO_ANTERIOR_NAO_RESOLVIDO',
+                'BORDERO_ANTERIOR_NAO_RESOLVIDO',
+                'BORDERO_ANTERIOR_NAO_RESOLVIDO',
+            ]);
+        });
+
+        it('limpeza pendente (falha parcial) FECHA: BoletoCodigoBarrasRetiradaIncompletaError (limpeza), não segue para o finalizar', async () => {
+            const h = cenario({ limpeza: 'pendente' });
+            const erro = await garantir(h, { grupos: [grupoNaGuarda(retirar())] }).catch(
+                (e: unknown) => e,
+            );
+            expect(erro).toBeInstanceOf(BoletoCodigoBarrasRetiradaIncompletaError);
+            expect((erro as BoletoCodigoBarrasRetiradaIncompletaError).details).toMatchObject({
+                modo: 'limpeza',
+            });
+            // O local já saiu: a retomada termina a limpeza (resíduo reconhecido, I16h).
+            expect(h.loteRepo.retirarGrupoPeloSistema).toHaveBeenCalledTimes(1);
+        });
+
+        it('item de borderô que continua no rascunho depois da limpeza (releitura) também fecha', async () => {
+            const h = cenario({ limpeza: 'nada_a_limpar' });
+            await expect(
+                garantir(h, { grupos: [grupoNaGuarda(retirar())] }),
+            ).rejects.toBeInstanceOf(BoletoCodigoBarrasRetiradaIncompletaError);
+        });
+
+        it('lote nativo FINALIZADO nunca retira o grupo: aborta sem tocar em nada', async () => {
+            const h = cenario();
+            await expect(
+                garantir(h, { rascunhoAberto: false, grupos: [grupoNaGuarda(retirar())] }),
+            ).rejects.toBeInstanceOf(BoletoCodigoBarrasRetiradaIncompletaError);
+            expect(h.loteRepo.retirarGrupoPeloSistema).not.toHaveBeenCalled();
+            expect(h.borderoGrupo.limpar).not.toHaveBeenCalled();
+        });
+
+        it('I16e: o aviso cita o borderô, os títulos do grupo e o código mascarado — nunca o código', async () => {
+            const h = cenario();
+            const r = await garantir(h, { grupos: [grupoNaGuarda(retirar())] });
+            const aviso = r.avisos.join(' ');
+            expect(aviso).toContain(String(BOR));
+            expect(aviso).toContain('901/1');
+            expect(aviso).toContain('903/1');
+            expect(aviso).toContain(MASCARA_A);
+            const saida = JSON.stringify([r, h.log.warn.mock.calls, h.log.info.mock.calls]);
+            expect(saida).not.toMatch(/\d{44}|\d{47}/);
+        });
+    });
+
+    describe('resíduo de grupo retirado (I16h)', () => {
+        const marcasDoGrupo = TITULOS.map((t) => ({
+            ...t,
+            origem: 'GRUPO_BOLETO',
+            codigoMascarado: MASCARA_A,
+        }));
+        const retiradosDoGrupo = TITULOS.map((t) => `${t.filCod}:${t.docCod}:${t.titCod}`);
+
+        it('item com borCod cujo grupo tem as marcas E o evento do sistema neste lote ⇒ resíduo', async () => {
+            const h = cenario({
+                marcas: marcasDoGrupo,
+                retirados: retiradosDoGrupo,
+            });
+            const { residuos, estranhos } = await h.service.classificarIntrusos('L1', [
+                `2:bor:${BOR}`,
+            ]);
+            expect([...residuos.keys()]).toEqual([`2:bor:${BOR}`]);
+            expect(estranhos).toEqual([]);
+        });
+
+        it('outro borCod (de terceiro ou reusado pelo ERP) ⇒ estranho, nunca tocado', async () => {
+            const h = cenario({ marcas: marcasDoGrupo, retirados: retiradosDoGrupo });
+            const { residuos, estranhos } = await h.service.classificarIntrusos('L1', [
+                '2:bor:999',
+            ]);
+            expect(residuos.size).toBe(0);
+            expect(estranhos).toEqual(['2:bor:999']);
+        });
+
+        it('grupo sem as marcas (ou sem o evento) ⇒ o item de borderô é estranho', async () => {
+            const semMarcas = cenario({ retirados: retiradosDoGrupo });
+            expect(
+                (await semMarcas.service.classificarIntrusos('L1', [`2:bor:${BOR}`])).estranhos,
+            ).toEqual([`2:bor:${BOR}`]);
+            const semEvento = cenario({ marcas: marcasDoGrupo });
+            expect(
+                (await semEvento.service.classificarIntrusos('L1', [`2:bor:${BOR}`])).estranhos,
+            ).toEqual([`2:bor:${BOR}`]);
+        });
+
+        it('a retomada termina a limpeza: o resíduo do grupo (itens locais já fora) sai pela limpeza do borderô, sem retirada local nova', async () => {
+            const l = lote([item('700')]);
+            const h = build({
+                lote: l,
+                nativos: [
+                    { docCod: '700', seq: 1, linha: LINHA_B },
+                    { borCod: BOR, seq: 5 },
+                ],
+                marcas: marcasDoGrupo,
+                retirados: retiradosDoGrupo,
+                execucoes: [{ grupoId: 'G1', borCod: BOR, borTimCad: 1_790_000_000_000 }],
+                grupos: [{ id: 'G1', titulos: TITULOS }],
+            });
+            const r = await h.service.garantir({
+                lote: l,
+                ...CTX,
+                rascunhoAberto: true,
+                forcarLeitura: true,
+            });
+            expect(h.loteRepo.retirarGrupoPeloSistema).not.toHaveBeenCalled();
+            expect(h.borderoGrupo.limpar).toHaveBeenCalledTimes(1);
+            expect(r.gruposRetirados?.[0]).toMatchObject({ grupoId: 'G1', limpeza: 'limpo' });
+        });
     });
 });

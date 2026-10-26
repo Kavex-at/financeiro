@@ -484,13 +484,21 @@ Paralelismo: **Fase A inteira** em paralelo; na Fase D, T9/T10/T11/T12/T13 em pa
 - `src/backend/domain/repository/sispag/LotePagamentoRepository.ts` (`retirarGrupoPeloSistema`: N itens + N marcas + eventos numa transação) + teste
 
 **Acceptance criteria:**
-- [ ] RED primeiro. O grupo conta como **um** item nativo (`borCod`): os N itens locais não são lidos como "código ausente"; item de borderô sem barra antes do `finalizar` aborta como hoje (ADR-0040)
-- [ ] I16a: a barra do grupo repetida num título avulso ⇒ repetição detectada; I16d.1: o item de borderô de grupo confirmado conta como "com decisão humana vigente" no desempate
-- [ ] Retirar o item de borderô retira os N `ItemLote`, cria N marcas `GRUPO_BOLETO`, eventos `ITEM_REMOVIDO_SISTEMA` com `dados.motivo` = `GRUPO_BOLETO_FALHOU` ou `BORDERO_ANTERIOR_NAO_RESOLVIDO`, evento `GRUPO_RETIRADO`, e dispara `limpar` só para borderô criado nesta remessa (nunca o antigo de J rejeitado), com a guarda do lote nativo lido ao vivo (não finalizado, sem `.REM`; `vldHasRemessaPgto` não conta) e o borderô reconhecido pela identidade `borCod` + `borTimCad` (outro `borTimCad` na releitura = ausente, nunca tocado)
-- [ ] I16h: resíduo de grupo retirado = item com `borCod` cujo grupo tem as marcas **e** o evento do sistema neste lote; outro `borCod` ⇒ intruso
-- [ ] I16e: mensagem cita `borCod`, os títulos do grupo e o código mascarado
-- [ ] Limpeza com falha parcial fecha (não segue para `finalizarLote`); a retomada termina a limpeza
-- [ ] Testes existentes da guarda verdes
+- [x] RED primeiro. O grupo conta como **um** item nativo (`borCod`): os N itens locais não são lidos como "código ausente"; item de borderô sem barra antes do `finalizar` aborta como hoje (ADR-0040)
+- [x] I16a: a barra do grupo repetida num título avulso ⇒ repetição detectada; I16d.1: o item de borderô de grupo confirmado conta como "com decisão humana vigente" no desempate
+- [x] Retirar o item de borderô retira os N `ItemLote`, cria N marcas `GRUPO_BOLETO`, eventos `ITEM_REMOVIDO_SISTEMA` com `dados.motivo` = `GRUPO_BOLETO_FALHOU` ou `BORDERO_ANTERIOR_NAO_RESOLVIDO`, evento `GRUPO_RETIRADO`, e dispara `limpar` só para borderô criado nesta remessa (nunca o antigo de J rejeitado), com a guarda do lote nativo lido ao vivo (não finalizado, sem `.REM`; `vldHasRemessaPgto` não conta) e o borderô reconhecido pela identidade `borCod` + `borTimCad` (outro `borTimCad` na releitura = ausente, nunca tocado)
+- [x] I16h: resíduo de grupo retirado = item com `borCod` cujo grupo tem as marcas **e** o evento do sistema neste lote; outro `borCod` ⇒ intruso
+- [x] I16e: mensagem cita `borCod`, os títulos do grupo e o código mascarado
+- [x] Limpeza com falha parcial fecha (não segue para `finalizarLote`); a retomada termina a limpeza
+- [x] Testes existentes da guarda verdes
+
+**Desvios e notas da entrega (2026-10-26):**
+- `RetiradaCodigoBarrasService.garantir` recebe `grupos: GrupoNaGuarda[]` (`grupoId`, `borCod?`, `titulos`, `codigoMascarado`, `retirar?`). O grupo sadio é UM item nativo (`fil:bor:borCod`, pseudo-título `docCod 'bor'`): a análise de repetição da I16 funciona sem mudança (`AnaliseCodigoBarrasRepetido` não precisou mexer), e o item de borderô entra em `preferidos` (I16d.1). Grupo cujo item sai pela análise (repetido/ilegível) é retirado inteiro com `GRUPO_BOLETO_FALHOU`.
+- A retirada do grupo: transação local (`LotePagamentoRepository.retirarGrupoPeloSistema`: N itens, UMA `versao`, N marcas `GRUPO_BOLETO`, N eventos `ITEM_REMOVIDO_SISTEMA`) + `GRUPO_RETIRADO` na mesma transação → `BorderoGrupoBoletoService.limpar` (que apaga o item na ordem do ERP e decide o que pode apagar) → releitura do rascunho confirmando a ausência do item. Sem `borCod` (borderô antigo não resolvido) só sai local. Limpeza pendente ou item ainda no rascunho ⇒ `BoletoCodigoBarrasRetiradaIncompletaError` (limpeza): a guarda fecha e a retomada termina a limpeza (resíduo).
+- Resíduo (I16h): item `fil:bor:N` no rascunho, fora do lote local, cuja execução deste lote pertence a um grupo com as marcas `GRUPO_BOLETO` **e** o evento do sistema em todos os títulos; outro `borCod` ⇒ estranho.
+- `ConexosSispagWriteClient.listarLinhasDigitaveisDoLote` devolve `itensDeBordero` (com barra, sem barra ou `invalido`), fora de `total`/`dropped`.
+- `RemessaService`: `preparar`/barra com falha determinística marcam o grupo para sair pela guarda e a remessa **segue** com os demais; `indeterminado` continua interrompendo. O `.REM` só espera o J dos grupos que continuam no lote.
+- O `GRUPO_RETIRADO` e a trilha de eventos do grupo ficam na transação local; o `Alerta` `sispag-bordero-grupo-pendente` continua emitido pelo `limpar`.
 
 **Dependencies:** Task 15, Task 16
 

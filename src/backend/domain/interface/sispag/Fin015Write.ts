@@ -223,6 +223,20 @@ export interface LinhasDigitaveisDoLote {
      * nativa para o `DELETE` e para a confirmação de ausência. Não entra em `total`/`dropped`.
      */
     semCodigo?: Array<{ docCod: string; titCod: string; filCod: number; itsCodSeq: number }>;
+    /**
+     * Itens de BORDERÔ do boleto agrupado (ADR-0077): sem `docCod/titCod`, identificados pelo
+     * `borCod`. Ausente equivale a `[]`. Sem `linhaDigitavel` nem `invalido` = item sem barra
+     * (a guarda aborta antes do `finalizar`); `invalido` = barra recusada (só a identidade, I16e).
+     * Não entram em `total`/`dropped`.
+     */
+    itensDeBordero?: Array<{
+        filCod: number;
+        borCod: number;
+        itsCodSeq?: number;
+        /** 47 dígitos, com os 4 verificadores conferidos. SÓ em memória. */
+        linhaDigitavel?: string;
+        invalido?: true;
+    }>;
 }
 
 /** Resultado de `validacao/codigoBarras`: o ERP só DECODIFICA (não valida DV, HML #3). */

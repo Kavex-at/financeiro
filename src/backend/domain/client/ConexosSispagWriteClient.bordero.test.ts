@@ -291,4 +291,73 @@ describe('ConexosSispagWriteClient — borderô de grupo (ADR-0077)', () => {
             ).rejects.toBeInstanceOf(RascunhoLeituraIncompletaError);
         });
     });
+
+    describe('listarLinhasDigitaveisDoLote lê o item de borderô à parte (guarda I16, Task 17)', () => {
+        // Linha digitável SINTÉTICA, com os verificadores corretos.
+        const LINHA_OK = '00191234546789012345767890123457199990000012345';
+        const DV_RUIM = '00191234546789012345867890123457199990000012345';
+
+        it('item de borderô com barra vai em `itensDeBordero` (borCod, itsCodSeq, linha), nunca em `itens` nem em `invalidos`', async () => {
+            const { base, client } = make();
+            base.listGenericPaginated.mockResolvedValue({
+                count: 2,
+                rows: [{ ...ITEM_BORDERO_253, itsNumCodbar: LINHA_OK }, ITEM_TITULO],
+            });
+            const r = await client.listarLinhasDigitaveisDoLote({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 51,
+            });
+            expect(r.itensDeBordero).toEqual([
+                { filCod: 2, borCod: 253, itsCodSeq: 1, linhaDigitavel: LINHA_OK },
+            ]);
+            expect(r.itens.map((i) => i.docCod)).not.toContain('');
+            expect(r.invalidos ?? []).toEqual([]);
+            expect(r.semCodigo?.some((i) => i.docCod === '') ?? false).toBe(false);
+            expect(r.completa).toBe(true);
+        });
+
+        it('item de borderô SEM barra entra em `itensDeBordero` sem linha (a guarda aborta como CODIGO_AUSENTE)', async () => {
+            const { base, client } = make();
+            base.listGenericPaginated.mockResolvedValue({
+                count: 1,
+                rows: [{ ...ITEM_BORDERO_253, itsNumCodbar: null }],
+            });
+            const r = await client.listarLinhasDigitaveisDoLote({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 51,
+            });
+            expect(r.itensDeBordero).toEqual([{ filCod: 2, borCod: 253, itsCodSeq: 1 }]);
+            expect(r.itens).toEqual([]);
+        });
+
+        it('barra com dígito verificador errado no item de borderô ⇒ `invalido`, sem a linha (I16e)', async () => {
+            const { base, client } = make();
+            base.listGenericPaginated.mockResolvedValue({
+                count: 1,
+                rows: [{ ...ITEM_BORDERO_253, itsNumCodbar: DV_RUIM }],
+            });
+            const r = await client.listarLinhasDigitaveisDoLote({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 51,
+            });
+            expect(r.itensDeBordero).toEqual([
+                { filCod: 2, borCod: 253, itsCodSeq: 1, invalido: true },
+            ]);
+            expect(JSON.stringify(r)).not.toContain(DV_RUIM);
+        });
+
+        it('lote sem item de borderô: `itensDeBordero` ausente (paridade com o que existia)', async () => {
+            const { base, client } = make();
+            base.listGenericPaginated.mockResolvedValue({ count: 1, rows: [ITEM_TITULO] });
+            const r = await client.listarLinhasDigitaveisDoLote({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 51,
+            });
+            expect(r).not.toHaveProperty('itensDeBordero');
+        });
+    });
 });

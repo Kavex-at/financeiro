@@ -27,13 +27,17 @@ import {
     MODALIDADE,
     type LotePagamento,
     type Modalidade,
+    SYSTEM_REMOVAL_REASON,
 } from '../../interface/sispag/SispagInterface.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import BoletoSemCodigoBarrasError from '../../errors/BoletoSemCodigoBarrasError.js';
 import BoletoCodigoBarrasRepetidoError from '../../errors/BoletoCodigoBarrasRepetidoError.js';
 import type { RetiradoPorCodigoBarras } from '../../interface/sispag/RetiradaCodigoBarras.js';
-import RetiradaCodigoBarrasService from './RetiradaCodigoBarrasService.js';
+import RetiradaCodigoBarrasService, {
+    type GrupoNaGuarda,
+    type MotivoRetiradaDoGrupo,
+} from './RetiradaCodigoBarrasService.js';
 import ModoVinculoCodigoBarras, {
     MODO_VINCULO,
     type ModoVinculo,
@@ -625,6 +629,10 @@ export default class RemessaService {
         let flpCod: number | undefined = flpCodExistente;
         /** `borCod` do borderô de cada grupo: do `preparar` desta execução ou da retomada. */
         const borCodsDosGrupos = new Map<string, number>();
+        /** Grupos que saem INTEIROS pela guarda: o `preparar` ou a barra falhou de forma determinística. */
+        const gruposARetirar = new Map<string, MotivoRetiradaDoGrupo>();
+        /** Grupos que a guarda de fato retirou nesta execução. */
+        let gruposRetiradosIds = new Set<string>();
         // Cada passo abaixo é pulado quando o ERP já mostrou que ele valeu. `pular`
         // compara com a ordem canônica da sequência: retomar em 'finalizar' significa
         // que criar e importar já aconteceram lá.
@@ -708,15 +716,16 @@ export default class RemessaService {
             // `sincronizarComErp` reconhece o item pela identidade `borCod + borTimCad`.
             if (grupos.length > 0 && !pular('preparar_bordero')) {
                 await this.ledger.setEtapa(key, 'preparar_bordero');
-                const preparados = await this.prepararBorderosDosGrupos({
+                await this.prepararBorderosDosGrupos({
                     lote,
                     grupos,
                     bncCod,
                     flpCod,
                     gerNum: escolhida.gerNum,
                     dataDebito: dataDebito ?? lote.dataDebito,
+                    borCods: borCodsDosGrupos,
+                    retirar: gruposARetirar,
                 });
-                for (const [grupoId, borCod] of preparados) borCodsDosGrupos.set(grupoId, borCod);
                 await this.ledger.setEtapa(key, 'importar');
             }
 
@@ -795,6 +804,7 @@ export default class RemessaService {
                         lote,
                         grupos,
                         borCods: borCodsDosGrupos,
+                        retirar: gruposARetirar,
                         bncCod,
                         flpCod,
                         bancoLote: contaPagadora.bncNumCodbanco,
@@ -847,10 +857,14 @@ export default class RemessaService {
                 // (2.1) GUARDA DE CÓDIGO DE BARRAS REPETIDO (ADR-0069, I16) — fora do `if` do
                 // import de propósito: numa retomada o import é pulado e a checagem TEM que rodar
                 // de novo, senão "retry" seria a forma de passar pela guarda.
-                // ADR-0077: o item de borderô do grupo (um J com a soma) ainda não é lido por esta
-                // guarda — ela passa a conhecê-lo na Task 17 (I16a/d.1/e/h). Até lá, só os avulsos.
+                // ADR-0077: o boleto agrupado é UM item nativo (`borCod`) para a guarda; os que
+                // falharam de forma determinística saem inteiros por ela (I21p(3), I21q).
                 const guarda = await this.retirada.garantir({
-                    lote: this.semGrupo(loteFinal),
+                    lote: loteFinal,
+                    grupos: await this.gruposDaGuarda(loteFinal, grupos, {
+                        borCods: borCodsDosGrupos,
+                        retirar: gruposARetirar,
+                    }),
                     bncCod,
                     flpCod,
                     rascunhoAberto: retomarDe !== 'gerar_remessa',
@@ -861,6 +875,7 @@ export default class RemessaService {
                 loteFinal = guarda.lote;
                 retiradosPorCodigoBarras = guarda.retirados;
                 avisos = guarda.avisos;
+                gruposRetiradosIds = new Set((guarda.gruposRetirados ?? []).map((g) => g.grupoId));
             }
             if (vinculados.length > 0) {
                 avisos = [
@@ -931,7 +946,14 @@ export default class RemessaService {
                 // arquivo com o que o lote mandou (caso 8) — só AVISO até o teste supervisionado.
                 const validacao = this.cnab.validar(
                     arquivo.conteudo,
-                    this.esperadoNoArquivo(loteFinal, flags, grupos),
+                    this.esperadoNoArquivo(
+                        loteFinal,
+                        flags,
+                        // O grupo retirado não está mais no arquivo: o J dele não é esperado.
+                        grupos.filter(
+                            (g) => !gruposRetiradosIds.has(g.id) && !gruposARetirar.has(g.id),
+                        ),
+                    ),
                 );
                 await this.logService.info({
                     type: LOG_TYPE.BUSINESS_INFO,
@@ -1356,8 +1378,9 @@ export default class RemessaService {
 
     /**
      * Prepara o borderô de cada grupo no lote nativo aberto. `pronto` e `simulado` seguem;
-     * `retirar` e `indeterminado` interrompem a remessa ANTES do import e do finalizar, com a
-     * explicação ao operador (a retirada determinística pela guarda é da Task 17).
+     * `retirar` (falha determinística, I21p(3), ou borderô antigo não resolvido, I21s) marca o
+     * grupo para sair INTEIRO pela guarda e a remessa segue com os demais; `indeterminado`
+     * interrompe a remessa ANTES do import e do finalizar, com a explicação ao operador.
      */
     private prepararBorderosDosGrupos = async (p: {
         lote: LotePagamento;
@@ -1366,8 +1389,9 @@ export default class RemessaService {
         flpCod: number;
         gerNum?: number;
         dataDebito?: string;
-    }): Promise<Map<string, number>> => {
-        const borCods = new Map<string, number>();
+        borCods: Map<string, number>;
+        retirar: Map<string, MotivoRetiradaDoGrupo>;
+    }): Promise<void> => {
         if (p.dataDebito === undefined) {
             throw new LoteEstadoInvalidoError({
                 loteId: p.lote.id,
@@ -1385,11 +1409,18 @@ export default class RemessaService {
                 dataDebito: p.dataDebito,
                 grupo,
             });
-            if (r.desfecho === DESFECHO_PREPARACAO.PRONTO) {
-                if (r.borCod !== undefined) borCods.set(grupo.id, r.borCod);
+            if (r.borCod !== undefined) p.borCods.set(grupo.id, r.borCod);
+            if (r.desfecho === DESFECHO_PREPARACAO.PRONTO) continue;
+            if (r.desfecho === DESFECHO_PREPARACAO.SIMULADO) continue;
+            if (r.desfecho === DESFECHO_PREPARACAO.RETIRAR) {
+                p.retirar.set(
+                    grupo.id,
+                    r.motivo === SYSTEM_REMOVAL_REASON.BORDERO_ANTERIOR_NAO_RESOLVIDO
+                        ? SYSTEM_REMOVAL_REASON.BORDERO_ANTERIOR_NAO_RESOLVIDO
+                        : SYSTEM_REMOVAL_REASON.GRUPO_BOLETO_FALHOU,
+                );
                 continue;
             }
-            if (r.desfecho === DESFECHO_PREPARACAO.SIMULADO) continue;
             throw new LoteEstadoInvalidoError({
                 loteId: p.lote.id,
                 statusAtual: p.lote.status,
@@ -1399,31 +1430,29 @@ export default class RemessaService {
                     `O borderô do boleto agrupado ${grupo.codbarMascarado} não ficou pronto (${r.desfecho}). Nada foi finalizado.`,
             });
         }
-        return borCods;
     };
 
     /**
      * I21o: vincula a barra do boleto ao item de borderô de cada grupo, com o rascunho completo e
      * ANTES da guarda e do `finalizar`. Roda com o vínculo por título em `off` (P0-5): só o
      * kill-switch o desliga (e ele já levou a remessa ao dry-run). Transitória sobe como está;
-     * `retirar` interrompe a remessa (a retirada do grupo pela guarda é da Task 17).
+     * determinística (`retirar`) marca o grupo para sair inteiro pela guarda (Task 17).
      */
     private vincularBarrasDosGrupos = async (p: {
         lote: LotePagamento;
         grupos: GrupoBoleto[];
-        borCods: ReadonlyMap<string, number>;
+        borCods: Map<string, number>;
+        retirar: Map<string, MotivoRetiradaDoGrupo>;
         bncCod: number;
         flpCod: number;
         bancoLote?: number;
     }): Promise<void> => {
-        const { lote, grupos, bncCod, flpCod, bancoLote } = p;
-        // Retomada em que o `preparar` não rodou: o `borCod` vem do borderô reconhecido ao vivo.
-        const reconhecidos = grupos.some((g) => !p.borCods.has(g.id))
-            ? await this.borderoGrupo.chavesNativasConfirmadas({ lote, grupos })
-            : new Map<string, string>();
+        const { lote, bncCod, flpCod, bancoLote } = p;
+        // Grupo que já vai sair (borderô anterior não resolvido, preparação recusada) não recebe barra.
+        const grupos = p.grupos.filter((g) => !p.retirar.has(g.id));
+        await this.completarBorCods(lote, grupos, p.borCods);
         for (const grupo of grupos) {
-            const borCod =
-                p.borCods.get(grupo.id) ?? this.borCodDaChave(reconhecidos.get(grupo.id));
+            const borCod = p.borCods.get(grupo.id);
             if (borCod === undefined) {
                 throw new GroupBorderoIncompleteError({
                     grupoId: grupo.id,
@@ -1440,14 +1469,56 @@ export default class RemessaService {
                 flpCod,
                 ...(bancoLote !== undefined ? { bancoLote } : {}),
             });
-            if (r.tipo === 'vinculado') continue;
-            throw new LoteEstadoInvalidoError({
-                loteId: lote.id,
-                statusAtual: lote.status,
-                acao: 'vincular o código de barras do boleto agrupado',
-                motivo: `${r.aviso} Nada foi finalizado.`,
-            });
+            if (r.tipo === 'retirar')
+                p.retirar.set(grupo.id, SYSTEM_REMOVAL_REASON.GRUPO_BOLETO_FALHOU);
         }
+    };
+
+    /** Retomada em que o `preparar` não rodou: o `borCod` vem do borderô reconhecido AO VIVO. */
+    private completarBorCods = async (
+        lote: LotePagamento,
+        grupos: GrupoBoleto[],
+        borCods: Map<string, number>,
+    ): Promise<void> => {
+        const faltam = grupos.filter((g) => !borCods.has(g.id));
+        if (faltam.length === 0) return;
+        const reconhecidos = await this.borderoGrupo.chavesNativasConfirmadas({
+            lote,
+            grupos: faltam,
+        });
+        for (const g of faltam) {
+            const borCod = this.borCodDaChave(reconhecidos.get(g.id));
+            if (borCod !== undefined) borCods.set(g.id, borCod);
+        }
+    };
+
+    /** Os grupos como a guarda os lê: um item nativo cada, com o pedido de retirada quando for o caso. */
+    private gruposDaGuarda = async (
+        lote: LotePagamento,
+        grupos: GrupoBoleto[],
+        estado: {
+            borCods: Map<string, number>;
+            retirar: ReadonlyMap<string, MotivoRetiradaDoGrupo>;
+        },
+    ): Promise<GrupoNaGuarda[]> => {
+        await this.completarBorCods(
+            lote,
+            grupos.filter((g) => !estado.retirar.has(g.id)),
+            estado.borCods,
+        );
+        return grupos.map((g) => {
+            const borCod = estado.borCods.get(g.id);
+            const motivo = estado.retirar.get(g.id);
+            return {
+                grupoId: g.id,
+                ...(borCod !== undefined ? { borCod } : {}),
+                titulos: lote.itens
+                    .filter((i) => i.grupoBoletoId === g.id)
+                    .map((i) => ({ filCod: i.filCod, docCod: i.docCod, titCod: i.titCod })),
+                codigoMascarado: g.codbarMascarado,
+                ...(motivo !== undefined ? { retirar: { motivo } } : {}),
+            };
+        });
     };
 
     /** `{fil}:bor:{borCod}` → `borCod`. */

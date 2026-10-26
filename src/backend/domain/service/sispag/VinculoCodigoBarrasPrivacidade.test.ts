@@ -393,6 +393,9 @@ const montar = (opcoes: { confirmaTransitorio?: boolean; semDecisao?: boolean } 
         log as unknown as LogService,
         bloqueios as unknown as BloqueioDuplicidadeRepository,
         eventosVerificacao as unknown as VerificacaoEventoRepository,
+        { registrarEvento: jest.fn(), buscarPorId: jest.fn() } as unknown as GrupoBoletoRepository,
+        { ultimaPorGrupo: jest.fn(), listarPorLote: jest.fn() } as never,
+        { limpar: jest.fn() } as unknown as BorderoGrupoBoletoService,
     );
     const vinculo = new VinculoCodigoBarrasService(
         write as unknown as ConexosSispagWriteClient,

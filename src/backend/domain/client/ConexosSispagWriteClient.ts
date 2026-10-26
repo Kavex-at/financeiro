@@ -715,8 +715,31 @@ export default class ConexosSispagWriteClient {
             const itens: ItemLinhaDigitavel[] = [];
             const invalidos: NonNullable<LinhasDigitaveisDoLote['invalidos']> = [];
             const semCodigo: NonNullable<LinhasDigitaveisDoLote['semCodigo']> = [];
+            const itensDeBordero: NonNullable<LinhasDigitaveisDoLote['itensDeBordero']> = [];
             let total = 0;
             for (const row of linhas) {
+                // Item de BORDERÔ (boleto agrupado, ADR-0077): sem `docCod/titCod`, com `borCod`.
+                // Lido à parte — nunca vira "fil::1" nem entra em `total`/`dropped`.
+                const borCod = this.borCodDoItem(row);
+                if (borCod !== undefined) {
+                    const seq = ITS_COD_SEQ_SCHEMA.safeParse(row.itsCodSeq);
+                    const fil = Number(row.filCod);
+                    const base = {
+                        filCod: Number.isInteger(fil) && fil > 0 ? fil : filCod,
+                        borCod,
+                        ...(seq.success ? { itsCodSeq: seq.data } : {}),
+                    };
+                    const codigo = row.itsNumCodbar;
+                    if (codigo === null || codigo === undefined || String(codigo).trim() === '') {
+                        itensDeBordero.push(base);
+                    } else if (linhaDigitavelValida(String(codigo))) {
+                        itensDeBordero.push({ ...base, linhaDigitavel: String(codigo) });
+                    } else {
+                        // O código recusado nunca sai daqui (I16e): só a identidade.
+                        itensDeBordero.push({ ...base, invalido: true });
+                    }
+                    continue;
+                }
                 // Sem o campo (ou vazio) = item que não é boleto (ainda). Não é anomalia, não
                 // conta; só a identidade (com `itsCodSeq`) é guardada, para a retirada por vínculo
                 // falho (ADR-0071) conseguir apagar e confirmar a ausência.
@@ -771,6 +794,7 @@ export default class ConexosSispagWriteClient {
                 completa,
                 ...(invalidos.length > 0 ? { invalidos } : {}),
                 ...(semCodigo.length > 0 ? { semCodigo } : {}),
+                ...(itensDeBordero.length > 0 ? { itensDeBordero } : {}),
             };
         } catch (cause) {
             throw this.toConexosError(path, cause);
