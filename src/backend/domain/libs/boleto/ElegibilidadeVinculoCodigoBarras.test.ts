@@ -6,6 +6,7 @@ import RegraSugestaoBoleto from '../../service/sispag/RegraSugestaoBoleto.js';
 import CodigoBarrasBoleto from './CodigoBarrasBoleto.js';
 import CodigoBarrasSintetico from './CodigoBarrasSintetico.js';
 import ElegibilidadeVinculoCodigoBarras, {
+    type EntradaElegibilidadeItemDeBordero,
     type EntradaElegibilidadeVinculo,
     MOTIVO_INELEGIVEL_VINCULO,
 } from './ElegibilidadeVinculoCodigoBarras.js';
@@ -418,5 +419,135 @@ describe('não-regressão do passo 2 (ADR-0072)', () => {
         expect(fonte).not.toMatch(
             /SITUACAO_SUGESTAO|situacao|ancorad|VENCE_ANTES|RECONHECEU|MotorSugestaoBoleto|reconheceAvisos/,
         );
+    });
+});
+
+describe('ElegibilidadeVinculoCodigoBarras.avaliarItemDeBordero (I21o, I17o)', () => {
+    const VENC_BOLETO = '2026-10-21';
+    const DEBITO = '2026-10-21';
+    const itemBase = (
+        sobrescreve: Partial<EntradaElegibilidadeItemDeBordero> = {},
+        boleto: { valor?: number; vencimento?: string; serie?: number } = {},
+    ): EntradaElegibilidadeItemDeBordero => ({
+        noRascunho: true,
+        grupo: {
+            estado: 'CONFIRMADO',
+            orfao: false,
+            parVigente: true,
+            valorBoletoCentavos: 157_500,
+            vencimentoBoleto: VENC_BOLETO,
+        },
+        codigo: CodigoBarrasSintetico.linhaDigitavel({
+            valor: boleto.valor ?? 1575,
+            vencimento: boleto.vencimento ?? VENC_BOLETO,
+            serie: boleto.serie ?? 1,
+        }),
+        itsMnyValorCentavos: 157_500,
+        dataDebito: DEBITO,
+        ...sobrescreve,
+    });
+
+    it('grupo confirmado, boleto do pool, valor da barra == boleto == item do borderô: elegível, sem tier e sem decisão por título', () => {
+        const r = regra.avaliarItemDeBordero(itemBase());
+        expect(r.elegivel).toBe(true);
+        expect(r.deltaCentavos).toBe(0);
+        expect(r.codigoMascarado).toMatch(/^\d{5}…\d{4}$/);
+        expect(r.banco).toMatch(/^\d{3}$/);
+        expect(JSON.stringify(r)).not.toMatch(/\d{20,}/);
+    });
+
+    it.each([
+        [
+            'grupo anulado',
+            { grupo: { estado: 'ANULADO' } },
+            MOTIVO_INELEGIVEL_VINCULO.GRUPO_NAO_CONFIRMADO,
+        ],
+        ['grupo órfão', { grupo: { orfao: true } }, MOTIVO_INELEGIVEL_VINCULO.GRUPO_ORFAO],
+        [
+            'par do emissor não vigente',
+            { grupo: { parVigente: false } },
+            MOTIVO_INELEGIVEL_VINCULO.PAR_NAO_VIGENTE,
+        ],
+        [
+            'item fora do rascunho',
+            { noRascunho: false },
+            MOTIVO_INELEGIVEL_VINCULO.FORA_DO_RASCUNHO,
+        ],
+    ])('%s ⇒ inelegível', (_nome, over, motivo) => {
+        const base = itemBase();
+        const entrada = {
+            ...base,
+            ...over,
+            grupo: { ...base.grupo, ...('grupo' in over ? over.grupo : {}) },
+        } as EntradaElegibilidadeItemDeBordero;
+        const r = regra.avaliarItemDeBordero(entrada);
+        expect(r.elegivel).toBe(false);
+        expect(r.motivo).toBe(motivo);
+    });
+
+    it('código ausente, inválido ou de arrecadação ⇒ motivo próprio', () => {
+        expect(regra.avaliarItemDeBordero(itemBase({ codigo: undefined })).motivo).toBe(
+            MOTIVO_INELEGIVEL_VINCULO.BOLETO_INDISPONIVEL,
+        );
+        expect(regra.avaliarItemDeBordero(itemBase({ codigo: '123' })).motivo).toBe(
+            MOTIVO_INELEGIVEL_VINCULO.CODIGO_INVALIDO,
+        );
+        expect(regra.avaliarItemDeBordero(itemBase({ codigo: `8${'0'.repeat(46)}` })).motivo).toBe(
+            MOTIVO_INELEGIVEL_VINCULO.CODIGO_ARRECADACAO,
+        );
+    });
+
+    it('I21b: valor da barra ≠ valor do boleto do grupo (±1 centavo) ⇒ VALOR_DIFERENTE com delta', () => {
+        const r = regra.avaliarItemDeBordero(itemBase({}, { valor: 1575.01 }));
+        expect(r.elegivel).toBe(false);
+        expect(r.motivo).toBe(MOTIVO_INELEGIVEL_VINCULO.VALOR_DIFERENTE);
+        expect(r.deltaCentavos).toBe(1);
+    });
+
+    it('valor da barra ≠ itsMnyValor do item do borderô (vem do borderô, H6) ⇒ VALOR_DIFERENTE', () => {
+        const r = regra.avaliarItemDeBordero(itemBase({ itsMnyValorCentavos: 157_400 }));
+        expect(r.elegivel).toBe(false);
+        expect(r.motivo).toBe(MOTIVO_INELEGIVEL_VINCULO.VALOR_DIFERENTE);
+        expect(r.deltaCentavos).toBe(100);
+    });
+
+    it('item do borderô sem valor legível ⇒ fail-closed (VALOR_ABERTO_INDISPONIVEL), nunca "elegível"', () => {
+        const r = regra.avaliarItemDeBordero(itemBase({ itsMnyValorCentavos: undefined }));
+        expect(r.elegivel).toBe(false);
+        expect(r.motivo).toBe(MOTIVO_INELEGIVEL_VINCULO.VALOR_ABERTO_INDISPONIVEL);
+    });
+
+    it('I21h: barra que vence antes da data de débito ⇒ BARRA_VENCIDA', () => {
+        const r = regra.avaliarItemDeBordero(
+            itemBase({
+                dataDebito: '2026-10-22',
+            }),
+        );
+        expect(r.elegivel).toBe(false);
+        expect(r.motivo).toBe(MOTIVO_INELEGIVEL_VINCULO.BARRA_VENCIDA);
+    });
+
+    it('barra com vencimento diferente do boleto do grupo ⇒ BOLETO_INCONSISTENTE', () => {
+        const r = regra.avaliarItemDeBordero(itemBase({}, { vencimento: '2026-10-23' }));
+        expect(r.elegivel).toBe(false);
+        expect(r.motivo).toBe(MOTIVO_INELEGIVEL_VINCULO.BOLETO_INCONSISTENTE);
+    });
+
+    it('valor ou data do pool divergindo do que a barra decodifica ⇒ BOLETO_INCONSISTENTE', () => {
+        expect(regra.avaliarItemDeBordero(itemBase({ poolValor: 1500 })).motivo).toBe(
+            MOTIVO_INELEGIVEL_VINCULO.BOLETO_INCONSISTENTE,
+        );
+        expect(regra.avaliarItemDeBordero(itemBase({ poolVencimento: '2026-10-30' })).motivo).toBe(
+            MOTIVO_INELEGIVEL_VINCULO.BOLETO_INCONSISTENTE,
+        );
+    });
+
+    it('a I17n não se aplica: a entrada não aceita nem lê o líquido do título (titMnyLiquido)', () => {
+        const fonte = readFileSync(
+            path.join(__dirname, 'ElegibilidadeVinculoCodigoBarras.ts'),
+            'utf8',
+        );
+        const trecho = fonte.slice(fonte.indexOf('avaliarItemDeBordero'));
+        expect(trecho).not.toMatch(/titMnyLiquido|ValorAbertoLiquido|aberto\b/);
     });
 });

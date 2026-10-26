@@ -7,6 +7,7 @@ import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import NetValueUnavailableError from '../../errors/NetValueUnavailableError.js';
 import RemessaBarcodeAmountMismatchError from '../../errors/RemessaBarcodeAmountMismatchError.js';
 import RemessaEmDuvidaError from '../../errors/RemessaEmDuvidaError.js';
+import GroupBorderoIncompleteError from '../../errors/GroupBorderoIncompleteError.js';
 import GroupedBoletoNotEligibleAtRemittanceError from '../../errors/GroupedBoletoNotEligibleAtRemittanceError.js';
 import type { GrupoBoleto } from '../../interface/sispag/GrupoBoletoInterface.js';
 import type { ItemLote, LotePagamento } from '../../interface/sispag/SispagInterface.js';
@@ -271,6 +272,12 @@ const buildVinculo = (o: Record<string, unknown> = {}) => ({
     chavesComDecisaoHumana: jest.fn().mockResolvedValue(new Set<string>()),
     existemVinculaveis: jest.fn().mockResolvedValue(false),
     vinculosOrfaos: jest.fn().mockResolvedValue([]),
+    /** Barra no item de borderô do grupo (I21o): por padrão vincula. */
+    vincularItemDeBordero: jest.fn().mockResolvedValue({
+        tipo: 'vinculado',
+        codigoMascarado: '34191…7500',
+        jaVinculado: false,
+    }),
     ...o,
 });
 
@@ -4068,6 +4075,29 @@ describe('I17n — o item é importado pelo LÍQUIDO do grid (ADR-0074)', () => 
     });
 });
 
+/** Barra SINTÉTICA do grupo (R$ 5.720,68) e o J do `.REM` que a paga por inteiro. */
+const BARRAS_GRUPO = '34199100000005720681234567890123456789012345';
+const MASCARA_GRUPO = `${BARRAS_GRUPO.slice(0, 5)}…${BARRAS_GRUPO.slice(-4)}`;
+const linhaJ = (barras: string, subtipo = ''): string => {
+    const buf = ' '.repeat(240).split('');
+    '3410001300001'.split('').forEach((c, i) => {
+        buf[i] = c;
+    });
+    buf[13] = 'J';
+    (subtipo + barras).split('').forEach((c, i) => {
+        buf[17 + i] = c;
+    });
+    if (subtipo === '') {
+        String(Number(barras.slice(9, 19)))
+            .padStart(15, '0')
+            .split('')
+            .forEach((c, i) => {
+                buf[152 + i] = c;
+            });
+    }
+    return buf.join('');
+};
+
 /** Grupo de boleto mínimo: só o que a remessa lê (id, filial, boleto). */
 const grupo = (id = 'G1'): GrupoBoleto =>
     ({
@@ -4078,7 +4108,8 @@ const grupo = (id = 'G1'): GrupoBoleto =>
         ddcCod: 900,
         ditCod: 1,
         estado: 'CONFIRMADO',
-        valorBoletoCentavos: 157_500,
+        codbarMascarado: MASCARA_GRUPO,
+        valorBoletoCentavos: 572_068,
         titulos: [],
     }) as unknown as GrupoBoleto;
 
@@ -4105,6 +4136,13 @@ describe('RemessaService — boleto agrupado: etapa preparar_bordero (ADR-0077, 
     const writeDoGrupo = () => {
         const write = buildWrite();
         write.listarTitulosPendentes.mockResolvedValue([pendente(), pendente802()]);
+        write.listarArquivosRemessa.mockResolvedValue([
+            {
+                gabCod: 52,
+                nomeArquivo: 'PG210801.REM',
+                conteudo: [linhaJ(BARRAS_GRUPO), linhaJ('', '52')].join('\n'),
+            },
+        ]);
         return write;
     };
     const setup = (o: Parameters<typeof make>[0] = {}) => {
@@ -4277,6 +4315,148 @@ describe('RemessaService — boleto agrupado: etapa preparar_bordero (ADR-0077, 
             await expect(gerar(service)).rejects.toBeInstanceOf(RemessaEmDuvidaError);
             expect(borderoGrupo.preparar).not.toHaveBeenCalled();
             expect(write.finalizarLote).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('barra no item de borderô (I21o, Task 16)', () => {
+        it('vincula depois de preparar e importar os avulsos e ANTES de finalizar, com o borCod do borderô e o banco da conta', async () => {
+            const vinculo = buildVinculo();
+            const { service, write, borderoGrupo } = setup({ vinculo });
+            await gerar(service);
+            expect(vinculo.vincularItemDeBordero).toHaveBeenCalledTimes(1);
+            expect(vinculo.vincularItemDeBordero).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    grupo: expect.objectContaining({ id: 'G1' }),
+                    borCod: 77,
+                    bncCod: 4,
+                    flpCod: 12,
+                    bancoLote: expect.any(Number),
+                }),
+            );
+            const [preparar, importar, vincular, finalizar] = ordem(
+                borderoGrupo.preparar,
+                write.importarTitulos,
+                vinculo.vincularItemDeBordero,
+                write.finalizarLote,
+            );
+            expect(preparar).toBeLessThan(importar as number);
+            expect(importar).toBeLessThan(vincular as number);
+            expect(vincular).toBeLessThan(finalizar as number);
+        });
+
+        it('independe do modo I17k (P0-5): com SISPAG_BIND_CODBAR_FILIAIS = 2:off a barra do grupo ainda é vinculada, e o vínculo por título não roda', async () => {
+            const vinculo = buildVinculo();
+            const { service } = setup({
+                vinculo,
+                env: buildEnv({ sispagBindCodbarFiliais: '2:off' }),
+            });
+            await gerar(service);
+            expect(vinculo.vincularItemDeBordero).toHaveBeenCalledTimes(1);
+            expect(vinculo.executar).not.toHaveBeenCalled();
+        });
+
+        it('kill-switch desligado (dry-run): a barra do grupo não é vinculada', async () => {
+            const vinculo = buildVinculo();
+            const { service } = setup({
+                vinculo,
+                env: buildEnv({ sispagLiveWriteEnabled: false }),
+            });
+            await gerar(service);
+            expect(vinculo.vincularItemDeBordero).not.toHaveBeenCalled();
+        });
+
+        it('lote sem grupo: nenhuma chamada de barra de borderô', async () => {
+            const vinculo = buildVinculo();
+            await make({ vinculo }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+            expect(vinculo.vincularItemDeBordero).not.toHaveBeenCalled();
+        });
+
+        it('falha determinística (retirar) interrompe a remessa antes do finalizar, com a mensagem ao operador (a retirada pela guarda é da Task 17)', async () => {
+            const vinculo = buildVinculo({
+                vincularItemDeBordero: jest.fn().mockResolvedValue({
+                    tipo: 'retirar',
+                    campo: 'ELEGIBILIDADE',
+                    motivo: 'ERP_RECUSOU_VALIDACAO',
+                    codigoMascarado: '34191…7500',
+                    aviso: 'O Conexos recusou o código do boleto agrupado 34191…7500.',
+                }),
+            });
+            const { service, write } = setup({ vinculo });
+            await expect(gerar(service)).rejects.toBeInstanceOf(LoteEstadoInvalidoError);
+            expect(write.finalizarLote).not.toHaveBeenCalled();
+        });
+
+        it('falha transitória (GroupBorderoIncompleteError) sobe como está: retomável, nada finalizado', async () => {
+            const falha = new GroupBorderoIncompleteError({
+                grupoId: 'G1',
+                filCod: 2,
+                borCod: 77,
+                flpCod: 12,
+                etapa: 'vincular_codbar',
+            });
+            const vinculo = buildVinculo({
+                vincularItemDeBordero: jest.fn().mockRejectedValue(falha),
+            });
+            const { service, write, ledger } = setup({ vinculo });
+            await expect(gerar(service)).rejects.toBe(falha);
+            expect(write.finalizarLote).not.toHaveBeenCalled();
+            expect(ledger.fail).toHaveBeenCalled();
+        });
+
+        it('retomada com o item de borderô já no rascunho: não prepara de novo, mas revincula (idempotente) antes de finalizar', async () => {
+            const write = writeDoGrupo();
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 0,
+                titulosCount: 1,
+                soma: 100,
+            });
+            write.listarChavesDoLote.mockResolvedValue(new Set(['2:801:1', '2:802:1', '2:bor:77']));
+            const borderoGrupo = buildBorderoGrupo({
+                chavesNativasConfirmadas: jest
+                    .fn()
+                    .mockResolvedValue(new Map([['G1', '2:bor:77']])),
+            });
+            const vinculo = buildVinculo();
+            const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
+            const { service } = setup({ write, borderoGrupo, vinculo, ledger });
+            await gerar(service);
+            expect(borderoGrupo.preparar).not.toHaveBeenCalled();
+            expect(vinculo.vincularItemDeBordero).toHaveBeenCalledWith(
+                expect.objectContaining({ borCod: 77, flpCod: 99 }),
+            );
+            expect(write.finalizarLote).toHaveBeenCalled();
+        });
+    });
+
+    describe('J do item de borderô no .REM (I17m)', () => {
+        const comRem = (totalCentavos: number) => {
+            const write = writeDoGrupo();
+            const grupoGrande = { ...grupo(), valorBoletoCentavos: totalCentavos } as GrupoBoleto;
+            const loteRepo = buildLoteRepo(loteComGrupo());
+            const service = make({
+                lote: loteComGrupo(),
+                write,
+                loteRepo,
+                grupoRepo: buildGrupoRepo([grupoGrande]),
+            });
+            return { service, loteRepo };
+        };
+
+        it('barra == pagamento do J == total do borderô do grupo ⇒ a remessa é entregue', async () => {
+            const { service, loteRepo } = comRem(572_068);
+            const r = await gerar(service);
+            expect(r.status).toBe('gerada');
+            expect(loteRepo.setRemessaGerada).toHaveBeenCalled();
+        });
+
+        it('J do grupo que não paga o total do borderô ⇒ RemessaBarcodeAmountMismatchError, lote não transiciona', async () => {
+            const { service, loteRepo } = comRem(600_000);
+            await expect(gerar(service)).rejects.toBeInstanceOf(RemessaBarcodeAmountMismatchError);
+            expect(loteRepo.setRemessaGerada).not.toHaveBeenCalled();
+            expect(loteRepo.transicionarStatus).not.toHaveBeenCalled();
         });
     });
 });

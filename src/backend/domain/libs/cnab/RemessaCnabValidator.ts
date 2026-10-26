@@ -81,6 +81,20 @@ export interface LoteCnab {
 export interface EsperadoRemessa {
     ted: number;
     pix: number;
+    /**
+     * Boleto agrupado (ADR-0077, I17m): o J do item de borderô paga o TOTAL do borderô. A barra
+     * é identificada pela máscara 5+4 (o código completo não sai da memória do vínculo).
+     */
+    grupos?: Array<{ barrasMascarada: string; centavos: number }>;
+}
+
+/** J de grupo que não paga o total do borderô (ou que não está no arquivo). Só máscara e valores. */
+export interface DivergenciaGrupoJ {
+    barrasMascarada: string;
+    esperadoCentavos: number;
+    /** Ausente quando o J do grupo não está no arquivo ou o pagamento é ilegível. */
+    pagamentoCentavos?: number;
+    linha?: number;
 }
 
 export interface ResultadoValidacaoRemessa {
@@ -103,6 +117,11 @@ export interface ResultadoValidacaoRemessa {
      * Sempre presente. Só máscara 5+4, valores e linha.
      */
     divergenciasValor: DivergenciaValorJ[];
+    /**
+     * I17m para o boleto agrupado: o J do item de borderô deve pagar o total do borderô (barra ==
+     * pagamento do J == total). Sempre presente; vazio sem `esperado.grupos`.
+     */
+    divergenciasGrupo: DivergenciaGrupoJ[];
     /** Observações que NÃO bloqueiam (ver `valor` abaixo e `AVISO_CNAB`). */
     avisos: string[];
 }
@@ -219,6 +238,7 @@ export default class RemessaCnabValidator {
         const contagem = { J: 0, J52: 0, A: 0, O: 0 };
         const porBarras = new Map<string, number[]>();
         const divergenciasValor: DivergenciaValorJ[] = [];
+        const pagamentoPorMascara = new Map<string, Array<{ linha: number; pagamento?: number }>>();
 
         conteudo.split(/\r?\n/).forEach((linha, idx) => {
             if (linha.length < LINHA_MINIMA) return;
@@ -243,6 +263,17 @@ export default class RemessaCnabValidator {
                 invalidos.push(problema);
                 return;
             }
+            const mascara = AnaliseCodigoBarrasRepetido.mascarar(barras);
+            const campoPagamento = linha.slice(POS.PAGAMENTO_INI, POS.PAGAMENTO_FIM);
+            pagamentoPorMascara.set(mascara, [
+                ...(pagamentoPorMascara.get(mascara) ?? []),
+                {
+                    linha: idx + 1,
+                    ...(/^\d{15}$/.test(campoPagamento)
+                        ? { pagamento: Number(campoPagamento) }
+                        : {}),
+                },
+            ]);
             const linhasDaBarra = porBarras.get(barras) ?? [];
             linhasDaBarra.push(idx + 1);
             porBarras.set(barras, linhasDaBarra);
@@ -276,8 +307,42 @@ export default class RemessaCnabValidator {
                     linhas: linhasDaBarra,
                 })),
             divergenciasValor,
+            divergenciasGrupo: this.divergenciasDeGrupo(esperado?.grupos, pagamentoPorMascara),
             avisos,
         };
+    };
+
+    /**
+     * Cada grupo esperado tem de aparecer no arquivo e pagar exatamente o total do borderô. O J
+     * ausente ou com pagamento ilegível/diferente é divergência (fail-closed).
+     */
+    private divergenciasDeGrupo = (
+        grupos: EsperadoRemessa['grupos'],
+        pagamentoPorMascara: ReadonlyMap<string, Array<{ linha: number; pagamento?: number }>>,
+    ): DivergenciaGrupoJ[] => {
+        const divergencias: DivergenciaGrupoJ[] = [];
+        for (const g of grupos ?? []) {
+            const js = pagamentoPorMascara.get(g.barrasMascarada) ?? [];
+            if (js.length === 0) {
+                divergencias.push({
+                    barrasMascarada: g.barrasMascarada,
+                    esperadoCentavos: g.centavos,
+                });
+                continue;
+            }
+            const errado = js.find((j) => j.pagamento !== g.centavos);
+            if (errado) {
+                divergencias.push({
+                    barrasMascarada: g.barrasMascarada,
+                    esperadoCentavos: g.centavos,
+                    ...(errado.pagamento !== undefined
+                        ? { pagamentoCentavos: errado.pagamento }
+                        : {}),
+                    linha: errado.linha,
+                });
+            }
+        }
+        return divergencias;
     };
 
     /**

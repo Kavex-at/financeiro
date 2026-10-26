@@ -2,6 +2,7 @@ import { inject, injectable } from 'tsyringe';
 import { z } from 'zod';
 import ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
+import GroupBorderoIncompleteError from '../../errors/GroupBorderoIncompleteError.js';
 import GroupedBoletoNotEligibleAtRemittanceError from '../../errors/GroupedBoletoNotEligibleAtRemittanceError.js';
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import LoteAnteriorCanceladoError from '../../errors/LoteAnteriorCanceladoError.js';
@@ -12,6 +13,7 @@ import ValorItemImport from '../../libs/sispag/ValorItemImport.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type { ArquivoRemessa, ContaPagadora } from '../../interface/sispag/Fin015Write.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import type { EsperadoRemessa } from '../../libs/cnab/RemessaCnabValidator.js';
 import { DESFECHO_PREPARACAO } from '../../interface/sispag/BorderoGrupoBoletoInterface.js';
 import {
     GRUPO_BOLETO_ESTADO,
@@ -621,6 +623,8 @@ export default class RemessaService {
         // lote do ledger não serve mais (não existe no ERP, ou foi cancelado). Reusar o
         // `nativeFlpCod` antigo aqui mandaria títulos para um lote morto.
         let flpCod: number | undefined = flpCodExistente;
+        /** `borCod` do borderô de cada grupo: do `preparar` desta execução ou da retomada. */
+        const borCodsDosGrupos = new Map<string, number>();
         // Cada passo abaixo é pulado quando o ERP já mostrou que ele valeu. `pular`
         // compara com a ordem canônica da sequência: retomar em 'finalizar' significa
         // que criar e importar já aconteceram lá.
@@ -704,7 +708,7 @@ export default class RemessaService {
             // `sincronizarComErp` reconhece o item pela identidade `borCod + borTimCad`.
             if (grupos.length > 0 && !pular('preparar_bordero')) {
                 await this.ledger.setEtapa(key, 'preparar_bordero');
-                await this.prepararBorderosDosGrupos({
+                const preparados = await this.prepararBorderosDosGrupos({
                     lote,
                     grupos,
                     bncCod,
@@ -712,6 +716,7 @@ export default class RemessaService {
                     gerNum: escolhida.gerNum,
                     dataDebito: dataDebito ?? lote.dataDebito,
                 });
+                for (const [grupoId, borCod] of preparados) borCodsDosGrupos.set(grupoId, borCod);
                 await this.ledger.setEtapa(key, 'importar');
             }
 
@@ -779,6 +784,22 @@ export default class RemessaService {
             let avisos: string[] = [];
             let vinculados: NonNullable<GerarRemessaResult['vinculados']> = [];
             if (retomarDe !== 'concluido') {
+                // (1.2) BARRA DO ITEM DE BORDERÔ (ADR-0077, I21o) — independe do modo do vínculo
+                // por título; nunca numa retomada em `gerar_remessa` (I17i: rascunho fechado).
+                if (
+                    grupos.length > 0 &&
+                    retomarDe !== 'gerar_remessa' &&
+                    !pular('vincular_codbar')
+                ) {
+                    await this.vincularBarrasDosGrupos({
+                        lote,
+                        grupos,
+                        borCods: borCodsDosGrupos,
+                        bncCod,
+                        flpCod,
+                        bancoLote: contaPagadora.bncNumCodbanco,
+                    });
+                }
                 // (2.0) VÍNCULO DO CÓDIGO CONFIRMADO (ADR-0071, I17e) — só com o modo `on`, só em
                 // rascunho ABERTO (nunca numa retomada em `gerar_remessa`, I17i) e só se a retomada
                 // não passou dele. Falha transitória lança `VinculoCodigoBarrasIncompletoError`
@@ -910,7 +931,7 @@ export default class RemessaService {
                 // arquivo com o que o lote mandou (caso 8) — só AVISO até o teste supervisionado.
                 const validacao = this.cnab.validar(
                     arquivo.conteudo,
-                    this.esperadoNoArquivo(loteFinal, flags),
+                    this.esperadoNoArquivo(loteFinal, flags, grupos),
                 );
                 await this.logService.info({
                     type: LOG_TYPE.BUSINESS_INFO,
@@ -947,7 +968,19 @@ export default class RemessaService {
                     });
                 }
                 // I17m (ADR-0074) — o J paga exatamente o valor da barra. Mesmo tratamento tardio.
-                if (validacao.divergenciasValor.length > 0) {
+                const divergenciasJ = [
+                    ...validacao.divergenciasValor,
+                    // Boleto agrupado: o J não paga o total do borderô (ou nem está no arquivo).
+                    ...validacao.divergenciasGrupo.map((d) => ({
+                        linha: d.linha ?? 0,
+                        barrasMascarada: d.barrasMascarada,
+                        valorBarraCentavos: d.esperadoCentavos,
+                        ...(d.pagamentoCentavos !== undefined
+                            ? { pagamentoCentavos: d.pagamentoCentavos }
+                            : {}),
+                    })),
+                ];
+                if (divergenciasJ.length > 0) {
                     await this.guardaValorDoJ({
                         loteId: lote.id,
                         filCod: lote.filCod,
@@ -955,7 +988,7 @@ export default class RemessaService {
                         flpCod,
                         nomeArquivo: sugerido.nomeArquivo,
                         gabCod: arquivo.gabCod,
-                        divergencias: validacao.divergenciasValor,
+                        divergencias: divergenciasJ,
                     });
                 }
             } else {
@@ -1218,6 +1251,16 @@ export default class RemessaService {
                 apenas: faltando,
             };
         }
+        if (faltando.size === 0 && grupos.length > 0) {
+            // Rascunho completo com boleto agrupado: revincula a barra do item de borderô
+            // (idempotente: item já vinculado é reconhecido) antes da guarda e do finalizar.
+            return {
+                ...reusar,
+                ...comResiduos,
+                etapa: 'vincular_codbar',
+                motivo: `lote ${flpCod} tem os ${nossas.size} item(ns) do lote e ${grupos.length} boleto(s) agrupado(s) com a barra a conferir`,
+            };
+        }
         if (faltando.size === 0) {
             // ADR-0071 (I17i): rascunho ABERTO e completo, modo `on` e ainda há item a vincular ⇒
             // a retomada começa no vínculo (idempotente: item já vinculado é reconhecido).
@@ -1323,7 +1366,8 @@ export default class RemessaService {
         flpCod: number;
         gerNum?: number;
         dataDebito?: string;
-    }): Promise<void> => {
+    }): Promise<Map<string, number>> => {
+        const borCods = new Map<string, number>();
         if (p.dataDebito === undefined) {
             throw new LoteEstadoInvalidoError({
                 loteId: p.lote.id,
@@ -1341,7 +1385,10 @@ export default class RemessaService {
                 dataDebito: p.dataDebito,
                 grupo,
             });
-            if (r.desfecho === DESFECHO_PREPARACAO.PRONTO) continue;
+            if (r.desfecho === DESFECHO_PREPARACAO.PRONTO) {
+                if (r.borCod !== undefined) borCods.set(grupo.id, r.borCod);
+                continue;
+            }
             if (r.desfecho === DESFECHO_PREPARACAO.SIMULADO) continue;
             throw new LoteEstadoInvalidoError({
                 loteId: p.lote.id,
@@ -1352,6 +1399,61 @@ export default class RemessaService {
                     `O borderô do boleto agrupado ${grupo.codbarMascarado} não ficou pronto (${r.desfecho}). Nada foi finalizado.`,
             });
         }
+        return borCods;
+    };
+
+    /**
+     * I21o: vincula a barra do boleto ao item de borderô de cada grupo, com o rascunho completo e
+     * ANTES da guarda e do `finalizar`. Roda com o vínculo por título em `off` (P0-5): só o
+     * kill-switch o desliga (e ele já levou a remessa ao dry-run). Transitória sobe como está;
+     * `retirar` interrompe a remessa (a retirada do grupo pela guarda é da Task 17).
+     */
+    private vincularBarrasDosGrupos = async (p: {
+        lote: LotePagamento;
+        grupos: GrupoBoleto[];
+        borCods: ReadonlyMap<string, number>;
+        bncCod: number;
+        flpCod: number;
+        bancoLote?: number;
+    }): Promise<void> => {
+        const { lote, grupos, bncCod, flpCod, bancoLote } = p;
+        // Retomada em que o `preparar` não rodou: o `borCod` vem do borderô reconhecido ao vivo.
+        const reconhecidos = grupos.some((g) => !p.borCods.has(g.id))
+            ? await this.borderoGrupo.chavesNativasConfirmadas({ lote, grupos })
+            : new Map<string, string>();
+        for (const grupo of grupos) {
+            const borCod =
+                p.borCods.get(grupo.id) ?? this.borCodDaChave(reconhecidos.get(grupo.id));
+            if (borCod === undefined) {
+                throw new GroupBorderoIncompleteError({
+                    grupoId: grupo.id,
+                    filCod: grupo.filCod,
+                    flpCod,
+                    etapa: 'vincular_codbar',
+                });
+            }
+            const r = await this.vinculo.vincularItemDeBordero({
+                lote,
+                grupo,
+                borCod,
+                bncCod,
+                flpCod,
+                ...(bancoLote !== undefined ? { bancoLote } : {}),
+            });
+            if (r.tipo === 'vinculado') continue;
+            throw new LoteEstadoInvalidoError({
+                loteId: lote.id,
+                statusAtual: lote.status,
+                acao: 'vincular o código de barras do boleto agrupado',
+                motivo: `${r.aviso} Nada foi finalizado.`,
+            });
+        }
+    };
+
+    /** `{fil}:bor:{borCod}` → `borCod`. */
+    private borCodDaChave = (chave: string | undefined): number | undefined => {
+        const m = chave?.match(/^\d+:bor:(\d+)$/);
+        return m?.[1] !== undefined ? Number(m[1]) : undefined;
     };
 
     /**
@@ -1686,11 +1788,20 @@ export default class RemessaService {
     private esperadoNoArquivo = (
         lote: LotePagamento,
         flags: FlagsDestino,
-    ): { ted: number; pix: number } | undefined => {
-        if (!flags.ted && !flags.pix) return undefined;
+        grupos: GrupoBoleto[] = [],
+    ): EsperadoRemessa | undefined => {
+        // I17m (ADR-0077): o J do item de borderô paga o total do borderô do grupo.
+        const doGrupo = grupos.map((g) => ({
+            barrasMascarada: g.codbarMascarado,
+            centavos: g.valorBoletoCentavos,
+        }));
+        const comGrupos = doGrupo.length > 0 ? { grupos: doGrupo } : {};
+        if (!flags.ted && !flags.pix) {
+            return doGrupo.length > 0 ? { ted: 0, pix: 0, ...comGrupos } : undefined;
+        }
         const conta = (m: Modalidade): number =>
             lote.itens.filter((i) => i.modalidade === m && this.usaRegraNova(m, flags)).length;
-        return { ted: conta(MODALIDADE.TED), pix: conta(MODALIDADE.PIX) };
+        return { ted: conta(MODALIDADE.TED), pix: conta(MODALIDADE.PIX), ...comGrupos };
     };
 
     /** TED/PIX com a flag da modalidade ligada seguem a regra nova (ADR-0054). */

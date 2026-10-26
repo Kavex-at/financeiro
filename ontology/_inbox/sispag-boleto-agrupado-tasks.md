@@ -459,12 +459,19 @@ Paralelismo: **Fase A inteira** em paralelo; na Fase D, T9/T10/T11/T12/T13 em pa
 - `src/backend/domain/service/sispag/RemessaService.ts` (chamada, fora do `if (modoVinculo === ON)`)
 
 **Acceptance criteria:**
-- [ ] RED primeiro. Elegibilidade: grupo `CONFIRMADO` não órfão + par `VIGENTE` + boleto relido do pool (sem decisão por título, I17a ⇒ I21o); valor pela I21b **e** `== itsMnyValor` do item; datas pela I21g/h; a I17n não se aplica (teste: o import do borderô nunca usa `titMnyLiquido`)
-- [ ] Modalidade `7` se banco da barra ≠ banco do lote; `6` se igual (valor fixado pela V5 da Task 1)
-- [ ] Roda com `SISPAG_BIND_CODBAR_FILIAIS` = `off` em todas as filiais (teste explícito, P0-5); `sispagLiveWriteEnabled=false` ⇒ não roda
-- [ ] I17d (`itsMnyVlrPgtoResult == valorBoleto`), I17f, I17i, I17j inalteradas; falha transitória ⇒ `GroupBorderoIncompleteError` (retomável, nunca retira); determinística ⇒ retirada do grupo (Task 17)
-- [ ] I17m: guarda do `.REM` reconhece o J do item de borderô (barra == pagamento do J == total do borderô); fixture do `PG191081.REM` HML
-- [ ] Código só mascarado em log/evento/erro
+- [x] RED primeiro. Elegibilidade: grupo `CONFIRMADO` não órfão + par `VIGENTE` + boleto relido do pool (sem decisão por título, I17a ⇒ I21o); valor pela I21b **e** `== itsMnyValor` do item; datas pela I21g/h; a I17n não se aplica (teste: o import do borderô nunca usa `titMnyLiquido`)
+- [x] Modalidade `7` se banco da barra ≠ banco do lote; `6` se igual (valor fixado pela V5 da Task 1)
+- [x] Roda com `SISPAG_BIND_CODBAR_FILIAIS` = `off` em todas as filiais (teste explícito, P0-5); `sispagLiveWriteEnabled=false` ⇒ não roda
+- [x] I17d (`itsMnyVlrPgtoResult == valorBoleto`), I17f, I17i, I17j inalteradas; falha transitória ⇒ `GroupBorderoIncompleteError` (retomável, nunca retira); determinística ⇒ retirada do grupo (Task 17)
+- [x] I17m: guarda do `.REM` reconhece o J do item de borderô (barra == pagamento do J == total do borderô); fixture do `PG191081.REM` HML
+- [x] Código só mascarado em log/evento/erro
+
+**Desvios e notas da entrega (2026-10-26):**
+- `ElegibilidadeVinculoCodigoBarras.avaliarItemDeBordero` (pura): grupo `CONFIRMADO`, não órfão (boleto fora do pool ou com vínculo do ERP), par `VIGENTE`; valor da barra == boleto do grupo (I21b) == `itsMnyValor` do item; vencimento da barra == o do boleto e ≥ data de débito. Motivos novos `GRUPO_NAO_CONFIRMADO` e `GRUPO_ORFAO`. Sem tier e sem líquido do título (I17n não se aplica).
+- `VinculoCodigoBarrasService.vincularItemDeBordero({ lote, grupo, borCod, bncCod, flpCod, bancoLote? })`: mesma sequência da I17e (ler → validacao → confirma → releitura → PUT → releitura), com `lerItemDeBordero`; não grava coluna no item local nem evento por título. Transitória/ambígua ⇒ `GroupBorderoIncompleteError`; determinística ⇒ `{ tipo: 'retirar' }` (a retirada do grupo é da Task 17).
+- `RemessaService` chama a barra do grupo entre o import dos avulsos e o `finalizar`, fora do `if (modoVinculo === ON)`; `borCod` vem do `preparar` ou, na retomada, de `chavesNativasConfirmadas`. A retomada com o rascunho completo e grupos volta em `vincular_codbar` (idempotente).
+- **I17m:** `RemessaCnabValidator.validar` aceita `esperado.grupos` (máscara 5+4 + total) e devolve `divergenciasGrupo` (J ausente, ilegível ou diferente do total do borderô); a `RemessaService` as trata como `RemessaBarcodeAmountMismatchError`. O `PG191081.REM` do HML não está no repositório: os testes usam um `.REM` sintético com a mesma estrutura (um J, barra == pagamento == total).
+- `retirar` na remessa ainda interrompe antes do `finalizar` (Task 17 troca isso pela retirada do grupo inteiro).
 
 **Dependencies:** Task 7, Task 14
 

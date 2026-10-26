@@ -439,3 +439,58 @@ describe('I17m — barra == pagamento do J (ADR-0074)', () => {
         expect(r.divergenciasValor).toEqual([]);
     });
 });
+
+describe('RemessaCnabValidator — J do item de borderô (I17m, ADR-0077 I21o)', () => {
+    /** J com o pagamento (pos 153–167) em centavos, igual à barra salvo `pagamento` explícito. */
+    const jComPagamento = (barras: string, pagamento?: number): string => {
+        const base = linha('J', barras).split('');
+        const valor = pagamento ?? Number(barras.slice(9, 19));
+        String(valor)
+            .padStart(15, '0')
+            .split('')
+            .forEach((c, i) => {
+                base[152 + i] = c;
+            });
+        return base.join('');
+    };
+    const MASCARA_OK = `${BARRAS_OK.slice(0, 5)}…${BARRAS_OK.slice(-4)}`;
+    const esperado = (centavos: number) => ({
+        ted: 0,
+        pix: 0,
+        grupos: [{ barrasMascarada: MASCARA_OK, centavos }],
+    });
+
+    it('sempre devolve `divergenciasGrupo`, vazio sem grupos esperados', () => {
+        const r = make().validar([jComPagamento(BARRAS_OK), header].join('\n'));
+        expect(r.divergenciasGrupo).toEqual([]);
+    });
+
+    it('barra == pagamento do J == total do borderô do grupo ⇒ nenhuma divergência', () => {
+        const r = make().validar(jComPagamento(BARRAS_OK), esperado(572_068));
+        expect(r.divergenciasGrupo).toEqual([]);
+    });
+
+    it('J do grupo com pagamento diferente do total do borderô ⇒ divergência com máscara e valores', () => {
+        const r = make().validar(jComPagamento(BARRAS_OK), esperado(600_000));
+        expect(r.divergenciasGrupo).toEqual([
+            {
+                barrasMascarada: MASCARA_OK,
+                esperadoCentavos: 600_000,
+                pagamentoCentavos: 572_068,
+                linha: 1,
+            },
+        ]);
+    });
+
+    it('o J do grupo ausente do arquivo ⇒ divergência sem linha nem pagamento (fail-closed)', () => {
+        const r = make().validar(header, esperado(572_068));
+        expect(r.divergenciasGrupo).toEqual([
+            { barrasMascarada: MASCARA_OK, esperadoCentavos: 572_068 },
+        ]);
+    });
+
+    it('a divergência nunca carrega as 44 posições da barra', () => {
+        const r = make().validar(jComPagamento(BARRAS_OK), esperado(600_000));
+        expect(JSON.stringify(r)).not.toMatch(/\d{44}/);
+    });
+});
