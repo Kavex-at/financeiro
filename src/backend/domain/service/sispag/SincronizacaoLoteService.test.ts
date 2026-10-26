@@ -14,7 +14,9 @@ import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type LogService from '../LogService.js';
 import type NotificacaoService from '../operacao/NotificacaoService.js';
+import type CasamentoRetornoGrupo from './CasamentoRetornoGrupo.js';
 import DecisaoStatusLote from './DecisaoStatusLote.js';
+import type FechamentoGrupoBoleto from './FechamentoGrupoBoleto.js';
 import SincronizacaoLoteService from './SincronizacaoLoteService.js';
 
 /**
@@ -126,9 +128,11 @@ interface Setup {
     titulos?: Record<string, LeituraTitulo>;
     baixas?: LeituraBaixas;
     detalhe?: (p: { garCodSeq: number; eventoCod: string }) => unknown[];
+    /** Casamento da linha do J (item de borderô) com o grupo do lote. */
+    casar?: (p: { loteId: string; linha: unknown }) => unknown;
 }
 
-const setup = ({ lotes, titulos = {}, baixas = baixas22320, detalhe }: Setup) => {
+const setup = ({ lotes, titulos = {}, baixas = baixas22320, detalhe, casar }: Setup) => {
     const porId = new Map(lotes.map((l) => [l.id, l]));
     const loteRepo = {
         getLoteComItens: jest.fn(async (id: string) => porId.get(id) ?? null),
@@ -164,6 +168,10 @@ const setup = ({ lotes, titulos = {}, baixas = baixas22320, detalhe }: Setup) =>
         warn: jest.fn().mockResolvedValue(undefined),
         error: jest.fn().mockResolvedValue(undefined),
     };
+    const casamento = {
+        casar: jest.fn(async (p: { loteId: string; linha: unknown }) => casar?.(p)),
+    };
+    const fechamento = { fechar: jest.fn().mockResolvedValue(undefined) };
     const service = new SincronizacaoLoteService(
         loteRepo as unknown as LotePagamentoRepository,
         sispag as unknown as ConexosSispagClient,
@@ -173,8 +181,20 @@ const setup = ({ lotes, titulos = {}, baixas = baixas22320, detalhe }: Setup) =>
         notificacao as unknown as NotificacaoService,
         logService as unknown as LogService,
         new BoundedConcurrency(),
+        casamento as unknown as CasamentoRetornoGrupo,
+        fechamento as unknown as FechamentoGrupoBoleto,
     );
-    return { service, loteRepo, sispag, titulosClient, retorno, notificacao, logService };
+    return {
+        service,
+        loteRepo,
+        sispag,
+        titulosClient,
+        retorno,
+        notificacao,
+        logService,
+        casamento,
+        fechamento,
+    };
 };
 
 const aplicadoPara = (loteRepo: { aplicarSincronizacao: jest.Mock }, loteId: string) =>
@@ -459,5 +479,93 @@ describe('SincronizacaoLoteService — T1..T8 (ADR-0055)', () => {
         s.notificacao.emitir.mockRejectedValue(new Error('banco fora'));
         const r = await sincronizarUm(s.service, 'L-fil2');
         expect(r?.resultado.resultado).toBe('TRANSICIONOU');
+    });
+});
+
+describe('SincronizacaoLoteService — boleto agrupado (ADR-0077, I21r, I11i)', () => {
+    const TITULOS = ['901', '902', '903'].map((docCod) => ({ filCod: 2, docCod, titCod: '1' }));
+    const loteComGrupo = (): LotePagamento =>
+        loteFil2({
+            itens: TITULOS.map((t) => item({ ...t, grupoBoletoId: 'G1' })),
+        });
+    /** A linha do J: sem docCod/titCod, com borCod e itsCodSeq (HML, G4). */
+    const linhaJ = {
+        filCod: 2,
+        bncCod: 4,
+        gtbCodSeq: 3,
+        garCodSeq: 9,
+        flpCod: 24,
+        itsCodSeq: 1,
+        borCod: 252,
+        eventoCod: 'AE',
+        eventoDescricao: 'DATA INVALIDA',
+    };
+    const comJ = (over: Partial<Setup> = {}) =>
+        setup({
+            lotes: [loteComGrupo()],
+            detalhe: (p) => (p.garCodSeq === 9 && p.eventoCod === 'AE' ? [linhaJ] : []),
+            casar: () => ({ grupoId: 'G1', execucaoId: 'E1', titulos: TITULOS }),
+            ...over,
+        });
+
+    it('a linha do J sem docCod, casada com o grupo, é espalhada nos N itens: N REJEITADO e lote RETORNADO', async () => {
+        const s = comJ();
+        await sincronizarUm(s.service, 'L-fil2');
+        expect(s.casamento.casar).toHaveBeenCalledWith(
+            expect.objectContaining({
+                loteId: 'L-fil2',
+                linha: expect.objectContaining({ borCod: 252, itsCodSeq: 1 }),
+            }),
+        );
+        const aplicado = aplicadoPara(s.loteRepo, 'L-fil2');
+        expect(aplicado.para).toBe('RETORNADO');
+        expect(aplicado.itens).toHaveLength(3);
+        expect(aplicado.itens.every((i: { situacao: string }) => i.situacao === 'REJEITADO')).toBe(
+            true,
+        );
+    });
+
+    it('linha sem docCod que NÃO casa com grupo nenhum continua descartada (comportamento de hoje)', async () => {
+        const s = comJ({ casar: () => undefined });
+        await sincronizarUm(s.service, 'L-fil2');
+        const aplicado = aplicadoPara(s.loteRepo, 'L-fil2');
+        expect(aplicado?.para).toBeUndefined();
+    });
+
+    it('depois de aplicar, o grupo é fechado com a decisão da passada', async () => {
+        const s = comJ();
+        await sincronizarUm(s.service, 'L-fil2');
+        expect(s.fechamento.fechar).toHaveBeenCalledTimes(1);
+        const pedido = s.fechamento.fechar.mock.calls[0]?.[0];
+        expect(pedido.lote.id).toBe('L-fil2');
+        expect(pedido.itens).toHaveLength(3);
+        expect(pedido.agora).toEqual(AGORA);
+    });
+
+    it('o fechamento do grupo roda também numa passada SEM mudança (idempotente: recupera uma queda entre gravar e fechar)', async () => {
+        const rejeitados = TITULOS.map((t) =>
+            item({
+                ...t,
+                grupoBoletoId: 'G1',
+                situacao: 'REJEITADO',
+                rejeitado: true,
+                retornoEvento: 'AE',
+                retornoDescricao: 'DATA INVALIDA',
+                sincronizadoEm: ANTES,
+            }),
+        );
+        const s = setup({
+            lotes: [loteFil2({ status: 'RETORNADO', itens: rejeitados })],
+            casar: () => undefined,
+        });
+        await sincronizarUm(s.service, 'L-fil2');
+        expect(s.fechamento.fechar).toHaveBeenCalledTimes(1);
+    });
+
+    it('lote sem grupo de boleto: o fechamento é chamado mas não tem o que fazer (nenhum item de grupo)', async () => {
+        const s = setup({ lotes: [loteFil2()], titulos: { '2:38682:1': pago } });
+        await sincronizarUm(s.service, 'L-fil2');
+        const pedido = s.fechamento.fechar.mock.calls[0]?.[0];
+        expect(pedido?.lote.itens.some((i: ItemLote) => i.grupoBoletoId !== undefined)).toBe(false);
     });
 });

@@ -9,6 +9,7 @@ import ConciliacaoEmDuvidaError from '../../errors/ConciliacaoEmDuvidaError.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import ConciliacaoExecucaoRepository from '../../repository/sispag/ConciliacaoExecucaoRepository.js';
 import LogService from '../LogService.js';
+import CasamentoRetornoGrupo from './CasamentoRetornoGrupo.js';
 import SincronizacaoLoteService from './SincronizacaoLoteService.js';
 
 export interface ConciliarInput {
@@ -98,6 +99,7 @@ export default class ConciliacaoRetornoService {
         @inject(ConciliacaoExecucaoRepository)
         private readonly ledger: ConciliacaoExecucaoRepository,
         @inject(SincronizacaoLoteService) private readonly sincronizacao: SincronizacaoLoteService,
+        @inject(CasamentoRetornoGrupo) private readonly casamento: CasamentoRetornoGrupo,
     ) {}
 
     public conciliar = async (input: ConciliarInput): Promise<ConciliarResult> => {
@@ -300,7 +302,8 @@ export default class ConciliacaoRetornoService {
         for (const l of linhas) {
             const rejeitado = rejeicaoPorCodigo.get(l.eventoCod ?? '') ?? false;
             const base = this.itemConciliado(l, rejeitado);
-            if (l.flpCod === undefined || l.docCod === undefined) {
+            // A linha do item de borderô (J do boleto agrupado) não tem `docCod`: casa com o grupo.
+            if (l.flpCod === undefined || (l.docCod === undefined && l.borCod === undefined)) {
                 itens.push(base);
                 continue;
             }
@@ -315,9 +318,16 @@ export default class ConciliacaoRetornoService {
                 itens.push(base);
                 continue;
             }
+            const chaves = await this.chavesDaLinha(loteId, l);
+            if (chaves.length === 0) {
+                // Linha de borderô que não é de grupo nosso: só informação, como antes.
+                itens.push(base);
+                continue;
+            }
             const doLote = eventosPorLote.get(loteId) ?? new Map<string, EventoRetornoItem[]>();
-            const chave = `${l.docCod}:${l.titCod ?? '1'}`;
-            doLote.set(chave, [...(doLote.get(chave) ?? []), this.eventoDaLinha(l, rejeitado)]);
+            for (const chave of chaves) {
+                doLote.set(chave, [...(doLote.get(chave) ?? []), this.eventoDaLinha(l, rejeitado)]);
+            }
             eventosPorLote.set(loteId, doLote);
             itens.push({ ...base, loteId, reconhecido: true });
         }
@@ -387,6 +397,16 @@ export default class ConciliacaoRetornoService {
             varreduraIncompleta,
             eventosNaoLidos,
         };
+    };
+
+    /**
+     * As chaves `docCod:titCod` que a linha atinge: o próprio título, ou — na linha do J do
+     * boleto agrupado (I21r, I11i) — os N títulos do grupo casado pelo `borCod` da execução.
+     */
+    private chavesDaLinha = async (loteId: string, l: ArquivoRetornoDetalhe): Promise<string[]> => {
+        if (l.docCod !== undefined) return [`${l.docCod}:${l.titCod ?? '1'}`];
+        const grupo = await this.casamento.casar({ loteId, linha: l });
+        return (grupo?.titulos ?? []).map((t) => `${t.docCod}:${t.titCod}`);
     };
 
     /** A linha do detalhe como ela sai na resposta (inclusive a não reconhecida). */

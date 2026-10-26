@@ -28,7 +28,9 @@ import LotePagamentoRepository, {
 } from '../../repository/sispag/LotePagamentoRepository.js';
 import LogService from '../LogService.js';
 import NotificacaoService from '../operacao/NotificacaoService.js';
+import CasamentoRetornoGrupo from './CasamentoRetornoGrupo.js';
 import DecisaoStatusLote from './DecisaoStatusLote.js';
+import FechamentoGrupoBoleto from './FechamentoGrupoBoleto.js';
 
 /**
  * Concorrência das leituras no Conexos. O gargalo não é CPU, é o pool de sessões do robô
@@ -127,6 +129,8 @@ export default class SincronizacaoLoteService {
         @inject(NotificacaoService) private readonly notificacao: NotificacaoService,
         @inject(LogService) private readonly logService: LogService,
         @inject(BoundedConcurrency) private readonly bounded: BoundedConcurrency,
+        @inject(CasamentoRetornoGrupo) private readonly casamento: CasamentoRetornoGrupo,
+        @inject(FechamentoGrupoBoleto) private readonly fechamento: FechamentoGrupoBoleto,
     ) {}
 
     /**
@@ -227,6 +231,8 @@ export default class SincronizacaoLoteService {
         }
 
         if (!decisao.mudou) {
+            // O grupo de boleto fecha também sem mudança: recupera uma queda entre gravar e fechar.
+            await this.fechamento.fechar({ lote, itens: decisao.itens, agora });
             await this.loteRepo.tocarSincronizacao({
                 loteId: lote.id,
                 itens: decisao.itens
@@ -263,6 +269,12 @@ export default class SincronizacaoLoteService {
 
         await this.registrarDesfecho(lote, decisao);
         await this.emitirAlertas(decisao.alertas, agora);
+        await this.fechamento.fechar({
+            lote,
+            itens: decisao.itens,
+            divergencias: decisao.divergencias,
+            agora,
+        });
         return {
             ...base,
             resultado:
@@ -474,27 +486,46 @@ export default class SincronizacaoLoteService {
                 });
                 continue;
             }
-            this.acumularLinhas(porLote, lido.value, leitura, loteDaChave);
+            await this.acumularLinhas(porLote, lido.value, leitura, loteDaChave);
         }
         return { porLote, eventosNaoLidos };
     };
 
-    /** Casa cada linha com o lote pela chave composta com o `filCod` DA LINHA (ADR-0055). */
-    private acumularLinhas = (
+    /**
+     * Casa cada linha com o lote pela chave composta com o `filCod` DA LINHA (ADR-0055). A linha
+     * do item de BORDERÊ (boleto agrupado, I21r) não tem `docCod`: é casada com o grupo do lote
+     * pelo `borCod` da execução e vale para os N títulos (I11i); a que não casa nada continua
+     * descartada.
+     */
+    private acumularLinhas = async (
         porLote: EventosPorLote,
         linhas: ArquivoRetornoDetalhe[],
         leitura: { arquivo: ArquivoRetorno; ev: EventoBancario },
         loteDaChave: Map<string, LotePagamento>,
-    ): void => {
+    ): Promise<void> => {
         for (const linha of linhas) {
-            if (linha.flpCod === undefined || linha.docCod === undefined) continue;
+            if (linha.flpCod === undefined) continue;
             const lote = loteDaChave.get(`${linha.filCod}:${linha.bncCod}:${linha.flpCod}`);
             if (!lote || !this.arquivoPosteriorARemessa(leitura.arquivo, lote)) continue;
+            const chaves =
+                linha.docCod !== undefined
+                    ? [this.chaveItem(linha.docCod, linha.titCod ?? '1')]
+                    : await this.chavesDoGrupo(lote, linha);
+            if (chaves.length === 0) continue;
             const itens = porLote.get(lote.id) ?? new Map<string, EventoRetornoItem[]>();
-            const chave = this.chaveItem(linha.docCod, linha.titCod ?? '1');
-            itens.set(chave, [...(itens.get(chave) ?? []), this.eventoDaLinha(linha, leitura.ev)]);
+            const evento = this.eventoDaLinha(linha, leitura.ev);
+            for (const chave of chaves) itens.set(chave, [...(itens.get(chave) ?? []), evento]);
             porLote.set(lote.id, itens);
         }
+    };
+
+    /** Os N títulos do grupo a que a linha do J pertence; vazio = a linha não é de grupo nosso. */
+    private chavesDoGrupo = async (
+        lote: LotePagamento,
+        linha: ArquivoRetornoDetalhe,
+    ): Promise<string[]> => {
+        const grupo = await this.casamento.casar({ loteId: lote.id, linha });
+        return (grupo?.titulos ?? []).map((t) => this.chaveItem(t.docCod, t.titCod));
     };
 
     private eventoDaLinha = (

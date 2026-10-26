@@ -13,6 +13,8 @@ import type LotePagamentoRepository from '../domain/repository/sispag/LotePagame
 import LogService from '../domain/service/LogService.js';
 import type NotificacaoService from '../domain/service/operacao/NotificacaoService.js';
 import DecisaoStatusLote from '../domain/service/sispag/DecisaoStatusLote.js';
+import type CasamentoRetornoGrupo from '../domain/service/sispag/CasamentoRetornoGrupo.js';
+import type FechamentoGrupoBoleto from '../domain/service/sispag/FechamentoGrupoBoleto.js';
 import SincronizacaoLoteService from '../domain/service/sispag/SincronizacaoLoteService.js';
 
 /**
@@ -140,6 +142,9 @@ async function main(): Promise<number> {
         semAlerta as unknown as NotificacaoService,
         container.resolve(LogService),
         new BoundedConcurrency(),
+        // Sem boleto agrupado nos casos de verdade, e este job nunca grava: colaboradores nulos.
+        { casar: async () => undefined } as unknown as CasamentoRetornoGrupo,
+        { fechar: async () => undefined } as unknown as FechamentoGrupoBoleto,
     );
     const titulo = container.resolve(ConexosSispagClient);
     const leitura4030 = await titulo.lerSituacaoTitulo(1, '4030', '7');

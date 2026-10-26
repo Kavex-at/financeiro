@@ -512,13 +512,21 @@ Paralelismo: **Fase A inteira** em paralelo; na Fase D, T9/T10/T11/T12/T13 em pa
 - `src/backend/domain/service/sispag/GrupoBoletoService.ts` (fechamento: `PAGO`, divergente, rejeitado)
 
 **Acceptance criteria:**
-- [ ] RED primeiro. Linha de retorno do item de borderô (formato medido na Task 1) casada pela chave nativa e espalhada nos N itens do grupo; linha sem `docCod` deixa de ser descartada quando casa um grupo; continua descartada quando não casa nada (comportamento atual)
-- [ ] N títulos `PAGO` no `fin064` ⇒ grupo `PAGO`, `pago_observado_em`, evento `GRUPO_PAGO`, marcas encerradas; `borVldFinalizado` só corrobora (nível 4 da I11)
-- [ ] Parte paga ⇒ `divergencia` nos N + `Alerta` `sispag-baixa-divergente` + evento `GRUPO_DIVERGENTE`; nunca "parcialmente pago"
-- [ ] Linha do J (G4) casada por `fil/bnc/flp/itsCodSeq` e/ou `borCod` **conferido contra o `bor_cod` da execução do lote** (o `borCod` sozinho pode ser reutilizado; a linha não traz `borTimCad`)
-- [ ] J rejeitado ⇒ N `REJEITADO`, lote `RETORNADO`, execução `j_rejeitado_em`, grupo com situação `REJEITADO` + `Alerta` `sispag-bordero-grupo-pendente` (detalhe com `borCod`, filial, títulos e o que fazer; sem código completo); nenhuma escrita no ERP
-- [ ] Sincronização idempotente (rodar duas vezes não duplica evento nem alerta: janela diária do `NotificacaoService`)
-- [ ] Testes existentes de conciliação/sincronização verdes
+- [x] RED primeiro. Linha de retorno do item de borderô (formato medido na Task 1) casada pela chave nativa e espalhada nos N itens do grupo; linha sem `docCod` deixa de ser descartada quando casa um grupo; continua descartada quando não casa nada (comportamento atual)
+- [x] N títulos `PAGO` no `fin064` ⇒ grupo `PAGO`, `pago_observado_em`, evento `GRUPO_PAGO`, marcas encerradas; `borVldFinalizado` só corrobora (nível 4 da I11)
+- [x] Parte paga ⇒ `divergencia` nos N + `Alerta` `sispag-baixa-divergente` + evento `GRUPO_DIVERGENTE`; nunca "parcialmente pago"
+- [x] Linha do J (G4) casada por `fil/bnc/flp/itsCodSeq` e/ou `borCod` **conferido contra o `bor_cod` da execução do lote** (o `borCod` sozinho pode ser reutilizado; a linha não traz `borTimCad`)
+- [x] J rejeitado ⇒ N `REJEITADO`, lote `RETORNADO`, execução `j_rejeitado_em`, grupo com situação `REJEITADO` + `Alerta` `sispag-bordero-grupo-pendente` (detalhe com `borCod`, filial, títulos e o que fazer; sem código completo); nenhuma escrita no ERP
+- [x] Sincronização idempotente (rodar duas vezes não duplica evento nem alerta: janela diária do `NotificacaoService`)
+- [x] Testes existentes de conciliação/sincronização verdes
+
+**Desvios e notas da entrega (2026-10-26):**
+- Em vez de crescer o `GrupoBoletoService` (836 linhas) e o `SincronizacaoLoteService`, o fechamento ficou em duas classes pequenas: `CasamentoRetornoGrupo` (casa a linha do J com o grupo pela execução do lote) e `FechamentoGrupoBoleto` (PAGO, J rejeitado, `GRUPO_DIVERGENTE`). O `GrupoBoletoService` não mudou; `GrupoBoletoRepository.marcarPago` (Task 8) e `GrupoBoletoExecucaoRepository.marcarJRejeitado` já existiam.
+- Casamento (G4): a linha do J (sem `docCod/titCod`) só casa quando o `borCod` — e o `itsCodSeq`, se a execução o gravou — é o da execução DESTE lote; `borCod` sozinho pode ter sido reutilizado pelo ERP. Os N títulos vêm do grupo local; a linha não traz valor nem `borTimCad`. Linha de título nunca é de grupo; linha que não casa continua descartada.
+- `DecisaoStatusLote` (pura): parte do grupo paga e todos lidos ⇒ `divergencia` nos N (`DETALHE_GRUPO_PARCIAL`, pegajosa) e o alerta `sispag-baixa-divergente` pelo caminho de sempre; não age em lote `BAIXADO`, nem com título não lido (I11c), nem com todos ou nenhum pago.
+- O fechamento roda depois de gravar a passada **e também em passada sem mudança** (recupera uma queda entre gravar e fechar). `marcarPago` é idempotente (marcas só encerradas na primeira vez); o `Alerta` `sispag-bordero-grupo-pendente` usa a janela diária (meia-noite de Brasília) do `NotificacaoService`. Falha do fechamento vai ao log; a próxima passada refaz.
+- O J rejeitado dá N `REJEITADO` por título (I11d) e lote `RETORNADO` (I11e) sem código novo; a execução ganha `j_rejeitado_em`, e a situação `REJEITADO` do grupo (derivada) passa a valer. Nenhuma escrita no ERP.
+- `jobs/validate-sync-status-lote-sispag-v1.ts` ganhou colaboradores nulos (job de verdade só-leitura, sem boleto agrupado).
 
 **Dependencies:** Task 7 (e a medição da linha do retorno na Task 1), Task 8
 
