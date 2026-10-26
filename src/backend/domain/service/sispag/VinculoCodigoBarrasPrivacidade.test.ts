@@ -24,6 +24,8 @@ import type AuthorizedPayeeService from './AuthorizedPayeeService.js';
 import DebitDateService from './DebitDateService.js';
 import DestinoPagamentoResolver from './DestinoPagamentoResolver.js';
 import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
+import type GrupoBoletoRepository from '../../repository/sispag/GrupoBoletoRepository.js';
+import type BorderoGrupoBoletoService from './BorderoGrupoBoletoService.js';
 import RemessaService from './RemessaService.js';
 import RetiradaCodigoBarrasService from './RetiradaCodigoBarrasService.js';
 import VinculoCodigoBarrasService from './VinculoCodigoBarrasService.js';
@@ -425,6 +427,8 @@ const montar = (opcoes: { confirmaTransitorio?: boolean; semDecisao?: boolean } 
         retirada,
         vinculo,
         new CodigoBarrasBoleto(),
+        { buscarPorId: jest.fn() } as unknown as GrupoBoletoRepository,
+        {} as unknown as BorderoGrupoBoletoService,
     );
     return { remessa, write, rastro, ledgerPayloads, eventosSugestao, loteRepo, rascunho };
 };

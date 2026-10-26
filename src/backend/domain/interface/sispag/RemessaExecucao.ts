@@ -11,7 +11,13 @@
 export type RemessaExecucaoStatus = 'pending' | 'reconciling' | 'settled' | 'error';
 
 /** Passo alcançado — diz o que já existe no ERP quando algo falha no meio. */
-export type RemessaEtapa = 'criar_lote' | 'importar' | 'finalizar' | 'gerar_remessa' | 'concluido';
+export type RemessaEtapa =
+    | 'criar_lote'
+    | 'preparar_bordero'
+    | 'importar'
+    | 'finalizar'
+    | 'gerar_remessa'
+    | 'concluido';
 
 export interface RemessaExecucaoRow {
     idempotencyKey: string;

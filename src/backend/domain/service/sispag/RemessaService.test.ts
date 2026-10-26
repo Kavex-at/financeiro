@@ -7,7 +7,11 @@ import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import NetValueUnavailableError from '../../errors/NetValueUnavailableError.js';
 import RemessaBarcodeAmountMismatchError from '../../errors/RemessaBarcodeAmountMismatchError.js';
 import RemessaEmDuvidaError from '../../errors/RemessaEmDuvidaError.js';
-import type { LotePagamento } from '../../interface/sispag/SispagInterface.js';
+import GroupedBoletoNotEligibleAtRemittanceError from '../../errors/GroupedBoletoNotEligibleAtRemittanceError.js';
+import type { GrupoBoleto } from '../../interface/sispag/GrupoBoletoInterface.js';
+import type { ItemLote, LotePagamento } from '../../interface/sispag/SispagInterface.js';
+import type GrupoBoletoRepository from '../../repository/sispag/GrupoBoletoRepository.js';
+import type BorderoGrupoBoletoService from './BorderoGrupoBoletoService.js';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
@@ -270,6 +274,30 @@ const buildVinculo = (o: Record<string, unknown> = {}) => ({
     ...o,
 });
 
+/** Grupos de boleto do lote (ADR-0077): por padrão nenhum. */
+const buildGrupoRepo = (grupos: GrupoBoleto[] = []) => ({
+    buscarPorId: jest.fn(async (id: string) => grupos.find((g) => g.id === id) ?? null),
+});
+
+/**
+ * Borderô do grupo (Task 13/14). Default = caminho feliz: conferência ok, preparação `pronto`
+ * com o `borCod` 77 e nenhum borderô reconhecido no rascunho (a retomada decide).
+ */
+const buildBorderoGrupo = (o: Record<string, unknown> = {}) => ({
+    conferirAntesDaEscrita: jest.fn().mockResolvedValue(undefined),
+    preparar: jest.fn().mockResolvedValue({
+        desfecho: 'pronto',
+        execucaoId: 'E1',
+        borCod: 77,
+        borTimCad: 1_790_000_000_000,
+        itsCodSeq: 5,
+        reaproveitado: false,
+    }),
+    /** grupoId → chave nativa `fil:bor:borCod`, só dos borderôs cujo `borTimCad` foi conferido ao vivo. */
+    chavesNativasConfirmadas: jest.fn().mockResolvedValue(new Map<string, string>()),
+    ...o,
+});
+
 const make = (o: {
     vinculo?: ReturnType<typeof buildVinculo>;
     loteRepo?: ReturnType<typeof buildLoteRepo>;
@@ -285,6 +313,8 @@ const make = (o: {
     eventos?: ReturnType<typeof buildEventos>;
     /** Instante "agora" (ISO). Default: {@link AGORA}. */
     agora?: string;
+    grupoRepo?: ReturnType<typeof buildGrupoRepo>;
+    borderoGrupo?: ReturnType<typeof buildBorderoGrupo>;
 }) => {
     const loteRepo = o.loteRepo ?? buildLoteRepo(o.lote);
     const calendar = BankingCalendar.withClock(() => new Date(o.agora ?? AGORA));
@@ -317,6 +347,8 @@ const make = (o: {
         retirada,
         (o.vinculo ?? buildVinculo()) as unknown as VinculoCodigoBarrasService,
         new CodigoBarrasBoleto(),
+        (o.grupoRepo ?? buildGrupoRepo()) as unknown as GrupoBoletoRepository,
+        (o.borderoGrupo ?? buildBorderoGrupo()) as unknown as BorderoGrupoBoletoService,
     );
 };
 
@@ -4033,5 +4065,218 @@ describe('I17n — o item é importado pelo LÍQUIDO do grid (ADR-0074)', () => 
             .catch((e: unknown) => e);
         expect(erro).toBeInstanceOf(NetValueUnavailableError);
         expect(write.importarTitulos).not.toHaveBeenCalled();
+    });
+});
+
+/** Grupo de boleto mínimo: só o que a remessa lê (id, filial, boleto). */
+const grupo = (id = 'G1'): GrupoBoleto =>
+    ({
+        id,
+        filCod: 2,
+        pesCod: '9001',
+        credor: 'PEDRONI',
+        ddcCod: 900,
+        ditCod: 1,
+        estado: 'CONFIRMADO',
+        valorBoletoCentavos: 157_500,
+        titulos: [],
+    }) as unknown as GrupoBoleto;
+
+describe('RemessaService — boleto agrupado: etapa preparar_bordero (ADR-0077, L8, Task 15)', () => {
+    const itemDoGrupo = (docCod: string): ItemLote => ({
+        loteId: 'L1',
+        filCod: 2,
+        docCod,
+        titCod: '1',
+        credor: 'PEDRONI',
+        valor: 525,
+        vencimento: VENC,
+        modalidade: 'BOLETO',
+        incluidoPor: 'u1',
+        divergencia: false,
+        grupoBoletoId: 'G1',
+    });
+    /** 2 avulsos (801, 802) + 1 grupo de 3 títulos (901–903). */
+    const loteComGrupo = (): LotePagamento =>
+        lote({
+            dataDebito: '2026-09-30',
+            itens: [...loteCom2Itens().itens, ...['901', '902', '903'].map(itemDoGrupo)],
+        });
+    const writeDoGrupo = () => {
+        const write = buildWrite();
+        write.listarTitulosPendentes.mockResolvedValue([pendente(), pendente802()]);
+        return write;
+    };
+    const setup = (o: Parameters<typeof make>[0] = {}) => {
+        const grupoRepo = o.grupoRepo ?? buildGrupoRepo([grupo()]);
+        const borderoGrupo = o.borderoGrupo ?? buildBorderoGrupo();
+        const write = o.write ?? writeDoGrupo();
+        const ledger = o.ledger ?? buildLedger();
+        const service = make({
+            lote: loteComGrupo(),
+            ...o,
+            grupoRepo,
+            borderoGrupo,
+            write,
+            ledger,
+        });
+        return { service, grupoRepo, borderoGrupo, write, ledger };
+    };
+    const gerar = (service: ReturnType<typeof make>) =>
+        service.gerarRemessa({ loteId: 'L1', ator: 'u' });
+    const ordem = (...mocks: jest.Mock[]) =>
+        mocks.map((m) => m.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY);
+
+    it('o título de grupo nunca é importado avulso (V2, I21k): 2 avulsos + grupo de 3 ⇒ importarTitulos recebe 2 e o borderô é preparado 1 vez', async () => {
+        const { service, write, borderoGrupo } = setup();
+        await gerar(service);
+        const importados = write.importarTitulos.mock.calls.flatMap(
+            ([p]) => p.itens as Record<string, unknown>[],
+        );
+        expect(importados).toHaveLength(2);
+        expect(borderoGrupo.preparar).toHaveBeenCalledTimes(1);
+        expect(borderoGrupo.preparar).toHaveBeenCalledWith(
+            expect.objectContaining({
+                grupo: expect.objectContaining({ id: 'G1' }),
+                flpCod: 12,
+                bncCod: 4,
+                gerNum: 38,
+            }),
+        );
+    });
+
+    it('ordem (ADR-0077 L8): criarLote → preparar_bordero → importar avulsos → finalizar; a etapa é persistida ANTES de preparar', async () => {
+        const { service, write, borderoGrupo, ledger } = setup();
+        await gerar(service);
+        const [criar, preparar, importar, finalizar] = ordem(
+            write.criarLote,
+            borderoGrupo.preparar,
+            write.importarTitulos,
+            write.finalizarLote,
+        );
+        expect(criar).toBeLessThan(preparar as number);
+        expect(preparar).toBeLessThan(importar as number);
+        expect(importar).toBeLessThan(finalizar as number);
+        expect(ledger.setEtapa).toHaveBeenCalledWith(expect.any(String), 'preparar_bordero');
+        const gravada = ledger.setEtapa.mock.calls
+            .map((c, i) => [c[1], ledger.setEtapa.mock.invocationCallOrder[i]] as const)
+            .find(([e]) => e === 'preparar_bordero');
+        expect(gravada?.[1]).toBeLessThan(preparar as number);
+    });
+
+    it('lote só de grupo: nenhum importarTitulos, mas o borderô é preparado e a remessa sai', async () => {
+        const { service, write, borderoGrupo } = setup({
+            lote: lote({ itens: ['901', '902', '903'].map(itemDoGrupo) }),
+        });
+        const r = await gerar(service);
+        expect(write.importarTitulos).not.toHaveBeenCalled();
+        expect(borderoGrupo.preparar).toHaveBeenCalledTimes(1);
+        expect(r.status).not.toBe('dry-run');
+        expect(write.gerarRemessa).toHaveBeenCalled();
+    });
+
+    it('conferência ao vivo ANTES de qualquer escrita; grupo inelegível ⇒ 409 e nem o lote nativo é criado (I21p(1))', async () => {
+        const borderoGrupo = buildBorderoGrupo({
+            conferirAntesDaEscrita: jest.fn().mockRejectedValue(
+                new GroupedBoletoNotEligibleAtRemittanceError({
+                    loteId: 'L1',
+                    grupos: [{ grupoId: 'G1', motivo: 'PAGO' }],
+                }),
+            ),
+        });
+        const { service, write, ledger } = setup({ borderoGrupo });
+        await expect(gerar(service)).rejects.toBeInstanceOf(
+            GroupedBoletoNotEligibleAtRemittanceError,
+        );
+        expect(write.criarLote).not.toHaveBeenCalled();
+        expect(write.importarTitulos).not.toHaveBeenCalled();
+        expect(ledger.setNativeFlpCod).not.toHaveBeenCalled();
+        expect(borderoGrupo.preparar).not.toHaveBeenCalled();
+    });
+
+    it('a conferência recebe os grupos do lote, lidos uma vez por grupo', async () => {
+        const { service, grupoRepo, borderoGrupo } = setup();
+        await gerar(service);
+        expect(grupoRepo.buscarPorId).toHaveBeenCalledWith('G1');
+        expect(borderoGrupo.conferirAntesDaEscrita).toHaveBeenCalledWith(
+            expect.objectContaining({ grupos: [expect.objectContaining({ id: 'G1' })] }),
+        );
+    });
+
+    it('dry-run (kill-switch desligado): nenhuma escrita do grupo, nem preparar', async () => {
+        const { service, write, borderoGrupo } = setup({
+            env: buildEnv({ sispagLiveWriteEnabled: false }),
+        });
+        const r = await gerar(service);
+        expect(r.status).toBe('dry-run');
+        expect(borderoGrupo.preparar).not.toHaveBeenCalled();
+        expect(write.criarLote).not.toHaveBeenCalled();
+        expect(write.importarTitulos).not.toHaveBeenCalled();
+    });
+
+    it('valorTotal soma os itens locais: o Σ do grupo é o boleto (3 × 525 + avulsos)', async () => {
+        const { service } = setup({ env: buildEnv({ sispagLiveWriteEnabled: false }) });
+        const r = await gerar(service);
+        expect(r.itens).toBe(5);
+        expect(r.valorTotal).toBeCloseTo(258.4 + 100 + 3 * 525, 2);
+    });
+
+    it('lote sem grupo: nada do grupo é lido nem chamado (paridade com o que existia)', async () => {
+        const grupoRepo = buildGrupoRepo();
+        const borderoGrupo = buildBorderoGrupo();
+        await make({ grupoRepo, borderoGrupo }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        expect(grupoRepo.buscarPorId).not.toHaveBeenCalled();
+        expect(borderoGrupo.conferirAntesDaEscrita).not.toHaveBeenCalled();
+        expect(borderoGrupo.preparar).not.toHaveBeenCalled();
+    });
+
+    describe('retomada (sincronizarComErp, I21s)', () => {
+        const retomada = (jaNoErp: string[], confirmadas: Array<[string, string]> = []) => {
+            const write = writeDoGrupo();
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 0,
+                titulosCount: 1,
+                soma: 100,
+            });
+            write.listarChavesDoLote.mockResolvedValue(new Set(jaNoErp));
+            const borderoGrupo = buildBorderoGrupo({
+                chavesNativasConfirmadas: jest.fn().mockResolvedValue(new Map(confirmadas)),
+            });
+            const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
+            return setup({ write, borderoGrupo, ledger });
+        };
+
+        it('avulsos já no rascunho e grupo sem item ⇒ retoma em preparar_bordero: não reimporta, prepara o grupo e finaliza', async () => {
+            const { service, write, borderoGrupo } = retomada(['2:801:1', '2:802:1']);
+            await gerar(service);
+            expect(write.criarLote).not.toHaveBeenCalled();
+            expect(write.importarTitulos).not.toHaveBeenCalled();
+            expect(borderoGrupo.preparar).toHaveBeenCalledTimes(1);
+            expect(write.finalizarLote).toHaveBeenCalled();
+        });
+
+        it('item de borderô do grupo já no rascunho (borCod + borTimCad conferidos) ⇒ não é intruso e não se prepara de novo', async () => {
+            const { service, write, borderoGrupo } = retomada(
+                ['2:801:1', '2:802:1', '2:bor:77'],
+                [['G1', '2:bor:77']],
+            );
+            await gerar(service);
+            expect(borderoGrupo.preparar).not.toHaveBeenCalled();
+            expect(write.importarTitulos).not.toHaveBeenCalled();
+            expect(write.finalizarLote).toHaveBeenCalled();
+        });
+
+        it('item de borderô que não é de nenhum grupo nosso (borCod reutilizado ou de terceiro) ⇒ estranho: fail-closed', async () => {
+            const { service, write, borderoGrupo } = retomada(
+                ['2:801:1', '2:802:1', '2:bor:99'],
+                [['G1', '2:bor:77']],
+            );
+            await expect(gerar(service)).rejects.toBeInstanceOf(RemessaEmDuvidaError);
+            expect(borderoGrupo.preparar).not.toHaveBeenCalled();
+            expect(write.finalizarLote).not.toHaveBeenCalled();
+        });
     });
 });
