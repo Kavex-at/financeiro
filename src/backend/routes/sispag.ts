@@ -1199,6 +1199,8 @@ router.post(
                 body.success ? undefined : body.error,
             );
         }
+        const filCodDoGrupo = await gruposBoleto().filialDoGrupo(params.data.id);
+        if (filCodDoGrupo !== undefined && !filialPermitida(req, res, [filCodDoGrupo])) return;
         try {
             const r = await gruposBoleto().anular({
                 grupoId: params.data.id,
@@ -1228,6 +1230,14 @@ router.post(
                 body.success ? undefined : body.error,
             );
         }
+        const filCods: number[] = [];
+        const filCodDoLote = await container
+            .resolve(LotePagamentoService)
+            .filialDoLote(params.data.id);
+        if (filCodDoLote !== undefined) filCods.push(filCodDoLote);
+        const filCodDoGrupo = await gruposBoleto().filialDoGrupo(body.data.grupoId);
+        if (filCodDoGrupo !== undefined) filCods.push(filCodDoGrupo);
+        if (!filialPermitida(req, res, filCods)) return;
         try {
             const r = await container.resolve(LotePagamentoService).incluirGrupo({
                 loteId: params.data.id,
@@ -1257,6 +1267,10 @@ router.delete(
                 query.success ? undefined : query.error,
             );
         }
+        const filCodDoLote = await container
+            .resolve(LotePagamentoService)
+            .filialDoLote(params.data.id);
+        if (filCodDoLote !== undefined && !filialPermitida(req, res, [filCodDoLote])) return;
         try {
             const lote = await container.resolve(LotePagamentoService).removerGrupo({
                 loteId: params.data.id,

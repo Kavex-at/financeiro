@@ -287,6 +287,10 @@ export default class LotePagamentoService {
         return completo ?? lote;
     };
 
+    /** Filial do lote (para a autorização por filial nas rotas por id); `undefined` se não existe. */
+    public filialDoLote = async (id: string): Promise<number | undefined> =>
+        (await this.repo.getLoteComItens(id))?.filCod;
+
     /**
      * ADR-0075 (D8, D15): um lote por filial, criado de uma vez. Cada título passa por
      * `incluirTitulo` (a MESMA regra do caminho manual, inclusive a situação de pagamento); o que é
