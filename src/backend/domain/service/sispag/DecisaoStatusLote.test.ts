@@ -9,7 +9,7 @@ import type {
     LeituraTitulo,
     LotePagamentoStatus,
 } from '../../interface/sispag/SispagInterface.js';
-import DecisaoStatusLote from './DecisaoStatusLote.js';
+import DecisaoStatusLote, { DETALHE_GRUPO_PARCIAL } from './DecisaoStatusLote.js';
 
 /**
  * Tabela de verdade de I11 (ADR-0055) — a função PURA que L9/L10/L11 compartilham.
@@ -372,5 +372,94 @@ describe('DecisaoStatusLote — origem da baixa e enriquecimento', () => {
         const [i] = decidir([entrada({ atual, titulo: pago, baixas: baixas403 })]).itens;
         expect(i?.borCod).toBe(22320);
         expect(i?.origemBaixa).toBe('FORA_DO_RETORNO');
+    });
+});
+
+describe('DecisaoStatusLote — boleto agrupado (ADR-0077, I21r, I11i)', () => {
+    const doGrupo = (docCod: string, over: Partial<ItemLote> = {}) =>
+        item({ docCod, titCod: '1', grupoBoletoId: 'G1', ...over });
+    const grupo = (...titulos: Array<{ titulo: LeituraTitulo; eventos?: EventoRetornoItem[] }>) =>
+        titulos.map((t, i) =>
+            entrada({
+                atual: doGrupo(String(901 + i)),
+                titulo: t.titulo,
+                eventos: t.eventos ?? [],
+            }),
+        );
+
+    it('os N pagos ⇒ N PAGO, sem divergência, lote BAIXADO', () => {
+        const r = decidir(grupo({ titulo: pago }, { titulo: pago }, { titulo: pago }));
+        expect(r.itens.every((i) => i.situacao === 'PAGO' && !i.divergencia)).toBe(true);
+        expect(r.divergencias).toEqual([]);
+        expect(r.destino).toBe('BAIXADO');
+    });
+
+    it('parte paga ⇒ divergência nos N itens (nunca "parcialmente pago") + alerta sispag-baixa-divergente', () => {
+        const r = decidir(grupo({ titulo: pago }, { titulo: pago }, { titulo: aberto }));
+        expect(r.itens.map((i) => i.divergencia)).toEqual([true, true, true]);
+        expect(r.itens.every((i) => i.divergenciaDetalhe === DETALHE_GRUPO_PARCIAL)).toBe(true);
+        expect(r.divergencias).toHaveLength(3);
+        // Os pagos continuam PAGO; o lote não vira BAIXADO com o grupo em dúvida.
+        expect(r.itens.map((i) => i.situacao)).toEqual(['PAGO', 'PAGO', 'SEM_RETORNO']);
+        expect(r.destino).toBeUndefined();
+        const alerta = r.alertas.find((a) => a.tipo === 'sispag-baixa-divergente');
+        expect((alerta?.detalhe.divergencias as unknown[]).length).toBe(3);
+        expect(r.mudou).toBe(true);
+    });
+
+    it('nenhum pago ⇒ nada de divergência de grupo', () => {
+        const r = decidir(grupo({ titulo: aberto }, { titulo: aberto }, { titulo: aberto }));
+        expect(r.divergencias).toEqual([]);
+        expect(r.itens.every((i) => !i.divergencia)).toBe(true);
+    });
+
+    it('título do grupo ilegível nesta passada ⇒ não decide divergência (I11c)', () => {
+        const r = decidir(grupo({ titulo: pago }, { titulo: pago }, { titulo: ilegivel }));
+        expect(r.divergencias).toEqual([]);
+    });
+
+    it('divergência de grupo já gravada não é "nova" na passada seguinte (I11h)', () => {
+        const marcado = (docCod: string, pagoNoItem: boolean) =>
+            doGrupo(docCod, {
+                divergencia: true,
+                divergenciaDetalhe: DETALHE_GRUPO_PARCIAL,
+                ...(pagoNoItem ? { situacao: 'PAGO' as const, pagoObservadoEm: ANTES } : {}),
+            });
+        const r = decidir(
+            [
+                entrada({ atual: marcado('901', true), titulo: pago }),
+                entrada({ atual: marcado('902', true), titulo: pago }),
+                entrada({ atual: marcado('903', false), titulo: aberto }),
+            ],
+            'REMESSA_GERADA',
+        );
+        expect(r.divergencias).toEqual([]);
+        expect(r.alertas.some((a) => a.tipo === 'sispag-baixa-divergente')).toBe(false);
+    });
+
+    it('J rejeitado: os N eventos de rejeição ⇒ N REJEITADO e lote RETORNADO (I11d, I11e)', () => {
+        const r = decidir(
+            grupo(
+                { titulo: aberto, eventos: [rejeicao] },
+                { titulo: aberto, eventos: [rejeicao] },
+                { titulo: aberto, eventos: [rejeicao] },
+            ),
+        );
+        expect(r.itens.every((i) => i.situacao === 'REJEITADO')).toBe(true);
+        expect(r.destino).toBe('RETORNADO');
+        expect(r.divergencias).toEqual([]);
+    });
+
+    it('lote BAIXADO (terminal): a regra do grupo não age', () => {
+        const r = decidir(grupo({ titulo: pago }, { titulo: pago }, { titulo: aberto }), 'BAIXADO');
+        expect(r.divergencias.every((d) => d.detalhe !== DETALHE_GRUPO_PARCIAL)).toBe(true);
+    });
+
+    it('item avulso do mesmo lote não entra na conta do grupo', () => {
+        const r = decidir([
+            ...grupo({ titulo: pago }, { titulo: pago }, { titulo: pago }),
+            entrada({ atual: item({ docCod: '801' }), titulo: aberto }),
+        ]);
+        expect(r.itens.slice(0, 3).every((i) => !i.divergencia)).toBe(true);
     });
 });

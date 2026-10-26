@@ -11,7 +11,9 @@ import type ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import type ConexosTitulosClient from '../../client/ConexosTitulosClient.js';
 import type NotificacaoService from '../operacao/NotificacaoService.js';
 import ConciliacaoRetornoService from './ConciliacaoRetornoService.js';
+import type CasamentoRetornoGrupo from './CasamentoRetornoGrupo.js';
 import DecisaoStatusLote from './DecisaoStatusLote.js';
+import type FechamentoGrupoBoleto from './FechamentoGrupoBoleto.js';
 import SincronizacaoLoteService from './SincronizacaoLoteService.js';
 
 const CHAVE = { filCod: 2, bncCod: 4, gtbCodSeq: 1, garCodSeq: 5 };
@@ -113,12 +115,18 @@ const buildRepo = (l: LotePagamento | null = lote()) => ({
     getLoteComItens: jest.fn().mockResolvedValue(l),
 });
 
+/** Casamento da linha do J (item de borderô) com o grupo: por padrão, não casa com nada. */
+const buildCasamento = (casa: unknown = undefined) => ({
+    casar: jest.fn().mockResolvedValue(casa),
+});
+
 const make = (o: {
     retorno?: ReturnType<typeof buildRetorno>;
     repo?: ReturnType<typeof buildRepo>;
     env?: EnvironmentProvider;
     ledger?: ReturnType<typeof buildLedger>;
     sinc?: ReturnType<typeof buildSinc> | SincronizacaoLoteService;
+    casamento?: ReturnType<typeof buildCasamento>;
 }) =>
     new ConciliacaoRetornoService(
         (o.retorno ?? buildRetorno()) as unknown as ConexosSispagRetornoClient,
@@ -128,6 +136,7 @@ const make = (o: {
         new BoundedConcurrency(),
         (o.ledger ?? buildLedger()) as unknown as ConciliacaoExecucaoRepository,
         (o.sinc ?? buildSinc()) as unknown as SincronizacaoLoteService,
+        (o.casamento ?? buildCasamento()) as unknown as CasamentoRetornoGrupo,
     );
 
 /** Eventos que chegaram ao fechamento de um lote, por item. */
@@ -284,6 +293,10 @@ describe('ConciliacaoRetornoService', () => {
                 { emitir: jest.fn().mockResolvedValue(null) } as unknown as NotificacaoService,
                 buildLog(),
                 new BoundedConcurrency(),
+                buildCasamento() as unknown as CasamentoRetornoGrupo,
+                {
+                    fechar: jest.fn().mockResolvedValue(undefined),
+                } as unknown as FechamentoGrupoBoleto,
             );
             return { sinc, loteRepo };
         };
@@ -580,6 +593,86 @@ describe('ConciliacaoRetornoService', () => {
 
             expect(retorno.getArquivoRetorno).not.toHaveBeenCalled();
             expect(retorno.processarArquivoRetorno).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('linha do J do item de borderô (boleto agrupado, ADR-0077, I21r)', () => {
+        const TITULOS = ['901', '902', '903'].map((docCod) => ({
+            filCod: 2,
+            docCod,
+            titCod: '1',
+        }));
+        /** A linha medida em HML (G4): sem `docCod/titCod`, com `borCod` e `itsCodSeq`. */
+        const linhaJ = (over: Partial<ArquivoRetornoDetalhe> = {}): ArquivoRetornoDetalhe =>
+            detalhe({
+                docCod: undefined,
+                titCod: undefined,
+                bxaCodSeq: undefined,
+                valorPago: undefined,
+                borCod: 252,
+                ...over,
+            });
+        const casaGrupo = () =>
+            buildCasamento({ grupoId: 'G1', execucaoId: 'E1', titulos: TITULOS });
+
+        it('J rejeitado que casa o grupo vai aos N itens (uma linha → N eventos de rejeição) e conta UM item reconhecido', async () => {
+            const sinc = buildSinc();
+            const retorno = buildRetorno({ NA: [linhaJ({ eventoCod: 'NA' })] });
+            const casamento = casaGrupo();
+            const res = await make({ retorno, sinc, casamento }).conciliar({
+                ...CHAVE,
+                ator: 'u',
+            });
+            expect(casamento.casar).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    loteId: 'L1',
+                    linha: expect.objectContaining({ borCod: 252 }),
+                }),
+            );
+            const enviados = eventosEnviados(sinc, 'L1');
+            expect([...(enviados?.keys() ?? [])]).toEqual(['901:1', '902:1', '903:1']);
+            expect([...(enviados?.values() ?? [])].every((e) => e[0]?.rejeitado === true)).toBe(
+                true,
+            );
+            expect(res.itens).toHaveLength(1);
+            expect(res.itens[0]).toMatchObject({ reconhecido: true, loteId: 'L1', borCod: 252 });
+            expect(res.rejeitados).toBe(1);
+            expect(res.lotesAfetados).toEqual(['L1']);
+        });
+
+        it('J pago (00) que casa o grupo também chega aos N itens, sem o fin064 ser contornado', async () => {
+            const sinc = buildSinc();
+            const retorno = buildRetorno({ '00': [linhaJ()] });
+            await make({ retorno, sinc, casamento: casaGrupo() }).conciliar({
+                ...CHAVE,
+                ator: 'u',
+            });
+            const enviados = eventosEnviados(sinc, 'L1');
+            expect(enviados?.size).toBe(3);
+            expect(enviados?.get('902:1')?.[0]).toMatchObject({
+                eventoCod: '00',
+                rejeitado: false,
+                borCod: 252,
+            });
+        });
+
+        it('linha sem docCod que não casa com grupo nenhum continua só informativa (não reconhecida, nada gravado)', async () => {
+            const sinc = buildSinc();
+            const retorno = buildRetorno({ '00': [linhaJ()] });
+            const res = await make({ retorno, sinc }).conciliar({ ...CHAVE, ator: 'u' });
+            expect(res.itens[0]).toMatchObject({ reconhecido: false });
+            expect(res.naoReconhecidos).toBe(1);
+            expect(sinc.aplicarEventosRetorno).not.toHaveBeenCalled();
+        });
+
+        it('lote nosso desconhecido (retorno de lote montado fora): nem consulta o casamento', async () => {
+            const casamento = casaGrupo();
+            const retorno = buildRetorno({ '00': [linhaJ()] });
+            await make({ retorno, repo: buildRepo(null), casamento }).conciliar({
+                ...CHAVE,
+                ator: 'u',
+            });
+            expect(casamento.casar).not.toHaveBeenCalled();
         });
     });
 });

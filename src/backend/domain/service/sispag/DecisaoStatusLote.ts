@@ -26,6 +26,9 @@ const EVENTO_EFETUADO = '00';
 const EVENTO_AGENDADO = 'BD';
 
 export const DETALHE_ESTORNO = 'título pago voltou a aberto no fin064 (estorno?)';
+/** I21r/I11i: parte do grupo de boleto paga e parte não — nunca "parcialmente pago". */
+export const DETALHE_GRUPO_PARCIAL =
+    'boleto agrupado com parte dos títulos pagos no fin064: confira o borderô no Conexos';
 export const DETALHE_REJEITADO_PAGO =
     'item rejeitado no retorno com o título pago no fin064 (pago fora da remessa?)';
 
@@ -63,16 +66,16 @@ export default class DecisaoStatusLote {
     public decidir = (entrada: EntradaDecisaoLote): ResultadoDecisaoLote => {
         const terminal = entrada.status === LOTE_STATUS.BAIXADO;
         const agoraIso = entrada.agora.toISOString();
+        const porTitulo = entrada.itens.map((e) =>
+            terminal ? this.decidirItemTerminal(e, agoraIso) : this.decidirItem(e, agoraIso),
+        );
+        // Boleto agrupado (I21r): a decisão é por título, mas o grupo paga TUDO ou nada.
+        const itens = terminal ? porTitulo : this.aplicarGrupos(entrada.itens, porTitulo);
         const divergencias: DivergenciaItem[] = [];
-
-        const itens = entrada.itens.map((e) => {
-            const decidido = terminal
-                ? this.decidirItemTerminal(e, agoraIso)
-                : this.decidirItem(e, agoraIso);
-            const nova = this.divergenciaNova(e.atual, decidido);
+        for (const [i, e] of entrada.itens.entries()) {
+            const nova = this.divergenciaNova(e.atual, itens[i] as ItemDecidido);
             if (nova) divergencias.push(nova);
-            return decidido;
-        });
+        }
 
         const leituraCompleta = itens.every((i) => i.tituloLido);
         const destino = terminal
@@ -117,6 +120,42 @@ export default class DecisaoStatusLote {
             alertas,
             mudou: destino !== undefined || itens.some((i) => i.mudou),
         };
+    };
+
+    /**
+     * I21r/I11i: os N itens de um grupo de boleto vivem e morrem juntos. Parte paga (e todos lidos,
+     * I11c) ⇒ `divergencia` nos N — pegajosa, só um humano resolve (I11f) —, e o alerta de baixa
+     * divergente sai pelo caminho de sempre. Todos pagos ou nenhum pago não divergem.
+     */
+    private aplicarGrupos = (
+        entradas: EntradaItemDecisao[],
+        itens: ItemDecidido[],
+    ): ItemDecidido[] => {
+        const indices = new Map<string, number[]>();
+        for (const [i, e] of entradas.entries()) {
+            const grupoId = e.atual.grupoBoletoId;
+            if (grupoId !== undefined) indices.set(grupoId, [...(indices.get(grupoId) ?? []), i]);
+        }
+        const resultado = [...itens];
+        for (const idx of indices.values()) {
+            const doGrupo = idx.map((i) => itens[i] as ItemDecidido);
+            if (!doGrupo.every((d) => d.tituloLido)) continue;
+            const pagos = doGrupo.filter((d) => d.situacao === ITEM_SITUACAO.PAGO).length;
+            if (pagos === 0 || pagos === doGrupo.length) continue;
+            for (const i of idx) {
+                const atual = (entradas[i] as EntradaItemDecisao).atual;
+                const decidido = itens[i] as ItemDecidido;
+                if (decidido.divergencia) continue;
+                const { mudou: _m, tituloLido, ...estado } = decidido;
+                const novo: EstadoSincronizacaoItem = {
+                    ...estado,
+                    divergencia: true,
+                    divergenciaDetalhe: DETALHE_GRUPO_PARCIAL,
+                };
+                resultado[i] = { ...novo, mudou: this.mudou(atual, novo), tituloLido };
+            }
+        }
+        return resultado;
     };
 
     /** I11e: rejeição → RETORNADO; todos pagos → BAIXADO; o resto permanece. I11c antes de tudo. */
