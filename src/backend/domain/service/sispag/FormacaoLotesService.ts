@@ -187,7 +187,19 @@ export default class FormacaoLotesService {
                 naoLotados[situacao] = (naoLotados[situacao] ?? 0) + 1;
             }
         }
-        return { lotaveis, naoLotados };
+        return { lotaveis: await this.somenteComTodosPagaveis(lotaveis), naoLotados };
+    };
+
+    /**
+     * ADR-0075 (D9) aplicada ao grupo: o grupo é pronto quando TODOS os seus títulos estão em
+     * situação PRONTO. Um título bloqueado deixa o grupo inteiro para a analista (nunca lota parte).
+     */
+    private somenteComTodosPagaveis = async (grupos: GrupoLotavel[]): Promise<GrupoLotavel[]> => {
+        const pagaveis = await this.somentePagaveis(grupos.flatMap((g) => g.titulos));
+        const chaves = new Set(pagaveis.map((t) => `${t.filCod}:${t.docCod}:${t.titCod}`));
+        return grupos.filter((g) =>
+            g.titulos.every((t) => chaves.has(`${t.filCod}:${t.docCod}:${t.titCod}`)),
+        );
     };
 
     /** Um lote por fatia, numa transação (raiz + itens avulsos + grupos inteiros). */

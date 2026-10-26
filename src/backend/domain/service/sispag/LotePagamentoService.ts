@@ -948,11 +948,12 @@ export default class LotePagamentoService {
         if (semModalidade > 0) {
             throw new ModalidadePendenteError({ loteId: lote.id, pendentes: semModalidade });
         }
+        // ADR-0077 L3 — título de grupo inelegível (I2) barra listando o GRUPO: nunca finaliza
+        // parte do grupo nem o retira em silêncio. Antes da situação por título, que só diria
+        // "item bloqueado" sem nomear o grupo.
+        await this.exigirGruposElegiveis(lote);
         // ADR-0076 I20d: ANTES da verificação TED/PIX, para nada ser retirado de um lote recusado.
         await this.exigirSituacoesPagaveis(lote);
-        // ADR-0077 L3 — título de grupo inelegível (I2) barra listando o GRUPO: nunca finaliza
-        // parte do grupo nem o retira em silêncio.
-        await this.exigirGruposElegiveis(lote);
         const verificacao = await this.verificacao.verificarItens(input.loteId, {
             modo: VERIFICATION_MODE.RETIRAR,
         });

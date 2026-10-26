@@ -119,25 +119,23 @@ const make = (
     };
 };
 
+const situacoes = (bloqueados: Record<string, string>) =>
+    jest.fn(async (titulos: TituloAPagar[]) => {
+        const mapa = new Map<string, { estado: string; motivos: string[]; principal?: string }>();
+        for (const t of titulos) {
+            const motivo = bloqueados[t.docCod];
+            mapa.set(
+                `${t.filCod}:${t.docCod}:${t.titCod}`,
+                motivo
+                    ? { estado: 'BLOQUEADO', motivos: [motivo], principal: motivo }
+                    : { estado: 'PRONTO', motivos: [] },
+            );
+        }
+        return mapa;
+    });
+
 describe('FormacaoLotesService — só títulos PRONTO (ADR-0075, D9)', () => {
     const DIA = Date.UTC(2026, 9, 8);
-    const situacoes = (bloqueados: Record<string, string>) =>
-        jest.fn(async (titulos: TituloAPagar[]) => {
-            const mapa = new Map<
-                string,
-                { estado: string; motivos: string[]; principal?: string }
-            >();
-            for (const t of titulos) {
-                const motivo = bloqueados[t.docCod];
-                mapa.set(
-                    `${t.filCod}:${t.docCod}:${t.titCod}`,
-                    motivo
-                        ? { estado: 'BLOQUEADO', motivos: [motivo], principal: motivo }
-                        : { estado: 'PRONTO', motivos: [] },
-                );
-            }
-            return mapa;
-        });
 
     it('título bloqueado fica fora do lote automático; os prontos entram', async () => {
         const elegiveis = [
@@ -518,6 +516,23 @@ describe('FormacaoLotesService — grupo de boleto como unidade (ADR-0077, P1-4,
                 data: expect.objectContaining({ gruposNaoLotados: { [situacao]: 1 } }),
             }),
         );
+    });
+
+    it('grupo só é lotado quando TODOS os títulos estão PRONTOS: um bloqueado deixa o grupo inteiro de fora', async () => {
+        const m = make({
+            grupos: [grupoAuto('G1')],
+            avaliarVarios: situacoes({ '38884': 'TIPO_PERMUTA' }),
+        });
+        const r = await m.service.formar({ triggeredBy: 'cron' });
+        expect(m.loteRepo.adicionarGrupo).not.toHaveBeenCalled();
+        expect(m.loteRepo.criarLote).not.toHaveBeenCalled();
+        expect(r.gruposLotados).toBe(0);
+    });
+
+    it('grupo com todos os títulos PRONTOS é lotado', async () => {
+        const m = make({ grupos: [grupoAuto('G1')] });
+        const r = await m.service.formar({ triggeredBy: 'cron' });
+        expect(r.gruposLotados).toBe(1);
     });
 
     it('grupo que deixou de estar CONFIRMADO entre a consulta e a leitura é ignorado', async () => {
