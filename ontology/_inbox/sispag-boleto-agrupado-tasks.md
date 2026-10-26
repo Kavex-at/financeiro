@@ -597,13 +597,20 @@ Paralelismo: **Fase A inteira** em paralelo; na Fase D, T9/T10/T11/T12/T13 em pa
 - `ontology/_inbox/_watchlist.md` (V7: qual caminho é o comum)
 
 **Acceptance criteria:**
-- [ ] Roda `GrupoBoletoService` + `RemessaService.gerarRemessa` reais (não chamadas avulsas) contra HML com os clients reais
+- [~] Roda `GrupoBoletoService` + `RemessaService.gerarRemessa` reais (não chamadas avulsas) contra HML com os clients reais
 - [ ] Canônico: 2 títulos do mesmo credor → grupo confirmado → lote → `preparar_bordero` → 1 item de borderô → barra (modalidade 7) → `finalizar` → `.REM` com **um** J (barra == pagamento == Σ) → retorno sintético `00` sem J-52 (H8) → N títulos `vldPago 1`, borderô finalizado pelo ERP, grupo `PAGO`
 - [ ] Falha determinística injetada depois do import (ex.: barra recusada) ⇒ grupo retirado, borderô limpo e **ausente** na releitura (V3 pelo código de produção)
 - [ ] Retomada: processo interrompido depois do `POST fin010` com a resposta descartada ⇒ a retomada acha o borderô pela janela `borTimCad` (`t0`/`t1` ± margem, `usnCodCad`, `gerNum`, `borDtaMvto`) e não cria outro
 - [ ] V7: retorno sintético de rejeição ⇒ grupo `REJEITADO` + `Alerta`; inclusão manual num lote novo ⇒ o borderô antigo é reaproveitado se aparecer em `borderosPendentes`, ou o grupo é retirado com `BORDERO_ANTERIOR_NAO_RESOLVIDO` se não aparecer; nunca dois borderôs vivos para o grupo (conferido no `fin010/list`)
-- [ ] Barras sintéticas; estado deixado em HML documentado; autorização explícita do maintainer antes de rodar
+- [~] Barras sintéticas; estado deixado em HML documentado; autorização explícita do maintainer antes de rodar
 - [ ] **Bloqueia o merge** (não há flag: o merge é o rollout)
+
+**Desvios e notas da entrega (Task 21, 2026-10-26):** código e testes entregues; **a prova NÃO foi executada contra HML** (ordem do maintainer: "não rodar nada em HML"). Os critérios ficam em `[~]` (job pronto, rodada pendente) até a autorização datada.
+- `jobs/hmlE2eGuarda.ts` (guarda pura, 43 testes): URL `-hml` + `HML_ENV_FILE`, Postgres **local**, fase conhecida, e fases que escrevem exigem `HML_AUTORIZO_ESCRITA=<hoje, AAAA-MM-DD, dia civil de Brasília>`.
+- `jobs/probe-hml-boleto-agrupado-e2e.ts` (`FASE=plano|canonico|falha|retomada|v7|estado`): roda `GrupoBoletoService`, `LotePagamentoService`, `RemessaService.gerarRemessa` e `ConciliacaoRetornoService` de produção; o job só faz o "banco" (monta o `.RET` sintético a partir do `.REM` devolvido). Não importa client de escrita do fin015/fin010: o teste estático proíbe. Força `CONEXOS_WRITE_ENABLED`, `CONEXOS_DRY_RUN=false`, `SISPAG_LIVE_WRITE_ENABLED` e `SISPAG_BIND_CODBAR_FILIAIS` vazio (prova P0-5) **depois** da guarda, antes do bootstrap.
+- A "queda" da retomada é simulada interpondo `ConexosBaseClient.postGenericOnce` para `fin010` (o POST vale e a resposta é descartada, 1ª vez).
+- **Premissas não verificadas contra o ambiente (ajustar na 1ª rodada `plano`):** nomes de colunas/tabelas dos SELECT diretos (`titulo_bloqueio_duplicidade`, `alerta`), campos do ledger (`borCodReaproveitadoDe`, `motivo`), `GrupoBoletoService.listar`, a posição `POS_OC=231` e o código `AE` da rejeição. O typecheck passa, mas só a execução prova o formato.
+- Entradas necessárias para a rodada: DSN de um Postgres local descartável **com as migrations**, `FIL/BNC/GTB`, `DOCS` (ex.: AR SOLUÇÕES 552/1,558/1), `VENC_BOLETO`, arquivo de credenciais HML e a autorização datada do maintainer. Estado deixado em HML documentado no cabeçalho do job.
 
 **Dependencies:** Task 15, Task 16, Task 17, Task 18
 

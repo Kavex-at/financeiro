@@ -309,3 +309,18 @@ A medição do "cancelado" é conclusiva (os quatro valores têm leitura consist
 de Permutas; o que não se reconhece cai em `indeterminado`). O que **não** está na regra é o **estornado**: a I21s
 fala só de "ausente ou cancelado". Tratá-lo como "não resolvido" é o lado seguro, aplicado e aberto como **G8**
 nos "Questions / gaps" do tasks para o maintainer confirmar.
+
+## Task 21 — prova ponta a ponta com o serviço de produção (PENDENTE DE RODADA)
+
+Job: `src/backend/jobs/probe-hml-boleto-agrupado-e2e.ts`. **Nada foi executado em HML ainda.** Preencher por rodada (a trilha fica em `${PROBE_OUT}/trilha.jsonl`, barras só mascaradas 5+4):
+
+| Fase | Data da autorização | Títulos | Resultado (checagens OK/total) | Estado deixado em HML |
+|------|---------------------|---------|--------------------------------|-----------------------|
+| plano | — | — | — | nada (só leitura) |
+| canonico | — | — | — | — |
+| falha (V3) | — | — | — | — |
+| retomada | — | — | — | — |
+| v7 | — | — | — | — |
+
+Premissas a confirmar na 1ª rodada: `POS_OC`/código de rejeição do `.RET`, colunas lidas direto no banco local, campos do ledger.
+
