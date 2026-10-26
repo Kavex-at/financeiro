@@ -32,7 +32,7 @@ export const ConfirmarGrupoBodySchema = z
     })
     .strict();
 
-export const GrupoBoletoIdSchema = z.object({ id: z.string().uuid() });
+export const GrupoBoletoIdSchema = z.object({ id: z.guid() });
 
 /** O motivo da anulação é explicado: 10 a 500 caracteres (I21t). */
 export const AnularGrupoBodySchema = z
@@ -43,20 +43,20 @@ export const GruposQuerySchema = z.object({
     filCod: z.coerce.number().int().positive().optional(),
 });
 
-export const LoteIdSchema = z.object({ id: z.string().uuid() });
+export const LoteIdSchema = z.object({ id: z.guid() });
 
 /** Incluir o grupo inteiro num lote RASCUNHO (`mover` o tira do outro rascunho em que está). */
 export const IncluirGrupoNoLoteBodySchema = z
     .object({
-        grupoId: z.string().uuid(),
+        grupoId: z.guid(),
         mover: z.boolean().optional(),
         versaoEsperada: z.number().int().min(1).optional(),
     })
     .strict();
 
 export const LoteGrupoParamsSchema = z.object({
-    id: z.string().uuid(),
-    grupoId: z.string().uuid(),
+    id: z.guid(),
+    grupoId: z.guid(),
 });
 
 export const RetirarGrupoQuerySchema = z.object({
