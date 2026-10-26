@@ -274,6 +274,7 @@
   analista resolver. A medição diz qual dos dois caminhos é o comum, **e também** se o borderô segue ligado ao
   lote rejeitado e qual o valor de `vldHasRemessaPgto` nesse estado (emenda 2026-10-21: a flag reflete o import,
   não "foi ao banco"; não é premissa).
+  - *Task 21:* a fase `v7` de `jobs/probe-hml-boleto-agrupado-e2e.ts` registra o caminho (`REAPROVEITADO`/`RETIRADO`); resultado entra em `sispag-boleto-agrupado-hml-achados.md` depois da rodada autorizada.
 - **G6 / GT1 (Task 22):** frequência de sugestão ambígua (boleto que bate com dois conjuntos fechados; boletos
   idênticos não intercambiáveis). Hoje: nenhuma sugestão, composição manual (I21e/I21f).
 - **Quase-grupos ±R$ 0,05 (P1-2)** — medição pontual, se desejada; absorver centavos numa baixa ou aplicar I18 a
