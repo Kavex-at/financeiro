@@ -1017,7 +1017,8 @@ describe('BorderoGrupoBoletoService — retomada: tabela de reconhecimento (I21s
         const e = m.execucao({ etapa: ETAPA_BORDERO_GRUPO.FAILED });
         const r = await m.service.preparar(m.pedido());
         expect(r.desfecho).toBe(DESFECHO_PREPARACAO.PRONTO);
-        expect(m.erp.baixa.buscarBorderosNaJanela).toHaveBeenCalledTimes(1);
+        // janela estreita + varredura larga (F-ft-1), ambas vazias ⇒ pode criar
+        expect(m.erp.baixa.buscarBorderosNaJanela).toHaveBeenCalledTimes(2);
         expect(m.erp.baixa.criarBorderoDoGrupo).toHaveBeenCalledTimes(1);
         expect(m.ledger.execs.get(e.id)?.borCod).toBe(251);
         expect(m.ledger.execs.size).toBe(1);
@@ -1087,6 +1088,38 @@ describe('BorderoGrupoBoletoService — retomada: tabela de reconhecimento (I21s
         expect(m.alertas).toEqual([
             expect.objectContaining({ tipo: ALERTA_TIPO.SISPAG_BORDERO_GRUPO_PENDENTE }),
         ]);
+    });
+
+    it('relógio do ERP adiantado além da margem: nada na janela estreita, mas há borderô do robô na varredura larga ⇒ indeterminado + Alerta, NÃO cria o segundo (F-ft-1)', async () => {
+        const m = novo();
+        const e = m.execucao({ etapa: ETAPA_BORDERO_GRUPO.FAILED });
+        // borTimCad 10 min depois do t0: fora de [t0 − 2 min, agora + 2 min]
+        m.erp.estado.proximoTimCad = AGORA + 600_000;
+        m.erp.novoBordero();
+        const r = await m.service.preparar(m.pedido());
+        expect(r.desfecho).toBe(DESFECHO_PREPARACAO.INDETERMINADO);
+        expect(etapaDe(m, e.id)).toBe(ETAPA_BORDERO_GRUPO.INDETERMINADO);
+        expect(r.detalhe).toMatch(/fora da janela/);
+        semEscrita(m);
+        expect(m.alertas).toEqual([
+            expect.objectContaining({ tipo: ALERTA_TIPO.SISPAG_BORDERO_GRUPO_PENDENTE }),
+        ]);
+    });
+
+    it('varredura larga ignora o borderô que é de outra execução nossa do mesmo lote ⇒ segue e cria', async () => {
+        const m = novo();
+        m.execucao({ etapa: ETAPA_BORDERO_GRUPO.FAILED });
+        m.erp.estado.proximoTimCad = AGORA + 600_000;
+        const alheio = m.erp.novoBordero();
+        m.execucao({
+            grupoId: 'G2',
+            etapa: ETAPA_BORDERO_GRUPO.BORDERO_CRIADO,
+            borCod: alheio.borCod,
+            borTimCad: alheio.borTimCad,
+        });
+        const r = await m.service.preparar(m.pedido());
+        expect(r.desfecho).toBe(DESFECHO_PREPARACAO.PRONTO);
+        expect(m.erp.baixa.criarBorderoDoGrupo).toHaveBeenCalledTimes(1);
     });
 
     it('nosso borCod no write-ahead e o fin010/list traz outro borTimCad (ERP reusou o número) ⇒ indeterminado, borderô alheio intocado', async () => {

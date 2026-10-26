@@ -12,6 +12,13 @@ import type { LotePagamento, SystemRemovalReason } from './SispagInterface.js';
 /** Margem constante de desvio de relógio servidor × ERP na busca por janela de `borTimCad` (I21s). */
 export const MARGEM_RELOGIO_BORDERO_MS = 120_000;
 
+/**
+ * Varredura de segurança (F-ft-1): quando a janela estreita não acha nada, procura borderô do robô
+ * (mesma conta e data) com `borTimCad` em `[t0 − folga, agora + folga]`; achou algo que não é de
+ * outra execução nossa ⇒ `indeterminado`, nunca um segundo borderô.
+ */
+export const FOLGA_VARREDURA_BORDERO_MS = 86_400_000;
+
 /** Desfecho de `preparar` para um grupo. */
 export const DESFECHO_PREPARACAO = {
     /** Borderô conferido e importado: o item nativo com o `borCod` foi observado (I21l, I21n). */
