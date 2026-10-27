@@ -1,4 +1,7 @@
 import 'reflect-metadata';
+import AnaliseCodigoBarrasRepetido from '../../libs/boleto/AnaliseCodigoBarrasRepetido.js';
+import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
+import RetiradaCodigoBarrasService from './RetiradaCodigoBarrasService.js';
 import type ConexosBaixaClient from '../../client/ConexosBaixaClient.js';
 import type ConexosIdentityProvider from '../../client/ConexosIdentityProvider.js';
 import type ConexosSispagClient from '../../client/ConexosSispagClient.js';
@@ -161,6 +164,7 @@ interface BorderoErp {
     baixas: BaixaErp[];
 }
 interface ItemErp {
+    flpCod?: number;
     borCod: number;
     itsCodSeq: number;
     itsMnyValor: number;
@@ -390,7 +394,9 @@ const erpFake = (trilha: string[]) => {
                         (b) =>
                             b.borVldFinalizado === 0 &&
                             b.gerNum === GER_NUM &&
-                            !itemNoLote(b.borCod) &&
+                            !estado.itens.some(
+                                (i) => i.borCod === b.borCod && (i.flpCod ?? FLP) === _p.flpCod,
+                            ) &&
                             !estado.foraDosPendentes.has(b.borCod),
                     )
                     .map((b) => ({
@@ -422,7 +428,9 @@ const erpFake = (trilha: string[]) => {
         lerItemDeBordero: jest.fn(
             async (p: { filCod: number; bncCod: number; flpCod: number; borCod: number }) => {
                 trilha.push(`erp.lerItem ${p.borCod}`);
-                const i = estado.itens.find((x) => x.borCod === p.borCod);
+                const i = estado.itens.find(
+                    (x) => x.borCod === p.borCod && (x.flpCod ?? FLP) === p.flpCod,
+                );
                 return i
                     ? {
                           filCod: FIL,
@@ -1220,11 +1228,219 @@ describe('BorderoGrupoBoletoService — depois de J rejeitado (PI-9, I21r, I21s)
             loteId: 'L0',
             flpCod: 48,
             remessaExecucaoId: 9,
-            etapa: ETAPA_BORDERO_GRUPO.CONCLUIDO,
+            // Estado REAL em produção (HML v7, 2026-10-27): nada grava `concluido`; a execução
+            // fica `importado` depois da remessa gerada e só ganha `jRejeitadoEm` no retorno.
+            etapa: ETAPA_BORDERO_GRUPO.IMPORTADO,
             borCod: 252,
             borTimCad: TIM_ANTIGO,
             jRejeitadoEm: new Date(AGORA - 5 * 86_400_000),
         });
+
+    it.each([
+        0, 1, 2, 3,
+    ])('item ainda no lote antigo (status %s) bloqueia mesmo pendente no novo', async (status) => {
+        const m = novo();
+        antiga(m);
+        m.borderoCompleto({ borCod: 252, borTimCad: TIM_ANTIGO });
+        m.erp.estado.loteNativoStatus = status;
+        m.erp.estado.itens.push({ borCod: 252, flpCod: 48, itsCodSeq: 11, itsMnyValor: 1575 });
+        const r = await m.service.preparar(m.pedido());
+        expect(r).toMatchObject({
+            desfecho: DESFECHO_PREPARACAO.RETIRAR,
+            motivo: SYSTEM_REMOVAL_REASON.BORDERO_ANTERIOR_NAO_RESOLVIDO,
+        });
+        expect(r.detalhe).toContain('252');
+        expect(r.detalhe).toContain('48');
+        expect(m.alertas).toHaveLength(1);
+        expect(m.alertas[0]).toMatchObject({
+            detalhe: { situacao: expect.stringContaining('48') },
+        });
+        semEscrita(m);
+        expect(m.erp.estado.itens).toHaveLength(1);
+        expect(m.erp.estado.borderos[0]?.baixas).toHaveLength(3);
+    });
+
+    it.each([
+        'falha',
+        'ausente',
+        'desconhecido',
+        'chave divergente',
+        'sem banco',
+        'sem lote',
+        'itens ilegíveis',
+    ])('sem prova de liberação anterior (%s) retira com alerta', async (caso) => {
+        const m = novo();
+        const e = antiga(m);
+        m.borderoCompleto({ borCod: 252, borTimCad: TIM_ANTIGO });
+        if (caso === 'falha') m.erp.write.getLoteNativo.mockRejectedValueOnce(new Error('timeout'));
+        if (caso === 'ausente') m.erp.write.getLoteNativo.mockResolvedValueOnce(undefined as never);
+        if (caso === 'desconhecido') m.erp.estado.loteNativoStatus = 77;
+        if (caso === 'chave divergente')
+            m.erp.write.getLoteNativo.mockResolvedValueOnce({
+                filCod: FIL,
+                bncCod: BNC,
+                flpCod: 999,
+                status: 1,
+                titulosCount: 1,
+                soma: 1575,
+            });
+        if (caso === 'sem banco') e.bncCod = undefined;
+        if (caso === 'sem lote') e.flpCod = undefined;
+        if (caso === 'itens ilegíveis')
+            m.erp.write.lerItemDeBordero.mockRejectedValueOnce(new Error('leitura incompleta'));
+        const r = await m.service.preparar(m.pedido());
+        expect(r).toMatchObject({
+            desfecho: DESFECHO_PREPARACAO.RETIRAR,
+            motivo: SYSTEM_REMOVAL_REASON.BORDERO_ANTERIOR_NAO_RESOLVIDO,
+        });
+        semEscrita(m);
+        expect(m.alertas).toHaveLength(1);
+    });
+
+    it.each([
+        ETAPA_BORDERO_GRUPO.FAILED,
+        ETAPA_BORDERO_GRUPO.IMPORTADO,
+    ])('retomada em %s não contorna vínculo anterior mesmo com item novo', async (etapa) => {
+        const m = novo();
+        antiga(m);
+        m.execucao({
+            id: 'E_NOVA',
+            etapa,
+            borCod: 252,
+            borTimCad: TIM_ANTIGO,
+            borCodReaproveitadoDe: 'E_ANTIGA',
+        });
+        m.borderoCompleto({ borCod: 252, borTimCad: TIM_ANTIGO });
+        m.erp.estado.itens.push(
+            { borCod: 252, flpCod: 48, itsCodSeq: 11, itsMnyValor: 1575 },
+            { borCod: 252, itsCodSeq: 12, itsMnyValor: 1575 },
+        );
+        const r = await m.service.preparar(m.pedido());
+        expect(r).toMatchObject({
+            desfecho: DESFECHO_PREPARACAO.RETIRAR,
+            motivo: SYSTEM_REMOVAL_REASON.BORDERO_ANTERIOR_NAO_RESOLVIDO,
+        });
+        semEscrita(m);
+    });
+
+    it('guarda real remove só o item reaproveitado da tentativa atual e permite seguir com avulso sadio', async () => {
+        const m = novo();
+        antiga(m);
+        m.execucao({
+            id: 'E_NOVA',
+            etapa: ETAPA_BORDERO_GRUPO.IMPORTADO,
+            borCod: 252,
+            borTimCad: TIM_ANTIGO,
+            borCodReaproveitadoDe: 'E_ANTIGA',
+        });
+        m.borderoCompleto({ borCod: 252, borTimCad: TIM_ANTIGO });
+        m.erp.estado.itens.push(
+            { borCod: 252, flpCod: 48, itsCodSeq: 11, itsMnyValor: 1575 },
+            { borCod: 252, itsCodSeq: 12, itsMnyValor: 1575 },
+        );
+        const prepared = await m.service.preparar(m.pedido());
+        expect(prepared.desfecho).toBe(DESFECHO_PREPARACAO.RETIRAR);
+        const healthy = {
+            ...lotePedroni().itens[0],
+            docCod: '777',
+            grupoBoletoId: undefined,
+        } as LotePagamento['itens'][number];
+        const current = lotePedroni({ itens: [...lotePedroni().itens, healthy] });
+        const after = lotePedroni({ itens: [healthy] });
+        const line = CodigoBarrasSintetico.linhaDigitavel({
+            valor: 525,
+            vencimento: DEBITO,
+            serie: 70,
+        });
+        const read = jest.fn(async () => ({
+            completa: true,
+            total: 1,
+            dropped: 0,
+            itens: [
+                { filCod: FIL, docCod: '777', titCod: '1', itsCodSeq: 20, linhaDigitavel: line },
+            ],
+            itensDeBordero: m.erp.estado.itens
+                .filter((i) => (i.flpCod ?? FLP) === FLP)
+                .map((i) => ({ filCod: FIL, borCod: i.borCod, itsCodSeq: i.itsCodSeq })),
+        }));
+        type Deps = ConstructorParameters<typeof RetiradaCodigoBarrasService>;
+        const repo = {
+            retirarGrupoPeloSistema: jest.fn().mockResolvedValue({ removidos: 3 }),
+            getLoteComItens: jest.fn().mockResolvedValue(after),
+        };
+        const guard = new RetiradaCodigoBarrasService(
+            { ...m.erp.write, listarLinhasDigitaveisDoLote: read } as unknown as Deps[0],
+            repo as unknown as Deps[1],
+            {
+                withTransaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({}),
+            } as unknown as Deps[2],
+            new AnaliseCodigoBarrasRepetido(new CodigoBarrasBoleto()),
+            m.log as unknown as Deps[4],
+            { listAtivosPorOrigem: async () => [] } as unknown as Deps[5],
+            { listarChavesRetiradasPeloSistema: async () => new Set() } as unknown as Deps[6],
+            { registrarEvento: async () => undefined } as unknown as Deps[7],
+            m.ledger.repo as unknown as Deps[8],
+            m.service,
+        );
+        const result = await guard.garantir({
+            lote: current,
+            bncCod: BNC,
+            flpCod: FLP,
+            rascunhoAberto: true,
+            grupos: [
+                {
+                    grupoId: 'G1',
+                    borCod: 252,
+                    titulos: grupoPedroni().titulos,
+                    retirar: { motivo: SYSTEM_REMOVAL_REASON.BORDERO_ANTERIOR_NAO_RESOLVIDO },
+                },
+            ],
+        });
+        expect(result.lote.itens).toEqual([healthy]);
+        expect(result.gruposRetirados).toHaveLength(1);
+        expect(m.erp.write.removerItemDoRascunho).toHaveBeenCalledWith({
+            filCod: FIL,
+            bncCod: BNC,
+            flpCod: FLP,
+            itsCodSeq: 12,
+            filCodItem: FIL,
+        });
+        expect(m.erp.estado.itens).toEqual([
+            { borCod: 252, flpCod: 48, itsCodSeq: 11, itsMnyValor: 1575 },
+        ]);
+        expect(m.erp.estado.borderos[0]?.baixas).toHaveLength(3);
+        semExclusao(m);
+    });
+
+    it('ausência observada no lote anterior finalizado permite reaproveitar mesmo com outro borderô nele', async () => {
+        const m = novo();
+        antiga(m);
+        m.borderoCompleto({ borCod: 252, borTimCad: TIM_ANTIGO });
+        m.erp.estado.loteNativoStatus = 1;
+        m.erp.estado.itens.push({ borCod: 999, flpCod: 48, itsCodSeq: 11, itsMnyValor: 1575 });
+        const r = await m.service.preparar(m.pedido());
+        expect(r).toMatchObject({ desfecho: DESFECHO_PREPARACAO.PRONTO, reaproveitado: true });
+        expect(m.erp.write.lerItemDeBordero).toHaveBeenCalledWith({
+            filCod: FIL,
+            bncCod: BNC,
+            flpCod: 48,
+            borCod: 252,
+        });
+        expect(m.erp.baixa.criarBorderoDoGrupo).not.toHaveBeenCalled();
+        expect(m.alertas).toEqual([]);
+        semExclusao(m);
+    });
+
+    it('retomada sem identidade adotada nem execução anterior disponível retira para analista', async () => {
+        const m = novo();
+        m.execucao({ etapa: ETAPA_BORDERO_GRUPO.FAILED, borCodReaproveitadoDe: 'INEXISTENTE' });
+        const r = await m.service.preparar(m.pedido());
+        expect(r).toMatchObject({
+            desfecho: DESFECHO_PREPARACAO.RETIRAR,
+            motivo: SYSTEM_REMOVAL_REASON.BORDERO_ANTERIOR_NAO_RESOLVIDO,
+        });
+        semEscrita(m);
+    });
 
     it('borderô antigo ausente no fin010 (sem linha) ⇒ cria um novo', async () => {
         const m = novo();
@@ -1314,6 +1530,18 @@ describe('BorderoGrupoBoletoService — depois de J rejeitado (PI-9, I21r, I21s)
         expect(m.alertas).toEqual([
             expect.objectContaining({ tipo: ALERTA_TIPO.SISPAG_BORDERO_GRUPO_PENDENTE }),
         ]);
+    });
+
+    it('REGRESSÃO HML v7: execução antiga `importado` com J rejeitado em outro lote/flp + borderô em cadastro ⇒ reaproveita; NÃO vira indeterminado nem alerta', async () => {
+        const m = novo();
+        const velha = antiga(m);
+        m.borderoCompleto({ borCod: 252, borTimCad: TIM_ANTIGO });
+        const r = await m.service.preparar(m.pedido());
+        expect(r.desfecho).not.toBe(DESFECHO_PREPARACAO.INDETERMINADO);
+        expect(r).toMatchObject({ desfecho: DESFECHO_PREPARACAO.PRONTO, reaproveitado: true });
+        expect(etapaDe(m, velha.id)).toBe(ETAPA_BORDERO_GRUPO.CONCLUIDO);
+        expect(m.alertas).toEqual([]);
+        expect(m.erp.baixa.criarBorderoDoGrupo).not.toHaveBeenCalled();
     });
 
     it('borderô antigo em borderosPendentes do lote novo (V7) ⇒ reaproveita: sem segundo POST fin010, BORDERO_REAPROVEITADO', async () => {
@@ -1566,7 +1794,7 @@ describe('BorderoGrupoBoletoService — limpar (I21q, emenda 2026-10-21)', () =>
         const m = novo();
         const e = importada(m, { borCodReaproveitadoDe: 'E_ANTIGA' });
         const r = await m.service.limpar({ execucao: e, motivo: 'GRUPO_BOLETO_FALHOU' });
-        expect(r.desfecho).toBe(DESFECHO_LIMPEZA.PENDENTE);
+        expect(r.desfecho).toBe(DESFECHO_LIMPEZA.NADA_A_LIMPAR);
         expect(m.erp.write.removerItemDoRascunho).toHaveBeenCalledTimes(1);
         semExclusao(m);
         expect(m.erp.estado.borderos.map((b) => b.borCod)).toEqual([251]);

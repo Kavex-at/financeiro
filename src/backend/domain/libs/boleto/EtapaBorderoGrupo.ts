@@ -127,6 +127,19 @@ export default class EtapaBorderoGrupo {
     public static ehTerminal = (etapa: EtapaBordero): boolean => TERMINAIS.has(etapa);
 
     /**
+     * Passos pelas arestas EXISTENTES até `concluido` para uma execução cujo borderô já foi
+     * importado: a remessa gerada é o que `codbar_vinculado` e `concluido` significam. Vazio para
+     * qualquer outra etapa (não se conclui o que não chegou ao import, nem o que já é terminal).
+     * ADR-0077 (emenda 2026-10-27): ninguém gravava essas etapas e a execução ficava `importado`
+     * para sempre, travando a próxima preparação do grupo rejeitado (índice de não terminal).
+     */
+    public static caminhoAteConcluido = (etapa: EtapaBordero): EtapaBordero[] => {
+        if (etapa === E.IMPORTADO) return [E.CODBAR_VINCULADO, E.CONCLUIDO];
+        if (etapa === E.CODBAR_VINCULADO) return [E.CONCLUIDO];
+        return [];
+    };
+
+    /**
      * I21q — a limpeza só apaga o borderô que NÓS criamos nesta execução e só enquanto o lote
      * nativo não foi finalizado e não tem `.REM`, os dois lidos AGORA (ausente ⇒ não, fail-closed).
      * `vldHasRemessaPgto` NÃO é guarda (decisão de 2026-10-21): vale 1 desde o `importar` e 0

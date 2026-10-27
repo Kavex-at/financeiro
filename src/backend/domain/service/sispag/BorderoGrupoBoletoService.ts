@@ -275,7 +275,11 @@ export default class BorderoGrupoBoletoService implements LimpezaBorderoGrupoInt
         ) {
             return this.simular(pedido);
         }
-        const ultima = await this.ledger.ultimaPorGrupo(pedido.grupo.id);
+        let ultima = await this.ledger.ultimaPorGrupo(pedido.grupo.id);
+        // J rejeitado já registrado e execução ainda `importado` (linha gravada antes de o
+        // fechamento concluí-la): a preparação dela acabou; sem concluir, o índice de uma execução
+        // não terminal por grupo derrubaria a reutilização do borderô (I21s).
+        if (ultima?.jRejeitadoEm !== undefined) ultima = await this.concluirRejeitada(ultima);
         if (ultima && !EtapaBorderoGrupo.ehTerminal(ultima.etapa)) {
             return this.retomar(pedido, gerNum, ultima);
         }
@@ -286,6 +290,15 @@ export default class BorderoGrupoBoletoService implements LimpezaBorderoGrupoInt
         }
         const vivo = await this.borderoVivoDeOutraExecucao(pedido, gerNum, antiga);
         return vivo ?? this.criarNovo(pedido, gerNum);
+    };
+
+    private concluirRejeitada = async (exec: GrupoBoletoExecucao): Promise<GrupoBoletoExecucao> => {
+        let atual = exec;
+        for (const proxima of EtapaBorderoGrupo.caminhoAteConcluido(exec.etapa)) {
+            if (!(await this.ledger.registrarEtapa(atual.id, atual.etapa, proxima))) break;
+            atual = { ...atual, etapa: proxima };
+        }
+        return atual;
     };
 
     /**
@@ -457,7 +470,12 @@ export default class BorderoGrupoBoletoService implements LimpezaBorderoGrupoInt
     private readotarAntigo = async (prep: Preparacao): Promise<Passo> => {
         const antiga = await this.ledger.buscarPorId(prep.exec.borCodReaproveitadoDe ?? '');
         if (antiga?.borCod === undefined || antiga.borTimCad === undefined) {
-            return this.indeterminar(prep, 'reaproveitamento sem o borderô antigo identificado');
+            return this.retirar(
+                prep,
+                R.BORDERO_ANTERIOR_NAO_RESOLVIDO,
+                `reaproveitamento sem o borderô antigo identificado (lote nativo ${antiga?.flpCod ?? 'desconhecido'}): ` +
+                    'a analista deve conferir a execução anterior e o vínculo no Conexos (fin015) antes de tentar novamente',
+            );
         }
         return this.adotar(prep, { borCod: antiga.borCod, borTimCad: antiga.borTimCad });
     };
@@ -615,6 +633,11 @@ export default class BorderoGrupoBoletoService implements LimpezaBorderoGrupoInt
         if (!prep.criadoAgora) {
             const lido = await this.lerNosso(prep);
             if ('desfecho' in lido) return lido;
+        }
+        if (prep.reaproveitado) {
+            const previous = await this.ledger.buscarPorId(prep.exec.borCodReaproveitadoDe ?? '');
+            const detail = await this.unresolvedPreviousBatch(prep.pedido, previous, prep.exec);
+            if (detail) return this.retirar(prep, R.BORDERO_ANTERIOR_NAO_RESOLVIDO, detail);
         }
         await this.garantirEtapa(prep, prep.reaproveitado ? E.REAPROVEITADO : E.BORDERO_CRIADO);
         return (
@@ -954,6 +977,16 @@ export default class BorderoGrupoBoletoService implements LimpezaBorderoGrupoInt
                 `o borderô antigo ${borCod} está ${situacao} no Conexos: resolva-o antes de pôr o grupo num lote`,
             );
         }
+        const vinculo = await this.unresolvedPreviousBatch(pedido, antiga);
+        if (vinculo) {
+            return this.encerrarSemEscrita(
+                pedido,
+                gerNum,
+                E.RETIRADO,
+                R.BORDERO_ANTERIOR_NAO_RESOLVIDO,
+                vinculo,
+            );
+        }
         const divergencia = await this.divergenciaDoAntigo(pedido, antigo);
         if (divergencia) {
             return this.encerrarSemEscrita(
@@ -965,6 +998,69 @@ export default class BorderoGrupoBoletoService implements LimpezaBorderoGrupoInt
             );
         }
         return this.reaproveitar(pedido, gerNum, antiga, antigo);
+    };
+
+    /** A ausência só vale numa leitura completa do lote antigo, com identidade comprovada. */
+    private unresolvedPreviousBatch = async (
+        pedido: PedidoPreparacaoBordero,
+        previous: GrupoBoletoExecucao | null | undefined,
+        adopted?: GrupoBoletoExecucao,
+    ): Promise<string | undefined> => {
+        const context =
+            `borderô antigo ${previous?.borCod ?? adopted?.borCod ?? 'desconhecido'}, ` +
+            `lote nativo ${previous?.flpCod ?? 'desconhecido'} ` +
+            `(filial ${previous?.filCod ?? 'desconhecida'}, banco ${previous?.bncCod ?? 'desconhecido'})`;
+        const blocked = (reason: string) =>
+            `${context}: ${reason}. Confira o vínculo do item no ` +
+            'Conexos (fin015) e regularize o lote anterior com a analista antes de tentar novamente; ' +
+            'o sistema preservou o borderô e o lote anterior';
+        if (
+            !previous ||
+            previous.grupoId !== pedido.grupo.id ||
+            previous.borCod === undefined ||
+            previous.borTimCad === undefined ||
+            previous.bncCod === undefined ||
+            previous.flpCod === undefined ||
+            ![previous.filCod, previous.bncCod, previous.flpCod].every(
+                (value) => typeof value === 'number' && Number.isInteger(value) && value > 0,
+            ) ||
+            (adopted &&
+                (previous.borCod !== adopted.borCod ||
+                    previous.borTimCad !== adopted.borTimCad ||
+                    previous.filCod !== adopted.filCod))
+        ) {
+            return blocked('não foi possível comprovar a identidade e as chaves do lote anterior');
+        }
+        const key = { filCod: previous.filCod, bncCod: previous.bncCod, flpCod: previous.flpCod };
+        if (
+            key.filCod === pedido.lote.filCod &&
+            key.bncCod === pedido.bncCod &&
+            key.flpCod === pedido.flpCod
+        ) {
+            return blocked('o lote anterior coincide com o lote da tentativa atual');
+        }
+        try {
+            const batch = await this.write.getLoteNativo(key);
+            if (
+                !batch ||
+                batch.filCod !== key.filCod ||
+                batch.bncCod !== key.bncCod ||
+                batch.flpCod !== key.flpCod ||
+                ![0, 1, 2, 3].includes(batch.status)
+            ) {
+                return blocked(
+                    'o lote anterior está ausente ou tem identidade/estado desconhecido',
+                );
+            }
+            const item = await this.write.lerItemDeBordero({ ...key, borCod: previous.borCod });
+            if (item)
+                return blocked(`o item ${item.itsCodSeq} ainda está vinculado ao lote anterior`);
+        } catch {
+            return blocked(
+                'não foi possível ler integralmente o lote anterior e comprovar a liberação do item',
+            );
+        }
+        return undefined;
     };
 
     /** O antigo serve para reaproveitar? Texto do motivo quando não serve. */
@@ -1220,11 +1316,15 @@ export default class BorderoGrupoBoletoService implements LimpezaBorderoGrupoInt
         const semItem = await this.removerItem(exec, pedido.motivo);
         if (semItem) return semItem;
         if (reaproveitado) {
-            return this.pendente(
+            // A pendência preserva o borderô antigo para a analista. A tentativa atual já
+            // está sem item (ausência relida): não há mais nada a limpar NESTE rascunho,
+            // e a guarda pode continuar com os demais pagamentos sem declarar o borderô limpo.
+            await this.pendente(
                 exec,
                 'borderô reaproveitado de um J rejeitado: só o item saiu do lote, o borderô fica',
                 pedido.motivo,
             );
+            return { desfecho: DESFECHO_LIMPEZA.NADA_A_LIMPAR, execucaoId: exec.id };
         }
         return this.excluirBaixasEBordero(exec, pedido.motivo);
     };

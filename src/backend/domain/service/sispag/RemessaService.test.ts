@@ -4327,13 +4327,13 @@ describe('RemessaService — boleto agrupado: etapa preparar_bordero (ADR-0077, 
             expect(write.finalizarLote).toHaveBeenCalled();
         });
 
-        it('item de borderô do grupo já no rascunho (borCod + borTimCad conferidos) ⇒ não é intruso e não se prepara de novo', async () => {
+        it('item de borderô já no rascunho ⇒ confere a preparação novamente sem reimportar', async () => {
             const { service, write, borderoGrupo } = retomada(
                 ['2:801:1', '2:802:1', '2:bor:77'],
                 [['G1', '2:bor:77']],
             );
             await gerar(service);
-            expect(borderoGrupo.preparar).not.toHaveBeenCalled();
+            expect(borderoGrupo.preparar).toHaveBeenCalledTimes(1);
             expect(write.importarTitulos).not.toHaveBeenCalled();
             expect(write.finalizarLote).toHaveBeenCalled();
         });
@@ -4492,6 +4492,89 @@ describe('RemessaService — boleto agrupado: etapa preparar_bordero (ADR-0077, 
             expect(write.finalizarLote).toHaveBeenCalled();
         });
 
+        it('retomada do rascunho completo com item ainda no lote anterior retira o grupo antes da barra e segue os avulsos', async () => {
+            const write = writeDoGrupo();
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 0,
+                titulosCount: 1,
+                soma: 100,
+            });
+            write.listarChavesDoLote.mockResolvedValue(new Set(['2:801:1', '2:802:1', '2:bor:77']));
+            const borderoGrupo = buildBorderoGrupo({
+                chavesNativasConfirmadas: jest
+                    .fn()
+                    .mockResolvedValue(new Map([['G1', '2:bor:77']])),
+                preparar: jest.fn().mockResolvedValue({
+                    desfecho: 'retirar',
+                    motivo: 'BORDERO_ANTERIOR_NAO_RESOLVIDO',
+                    detalhe: 'O borderô 77 continua no lote anterior 48.',
+                    reaproveitado: true,
+                    borCod: 77,
+                }),
+            });
+            const vinculo = buildVinculo();
+            const retirada = guardaEspia();
+            const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
+            const { service } = setup({ write, borderoGrupo, vinculo, retirada, ledger });
+            const result = await gerar(service);
+            expect(borderoGrupo.preparar).toHaveBeenCalledTimes(1);
+            expect(pedidoDaGuarda(retirada).grupos[0]).toMatchObject({
+                grupoId: 'G1',
+                titulos: TITULOS_G1,
+                retirar: { motivo: 'BORDERO_ANTERIOR_NAO_RESOLVIDO' },
+            });
+            expect(vinculo.vincularItemDeBordero).not.toHaveBeenCalled();
+            expect(write.importarTitulos).not.toHaveBeenCalled();
+            expect(write.finalizarLote).toHaveBeenCalled();
+            expect(result.status).toBe('gerada');
+        });
+
+        it('retomada parcial com todos os grupos presentes confere vínculo anterior e importa só o avulso faltante', async () => {
+            const write = writeDoGrupo();
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 0,
+                titulosCount: 1,
+                soma: 100,
+            });
+            write.listarChavesDoLote.mockResolvedValue(new Set(['2:801:1', '2:bor:77']));
+            const borderoGrupo = buildBorderoGrupo({
+                chavesNativasConfirmadas: jest
+                    .fn()
+                    .mockResolvedValue(new Map([['G1', '2:bor:77']])),
+                preparar: jest.fn().mockResolvedValue({
+                    desfecho: 'retirar',
+                    motivo: 'BORDERO_ANTERIOR_NAO_RESOLVIDO',
+                    detalhe: 'O borderô 77 continua no lote anterior 48.',
+                    reaproveitado: true,
+                    borCod: 77,
+                }),
+            });
+            const vinculo = buildVinculo();
+            const retirada = guardaEspia();
+            const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
+            const { service } = setup({ write, borderoGrupo, vinculo, retirada, ledger });
+            const result = await gerar(service);
+            expect(borderoGrupo.preparar).toHaveBeenCalledTimes(1);
+            expect(pedidoDaGuarda(retirada).grupos[0]).toMatchObject({
+                grupoId: 'G1',
+                titulos: TITULOS_G1,
+                retirar: { motivo: 'BORDERO_ANTERIOR_NAO_RESOLVIDO' },
+            });
+            expect(vinculo.vincularItemDeBordero).not.toHaveBeenCalled();
+            expect(write.importarTitulos).toHaveBeenCalledTimes(1);
+            expect(write.importarTitulos.mock.calls[0][0].itens).toEqual([
+                expect.objectContaining({ docCod: 802 }),
+            ]);
+            expect(write.finalizarLote).toHaveBeenCalled();
+            expect(result.status).toBe('gerada');
+        });
+
         it('borderô indeterminado (preparar) continua interrompendo a remessa: nada finalizado', async () => {
             const borderoGrupo = buildBorderoGrupo({
                 preparar: jest.fn().mockResolvedValue({
@@ -4522,7 +4605,7 @@ describe('RemessaService — boleto agrupado: etapa preparar_bordero (ADR-0077, 
             expect(ledger.fail).toHaveBeenCalled();
         });
 
-        it('retomada com o item de borderô já no rascunho: não prepara de novo, mas revincula (idempotente) antes de finalizar', async () => {
+        it('retomada com item de borderô no rascunho: confere preparação e revincula antes de finalizar', async () => {
             const write = writeDoGrupo();
             write.getLoteNativo.mockResolvedValue({
                 filCod: 2,
@@ -4542,7 +4625,7 @@ describe('RemessaService — boleto agrupado: etapa preparar_bordero (ADR-0077, 
             const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
             const { service } = setup({ write, borderoGrupo, vinculo, ledger });
             await gerar(service);
-            expect(borderoGrupo.preparar).not.toHaveBeenCalled();
+            expect(borderoGrupo.preparar).toHaveBeenCalledTimes(1);
             expect(vinculo.vincularItemDeBordero).toHaveBeenCalledWith(
                 expect.objectContaining({ borCod: 77, flpCod: 99 }),
             );
