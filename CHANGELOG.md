@@ -1,5 +1,20 @@
 # Columbia Financeiro — Changelog
 
+## v0.77.0 (2026-10-27) — SISPAG: número do documento igual desempata a sugestão de boleto DDA
+
+- **O número do documento desempata.** Quando um título tem dois ou mais boletos igualmente prováveis
+  (mesmo emissor, mesmo valor, mesmo dia), o boleto cujo número é igual ao do documento do título passa
+  a ser a sugestão única, sem precisar rejeitar os outros à mão. Vale só dentro da faixa segura (até
+  R$ 0,05 no mesmo dia, ou valor igual vencendo de 1 a 5 dias depois), com número de 4 dígitos ou mais
+  e sem repetição: nenhum outro boleto do mesmo emissor nem outro documento do mesmo fornecedor com o
+  mesmo número.
+- **O boleto fica reservado para o título certo.** Um boleto casado pelo número não vai mais para outro
+  título só porque esse outro vence antes; o outro título o mostra como disputado.
+- **Conflito fica à vista.** Se o DPS da NFS-e e o número do documento apontarem para boletos
+  diferentes, o título aparece como ambíguo com esse motivo, para você rejeitar o que não é dele.
+- **Na tela**, a evidência mostra "número do boleto igual ao do documento (confiável)". Quem confirma
+  continua sendo você; nada é confirmado nem pago sozinho.
+
 ## v0.76.0 (2026-10-27) — SISPAG: boleto com data diferente do título pede confirmação e não se perde
 
 - **Boleto com data diferente do título.** Quando o valor é igual mas o boleto vence de 6 a 10 dias
