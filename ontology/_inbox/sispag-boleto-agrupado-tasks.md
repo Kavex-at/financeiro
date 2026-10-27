@@ -739,3 +739,24 @@ All tasks complete AND:
 | **G8** | **P2** (*2026-10-21, T14; aplicado o lado seguro*) | **Borderô antigo ESTORNADO depois de J rejeitado.** A I21s diz "antigo ausente ou **cancelado** ⇒ cria um novo". O HML (achados T9) mostra um quarto estado: `borVldFinalizado = 3` com `borCodNovo` — o estorno cria **outro** borderô que herda as baixas do grupo. A regra não diz o que fazer com ele. | Task 14 (aplicado), Tasks 18, 21 | **Aplicado:** estornado = **não resolvido** (as baixas seguem vivas no `borCodNovo`; criar outro pagaria duas vezes) ⇒ retirada `BORDERO_ANTERIOR_NAO_RESOLVIDO` + `Alerta`, sem tocar em nada. Alternativa: seguir o `borCodNovo` e tratá-lo como o "antigo" (reaproveitar se estiver nos pendentes). Também para o maintainer (fora do escopo): Permutas lê `borCodEstornado != null` como "estornado" e libera relançamento (`borderoAindaValido`), mas o campo marca o borderô **novo**, vivo, que herdou as baixas: possível baixa em dobro em Permutas, candidato a `/investigate` (achados T9). |
 
 Nenhum gap bloqueia o início: Fase A inteira e as Tasks 6, 8, 10, 12 podem andar já. G1 bloqueia o fechamento da Task 9; G2 o da Task 7/14; G3 o de um critério da Task 11; G4 o da Task 18.
+
+
+## Correção bloqueante V7 — 2026-10-27, terceira rodada
+
+Autorizada pelo Yuri: duas frentes paralelas; detecção deve estar corrigida antes do merge #131,
+liberação automática fica em exploração. Ver `sispag-boleto-agrupado-reenvio-rejeitado-plano.md`.
+
+- [x] Guarda antes do reaproveitamento/importação, inclusive retomada: item ainda no lote nativo antigo
+  ou liberação não verificável ⇒ retirada integral `BORDERO_ANTERIOR_NAO_RESOLVIDO` + alerta com chaves e
+  orientação à analista; preservar o antigo, nenhum segundo borderô. Pendência no novo grid não basta.
+- [x] Regressões RED/GREEN, typecheck, lint e testes backend; revisão independente.
+- [ ] Prova HML da guarda na Task 21 (o caminho esperado com o item ainda associado é `RETIRADO`).
+- [x] Exploração da operação de liberação registrada em
+  `sispag-boleto-agrupado-reenvio-rejeitado-exploracao.md`; nenhuma liberação automática nesta correção.
+
+V7 rodada 3: 851/852, borderô 259, lote antigo 63/novo 64, **5/6**. A execução anterior foi concluída e
+reaproveitada; falhou a finalização do novo lote porque o item permanece no antigo. Esse resultado
+substitui a pendência de execução da terceira rodada, sem marcar Task 21 como concluída.
+
+Validação local da correção: 305 suítes / 5979 testes backend aprovados; typecheck e lint exit 0
+(124 avisos, sem erros). A prova HML da guarda continua pendente e bloqueante antes do merge.

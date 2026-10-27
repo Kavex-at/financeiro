@@ -312,7 +312,7 @@ nos "Questions / gaps" do tasks para o maintainer confirmar.
 
 ## Task 21 — prova ponta a ponta com o serviço de produção (PENDENTE DE RODADA)
 
-Job: `src/backend/jobs/probe-hml-boleto-agrupado-e2e.ts`. **Nada foi executado em HML ainda.** Preencher por rodada (a trilha fica em `${PROBE_OUT}/trilha.jsonl`, barras só mascaradas 5+4):
+Job: `src/backend/jobs/probe-hml-boleto-agrupado-e2e.ts`. Rodadas executadas estão registradas abaixo; a prova da nova guarda após V7/3 permanece pendente. Preencher por rodada (a trilha fica em `${PROBE_OUT}/trilha.jsonl`, barras só mascaradas 5+4):
 
 | Fase | Data da autorização | Títulos | Resultado (checagens OK/total) | Estado deixado em HML |
 |------|---------------------|---------|--------------------------------|-----------------------|
@@ -321,9 +321,11 @@ Job: `src/backend/jobs/probe-hml-boleto-agrupado-e2e.ts`. **Nada foi executado e
 | falha (V3) | 2026-10-26 | 838/1 (R$ 150,00) + 839/1 (R$ 100,00), ZEFERINO (221), boleto sintético R$ 250,00 venc. 30/10, barra do banco 329 | **4/4 OK** | `confirmaCodigoBarras` recusou (`FIN_015.BANCO_NAO_CADASTRADO`, 329) depois do import; guarda retirou o grupo (`GRUPO_BOLETO_FALHOU`, `BoletoLoteEsvaziadoPorCodigoError`); item, 2 baixas e borderô **254** excluídos e ausentes na releitura do `fin010`; lote nativo **56** ficou em rascunho vazio; 838/1 e 839/1 em aberto. Banco local: grupo `CONFIRMADO`, execução `limpo`, eventos CONFIRMADO → BORDERO_PREPARADO → RETIRADO → BORDERO_LIMPO, marcas `GRUPO_BOLETO` ATIVO. Trilha em `/tmp/hml-boleto-agrupado-e2e/falha/` |
 | retomada (1ª rodada, inválida) | 2026-10-26 | 840/1 (R$ 150,00) + 841/1 (R$ 100,00), ZEFERINO (221), boleto sintético R$ 250,00 venc. 30/10 | **1/4, abortada (bug do job)** | 1ª tentativa OK (`POST fin010` valeu, resposta descartada, `GroupBorderoIncompleteError`). Na retomada: "usuário do robô desconhecido: não dá para procurar o borderô pela janela" ⇒ execução `indeterminado` + alerta, **nenhum segundo borderô** (falha fechada correta). Causa: o job chamava `gerarRemessa` FORA de `conexosRequestContext`, então o `usnCod` nunca foi capturado (`conexos_usn_cod` NULL); o servidor sempre roda dentro da request (`http/conexosIdentity.ts`). Corrigido no job (`gerarRemessaComoRequest`). Resíduo: lote nativo **57** em rascunho; um borderô do robô em cadastro sem baixas (gerNum 38, `borDtaMvto` 30/10; `borCod` não registrado porque a resposta foi descartada de propósito); grupo local `165072ac…` indeterminado; 840/841 em aberto em HML |
 | retomada (2ª rodada, achou bug) | 2026-10-26 | 836/1 (R$ 150,00) + 844/1 (R$ 100,00), ZEFERINO (221), boleto sintético R$ 250,00 venc. 30/10 | **1/4, abortada — BUG DE PRODUTO** | Com o contexto de request, o `usnCodCad` 97 foi capturado e a janela estreita rodou, mas voltou vazia: **o ERP carimba `borTimCad` com a hora de parede de Brasília codificada como UTC** (borderô 255 criado às 22:52:51Z, `borTimCad` 19:52:52Z = −3 h) e a janela usava o relógio real ⇒ erro de 3 h, toda retomada cairia em `indeterminado`. A varredura ±24 h (F-ft-1) achou 254 e 255 e falhou fechada (nenhum segundo borderô). Correção: `BankingCalendar.toErpInstant` nas duas janelas. Resíduo: lote nativo **58** em rascunho; borderô **255** em cadastro sem baixas; borderô **254** (da 1ª rodada, `borCod` reaproveitado) em cadastro sem baixas; grupo local `edaba90d…` indeterminado; 836/844 em aberto mas consumidos para a prova |
-| retomada (3ª rodada, válida) | 2026-10-27 | 846/1 (R$ 150,00) + 845/1 (R$ 100,00), ZEFERINO (221), boleto sintético R$ 250,00, débito 27/10 | **4/4 OK** | 1ª tentativa parou de forma retomável (`GroupBorderoIncompleteError`, `POST fin010` valeu, resposta descartada); a retomada achou o borderô **256** pela janela estreita `borTimCad` (usnCodCad 97, gerNum 38, `toErpInstant`), **1 `POST fin010`**, 1 borderô vivo, remessa `gerada`. Residue: lote nativo **59** finalizado com `PG271001.REM`, borderô **256** com as 2 baixas e o item importado; 845/846 consumidos para a prova (em aberto no ERP, presos a lote/grupo locais). Log `/tmp/hml-boleto-agrupado-e2e-retomada-3.log` |
-| v7 (1ª rodada, INVÁLIDA — bug do probe) | 2026-10-27 | 847/1 (R$ 100,00) + 848/1 (R$ 150,00), ZEFERINO (221), boleto sintético R$ 250,00 venc. 05/11, débito 27/10 | **2/4, abortada (FATAL)** | `remessa gerada` OK (borderô **257**, lote nativo **60**, `PG271002.REM` com 1 J). O retorno sintético usou a ocorrência **`AE`**, que o ERP descreve como "DATA DE PAGAMENTO ALTERADA" (informativo, `fbeVldTpret` ≠ 2): não é rejeição ⇒ grupo ficou `EM_REMESSA`, sem Alerta; depois o job caiu ao criar o 2º lote (847/1 está no lote `b3fe004d` com remessa gerada). **A V7 NÃO foi provada.** Residue: lote nativo 60 finalizado + `PG271002.REM`; borderô 257 em cadastro (2 baixas, item importado); retorno garCodSeq **9** carregado e processado só com `AE` (nenhuma baixa esperada: não há `00`); 847/848 consumidos; banco local: lote `b3fe004d` REMESSA_GERADA, lote `c363011a` rascunho vazio, grupo `ef66bdcc` CONFIRMADO. Log `/tmp/hml-boleto-agrupado-e2e-v7.log` |
-| v7 (2ª rodada) | — | — | — | pendente: títulos novos; o probe agora lê `fin050` e escolhe um código `tipo 2` + `tpret 2` |
+| retomada (3ª rodada, válida) | 2026-10-27 | 846/1 (R$ 150,00) + 845/1 (R$ 100,00), ZEFERINO (221), boleto sintético R$ 250,00, débito 27/10 | **4/4 OK** | 1ª tentativa parou de forma retomável (`GroupBorderoIncompleteError`, `POST fin010` valeu, resposta descartada); a retomada achou o borderô **256** pela janela estreita `borTimCad` (usnCodCad 97, gerNum 38, `toErpInstant`), **1 `POST fin010`**, 1 borderô vivo, remessa `gerada`. Residue: lote nativo **59** finalizado com `PG271001.REM`, borderô **256** com as 2 baixas e o item importado; 845/846 consumidos para a prova (em aberto no ERP, presos a lote/grupo locais). Evidência: `ontology/_inbox/evidencias/sispag-boleto-agrupado-hml-2026-10-27/hml-boleto-agrupado-e2e-retomada-3.log` (checagens l.87-175) |
+| v7 (1ª rodada, INVÁLIDA — bug do probe) | 2026-10-27 | 847/1 (R$ 100,00) + 848/1 (R$ 150,00), ZEFERINO (221), boleto sintético R$ 250,00 venc. 05/11, débito 27/10 | **2/4, abortada (FATAL)** | `remessa gerada` OK (borderô **257**, lote nativo **60**, `PG271002.REM` com 1 J). O retorno sintético usou a ocorrência **`AE`**, que o ERP descreve como "DATA DE PAGAMENTO ALTERADA" (informativo, `fbeVldTpret` ≠ 2): não é rejeição ⇒ grupo ficou `EM_REMESSA`, sem Alerta; depois o job caiu ao criar o 2º lote (847/1 está no lote `b3fe004d` com remessa gerada). **A V7 NÃO foi provada.** Residue: lote nativo 60 finalizado + `PG271002.REM`; borderô 257 em cadastro (2 baixas, item importado); retorno garCodSeq **9** carregado e processado só com `AE` (nenhuma baixa esperada: não há `00`); 847/848 consumidos; banco local: lote `b3fe004d` REMESSA_GERADA, lote `c363011a` rascunho vazio, grupo `ef66bdcc` CONFIRMADO. Evidência: `ontology/_inbox/evidencias/sispag-boleto-agrupado-hml-2026-10-27/hml-boleto-agrupado-e2e-v7.log` (falhas l.311-312, FATAL l.323) |
+| v7 (2ª rodada, código `BI`, **5/6 válidas; o check 5 foi falso positivo**) | 2026-10-27 | 849/1 (R$ 100,00) + 850/1 (R$ 150,00), ZEFERINO (221), boleto sintético R$ 250,00 venc. 05/11, débito 27/10 | **6/6 reportadas, 5/6 reais** | Ocorrência escolhida do `fin050`: `BI` (tpret 2). Borderô **258**, lote nativo **61**, `PG271003.REM`; retorno garCodSeq **10** conciliado (`pagos 0`, `rejeitados 1`): lote `RETORNADO`, grupo `REJEITADO`, Alerta emitido (log `v7-2` l.317-318). **A 2ª remessa NÃO reaproveitou o borderô 258**: caiu em `indeterminado` (defeito de produto, ver "Defeito: recuperação após rejeição do J") e o check 5 passou por erro (`status: 'erro'`; `reaproveitou false; retirou false`, l.368). Residue: lote nativo 61 finalizado + `.REM` + retorno 10 (BI); lote nativo **62** em rascunho (2ª tentativa, sem import); borderô **258** em cadastro com as baixas de 849/850; 849/850 em aberto no ERP (sem baixa paga), presos ao borderô 258. Evidência: `ontology/_inbox/evidencias/sispag-boleto-agrupado-hml-2026-10-27/hml-boleto-agrupado-e2e-v7-2.log` |
+| v7 (3ª rodada, após a correção) | 2026-10-27 | 851/1 + 852/1, ZEFERINO, total R$ 250,00 | **5/6 — novo defeito de produto** | Execução concluída e borderô **259** reaproveitado do lote **63** para o **64**; importação observada, mas a finalização do 64 foi recusada por item ainda em outro lote ativo (63). Check 5 falhou corretamente; só um borderô vivo. Estado: 63 finalizado, retorno de rejeição BI; 64 rascunho com item importado, borderô 259 preservado. Extrato: `evidencias/sispag-boleto-agrupado-hml-2026-10-27/hml-boleto-agrupado-e2e-v7-3-extrato.log`. |
+| v7 (4ª rodada, prova da guarda de vínculo antigo) | 2026-10-27 | 854/1 (R$ 150,00) + 853/1 (R$ 100,00), ZEFERINO (221), boleto sintético R$ 250,00 venc. 05/11, débito 27/10, sem `CONTROL_DOC` | **5/6 no probe; ACEITA pelo Yuri como prova da guarda** | 1ª remessa: borderô **260**, lote nativo **65**, `PG271005.REM`, retorno 12 (`BI`) ⇒ grupo `REJEITADO` + Alerta. 2ª remessa (lote nativo **66**): a guarda leu os itens do lote 65, achou o item 1 ainda vinculado e retirou o grupo com `BORDERO_ANTERIOR_NAO_RESOLVIDO` + Alerta **antes** de importar; sem `importar`, `DELETE`, `finalizarLote` nem escrita em `fin010`; vivos 260. O lote só tinha o grupo ⇒ "lote esvaziado" (desfecho previsto no plano), por isso o check 5 (exige status ≠ erro) falhou. Ver seção abaixo. |
 
 Premissas a confirmar na 1ª rodada: `POS_OC`/código de rejeição do `.RET`, colunas lidas direto no banco local, campos do ledger.
 
@@ -353,3 +355,96 @@ Premissas a confirmar na 1ª rodada: `POS_OC`/código de rejeição do `.RET`, c
   rejeitado). A fixture de teste de `SincronizacaoLoteService` deixou de chamar `AE` de rejeição (agora `XR`, sintético).
 - **Efeito colateral a lembrar:** `pagos` é só informativo (toast do SISPAG, `conciliacao_execucao`, atividade do usuário);
   nenhuma decisão de estado de lote depende dele.
+
+
+### Defeito: recuperação após rejeição do J (achado pela V7 de 2026-10-27, corrigido antes do merge do #131)
+
+Evidência (credenciais, sessões e barras completas redigidas; barras só em 5+4): `ontology/_inbox/evidencias/sispag-boleto-agrupado-hml-2026-10-27/`
+(`hml-boleto-agrupado-e2e-v7-2.log`, `trilha.jsonl`).
+
+**Sintoma.** Depois de um J rejeitado (retorno 10, código `BI`, lote `RETORNADO`, grupo `REJEITADO`, Alerta emitido —
+`v7-2.log` l.317-318), a analista põe o grupo num lote novo e gera a remessa. O esperado (I21s, PI-9) era
+reaproveitar o borderô 258, ainda em cadastro. Saiu: `ERROR "borderô do grupo pendente de decisão da analista: há uma
+execução pendente do grupo em outro lote nativo"` (l.365) e `falha ao gerar remessa … action "preparar o borderô do
+boleto agrupado" invalid for lote … in status FINALIZADO` (l.366). A execução do borderô 258 foi marcada
+`indeterminado` com `j_rejeitado_em` preenchido. Fail-closed: nenhum segundo borderô, nenhum pagamento em dobro
+(`vivos 258`, l.372). Mas o grupo só se recuperava por acidente.
+
+**Causa raiz.** Nenhum código gravava `codbar_vinculado` nem `concluido`: a execução do borderô ficava em `importado`
+(não terminal) depois da remessa gerada, no pagamento (execução 257 da V7 de 1ª rodada, `importado`) e na rejeição
+(`FechamentoGrupoBoleto.fecharRejeitado` só marcava `j_rejeitado_em`). Então `BorderoGrupoBoletoService.preparar`
+(`ultima && !ehTerminal(ultima.etapa)` → `retomar`) nunca chegava ao caminho do J rejeitado
+(`ultimaRejeitadaPorGrupo` → `decidirAposRejeicao` → `reaproveitar`); `retomar` viu outro lote/flp e indeterminou. O
+índice `ux_sispag_grupo_boleto_execucao_nao_terminal` (migração 0090) também impedia abrir a execução nova com a antiga
+não terminal; por isso só proteger o `preparar` com `jRejeitadoEm` não bastava. A mensagem "invalid … FINALIZADO" era
+só o formato do `LoteEstadoInvalidoError` lançado de propósito em `RemessaService.prepararBorderosDosGrupos` quando o
+desfecho é `indeterminado`.
+
+**Por que os testes não pegaram.** O fixture dos testes do J rejeitado usava `etapa: CONCLUIDO`, um estado inalcançável
+em produção (nada o gravava); a V7 só aparece no ponto em que o estado real (`importado`) encontra o índice de não
+terminal. O check 5 do probe aceitava `r2.status === 'erro'` e caminho `indefinido` como aprovação.
+
+**Correção.**
+- `FechamentoGrupoBoleto`: ao fechar o grupo (rejeitado **e** pago) conclui a execução **deste lote** pelas arestas
+  existentes (`importado → codbar_vinculado → concluido`, `EtapaBorderoGrupo.caminhoAteConcluido`); passada tardia sobre
+  o lote antigo não mexe na execução de uma remessa posterior.
+- `BorderoGrupoBoletoService.preparar`: se a última execução já tem `jRejeitadoEm` e segue `importado` (linha gravada antes
+  da correção), conclui antes de decidir (auto-cura), e então `decidirAposRejeicao` reaproveita (I21s).
+- `RemessaService.prepararBorderosDosGrupos`: mensagem em português para `indeterminado` (o tipo de erro é o mesmo).
+- Probe: `avaliarCaminhoV7` — check 5 falha com `status: 'erro'` ou caminho `indefinido`.
+- Caminho PAGO: o mesmo defeito (execução `importado` para sempre depois de pago) estava na mesma causa e foi corrigido;
+  `SituacaoGrupoBoleto.rejeitado` depende de `concluido` e agora o encontra.
+
+**Testes novos/alterados.** `BorderoGrupoBoletoService.test.ts` (fixture do J rejeitado agora `IMPORTADO`; teste
+"REGRESSÃO HML v7"), `FechamentoGrupoBoleto.test.ts` (4 testes), `probe-hml-boleto-agrupado-e2e.test.ts`
+(`avaliarCaminhoV7`, 3 testes). RED visto antes da correção: 12 falhas (9 em `BorderoGrupoBoletoService`, 3 em
+`FechamentoGrupoBoleto`).
+
+**Resíduo da rodada (HML e banco local).** HML: lote nativo 61 finalizado + `PG271003.REM` + retorno 10 (BI) processado;
+lote nativo 62 rascunho; borderô 258 em cadastro com as baixas de 849/850 (as execuções locais ficaram em
+`indeterminado`); 849/850 em aberto, consumidos para a prova. Banco local (`sispag_agrupado_e2e`): lote `0f3ab046`
+`RETORNADO` (flp 61), lote `09312f22` `FINALIZADO` (flp 62), grupo `1b755e5f` `CONFIRMADO` (situação derivada
+`REJEITADO`), execução `ccbc7c2c` `indeterminado`. A 3ª rodada usa títulos e grupo novos.
+
+
+### Defeito: item permanece no lote rejeitado (V7, 3ª rodada, 2026-10-27)
+
+A correção anterior funcionou: o borderô 259 foi reaproveitado, o ledger avançou e o item entrou no lote
+64. O ERP recusou `GET fin015/finalizarLote/2/4/64`: "EXISTEM ITENS DE PAGAMENTO QUE ESTÃO CONTIDOS EM
+OUTROS LOTES ATIVOS". O item continua no lote 63, finalizado com rejeição BI. A listagem de pendentes no
+novo lote e a importação aceita **não provam liberação**. O probe terminou 5/6, sem falso positivo no
+check 5. Esta rodada não comprova reenvio; comprova o defeito e a preservação de um único borderô.
+
+Origem: log local `/tmp/hml-boleto-agrupado-e2e-v7-3.log`, linhas 374 (reaproveitamento), 401 (importação),
+425–435 (recusa e 5/6). Extrato seletivo sem corpos HTTP ou barras completas preservado em
+`evidencias/sispag-boleto-agrupado-hml-2026-10-27/hml-boleto-agrupado-e2e-v7-3-extrato.log`.
+
+Decisão do Yuri nesta sessão: duas frentes em paralelo. **Antes do merge #131**, detectar o vínculo ao
+lote antigo antes de importar (também na retomada), retirar o grupo com
+`BORDERO_ANTERIOR_NAO_RESOLVIDO` e alerta operacional; preservar lote/borderô antigo. Falta de prova da
+liberação também impede reutilização. Em separado, explorar uma operação suportada para liberar o item
+rejeitado sem afetar outros itens. Plano: `sispag-boleto-agrupado-reenvio-rejeitado-plano.md`; exploração:
+`sispag-boleto-agrupado-reenvio-rejeitado-exploracao.md`. Nenhuma rodada nova nem escrita HML/PRD nesta
+implementação; prova HML da guarda feita na 4ª rodada (seção abaixo).
+
+
+### Prova da guarda de vínculo antigo (V7, 4ª rodada, 2026-10-27) — aceita
+
+Títulos 854/1 + 853/1 (aprovados no `fin103`, FBA 3), autorização `HML_AUTORIZO_ESCRITA=2026-10-27`. Extrato saneado em
+`evidencias/sispag-boleto-agrupado-hml-2026-10-27/hml-boleto-agrupado-e2e-v7-4-extrato.log` (log integral local
+`/tmp/hml-boleto-agrupado-e2e-v7-4.log`).
+
+- **1ª remessa:** borderô 260 criado, baixas gravadas e conferidas, importado no lote nativo 65, `PG271005.REM` (1 J, R$ 250,00);
+  retorno 12 com `BI` (tpret 2) ⇒ `pagos 0, rejeitados 1`, lote local `RETORNADO`, grupo `REJEITADO`, Alerta (extrato l.141–318).
+- **2ª remessa (lote nativo 66):** "grupo retirado da remessa: borderô antigo 260, lote nativo 65 (filial 2, banco 4): o item 1 ainda
+  está vinculado ao lote anterior" + Alerta `sispag-bordero-grupo-pendente` (l.373–374); itens 853/854 retirados com
+  `BORDERO_ANTERIOR_NAO_RESOLVIDO` (l.378); lote esvaziado (l.379–380).
+- **Chamadas ao Conexos da 2ª remessa:** só leituras e a criação do cabeçalho do lote 66 (`POST fin015`); leitura dos itens do lote 65
+  e 66, `fin010/list` ×2, `fin064/list`. **Nenhum** `importar`, `DELETE`, `finalizarLote`, `POST fin010`. Borderô 260 e lote 65 intactos.
+- **Probe 5/6:** o check 5 (`avaliarCaminhoV7`) exige status ≠ `erro`; com o lote contendo só o grupo, a retirada leva ao desfecho
+  "lote esvaziado", previsto no plano (`sispag-boleto-agrupado-reenvio-rejeitado-plano.md`). O caminho registrado foi `RETIRADO`.
+- **Decisão (Yuri, 2026-10-27):** aceitar esta rodada como a prova HML da guarda. A variante com `CONTROL_DOC` (controle no mesmo
+  lote, remessa gerada só com o J do controle e snapshots do antigo) **não foi executada** e fica como prova complementar opcional.
+- **Resíduo:** lote nativo 65 finalizado com `PG271005.REM` e retorno 12 (`BI`); borderô 260 em cadastro com as baixas de 853/854;
+  lote nativo 66 rascunho vazio; 853/854 em aberto, consumidos. Banco local: grupo `07f9fb2b…` retirado, lotes `4eeaad24…`
+  (`RETORNADO`, flp 65) e `54196867…` (flp 66).

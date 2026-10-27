@@ -1,0 +1,36 @@
+{"em":"2026-10-26T17:20:25.359Z","fase":"semear","ddcCod":991223,"boleto":"42295…2300","somaCentavos":239210}
+{"em":"2026-10-26T17:20:57.215Z","fase":"semear","ddcCod":991255,"boleto":"42293…2300","somaCentavos":239210}
+{"em":"2026-10-26T18:24:24.390Z","fase":"semear","ddcCod":995064,"boleto":"42291…2300","somaCentavos":25000}
+{"em":"2026-10-26T18:25:52.312Z","fase":"semear","ddcCod":995150,"boleto":"42292…2300","somaCentavos":25000}
+{"em":"2026-10-26T18:25:52.666Z","fase":"lote","grupoId":"117c0c28-5d46-4311-87ee-f36a19abe07f","loteId":"a38f1b5d-0a81-4259-8e8a-25418f295087"}
+{"em":"2026-10-26T18:25:58.942Z","fase":"checagem","nome":"remessa gerada","ok":true,"detalhe":"status gerada"}
+{"em":"2026-10-26T18:25:58.942Z","fase":"checagem","nome":"o .REM tem UM J","ok":true,"detalhe":"1 J"}
+{"em":"2026-10-26T18:25:58.942Z","fase":"checagem","nome":"barra == pagamento do J == Σ dos títulos","ok":true,"detalhe":"42292…2300 barra 25000 pag 25000 Σ 25000"}
+{"em":"2026-10-26T18:26:03.447Z","fase":"retorno","gar":8,"ocorrencia":"00"}
+{"em":"2026-10-26T18:26:04.163Z","fase":"checagem","nome":"N títulos vldPago 1 no fin064","ok":true,"detalhe":""}
+{"em":"2026-10-26T18:26:04.165Z","fase":"checagem","nome":"grupo PAGO","ok":true,"detalhe":"estado PAGO"}
+{"em":"2026-10-26T18:26:04.184Z","fase":"checagem","nome":"borderô finalizado pelo ERP","ok":true,"detalhe":"borCod 253"}
+{"em":"2026-10-27T14:30:39.212Z","fase":"semear","ddcCod":995438,"boleto":"42295…2300","somaCentavos":25000}
+{"em":"2026-10-27T14:30:39.760Z","fase":"lote","grupoId":"af4bb3c8-ef0d-4cc3-9eb6-05cb2bbd8d10","loteId":"4ed2da7f-5ff5-4204-ba61-4dea9df5adc8"}
+{"em":"2026-10-27T14:30:41.109Z","fase":"checagem","nome":"a 1ª tentativa parou de forma retomável","ok":true,"detalhe":"GroupBorderoIncompleteError"}
+{"em":"2026-10-27T14:30:47.001Z","fase":"checagem","nome":"a retomada concluiu","ok":true,"detalhe":"status gerada"}
+{"em":"2026-10-27T14:30:47.001Z","fase":"checagem","nome":"houve UM POST fin010 (a retomada não criou outro)","ok":true,"detalhe":"1 POST(s)"}
+{"em":"2026-10-27T14:30:47.019Z","fase":"checagem","nome":"exatamente UM borderô vivo para o grupo","ok":true,"detalhe":"vivos 256"}
+{"em":"2026-10-27T14:30:57.118Z","fase":"semear","ddcCod":995456,"boleto":"42298…2300","somaCentavos":25000}
+{"em":"2026-10-27T14:30:57.435Z","fase":"lote","grupoId":"ef66bdcc-caab-460e-ac84-890d2f0bd732","loteId":"b3fe004d-6002-4a8b-ba5b-09ba9933f6a5"}
+{"em":"2026-10-27T14:30:58.922Z","fase":"checagem","nome":"remessa gerada","ok":true,"detalhe":"status gerada"}
+{"em":"2026-10-27T14:30:59.537Z","fase":"retorno","gar":9,"ocorrencia":"AE"}
+{"em":"2026-10-27T14:31:00.060Z","fase":"checagem","nome":"grupo REJEITADO","ok":false,"detalhe":"situação EM_REMESSA"}
+{"em":"2026-10-27T14:31:00.061Z","fase":"checagem","nome":"Alerta sispag-bordero-grupo-pendente emitido","ok":false,"detalhe":""}
+{"em":"2026-10-27T15:02:49.087Z","fase":"ocorrencia","cod":"BI","descricao":"CNPJ/CPF DO BENEFICIÁRIO INVÁLIDO NO SEGMENTO J-52 OU B INVÁLIDO","tpret":2}
+{"em":"2026-10-27T15:02:49.090Z","fase":"checagem","nome":"ocorrência escolhida é tpret 2","ok":true,"detalhe":"BI CNPJ/CPF DO BENEFICIÁRIO INVÁLIDO NO SEGMENTO J-52 OU B INVÁLIDO"}
+{"em":"2026-10-27T15:02:49.110Z","fase":"semear","ddcCod":997366,"boleto":"42299…2300","somaCentavos":25000}
+{"em":"2026-10-27T15:02:52.331Z","fase":"lote","grupoId":"1b755e5f-6ef2-42c1-8a8c-230ed9ad5af0","loteId":"0f3ab046-fb3a-4df9-b346-3640ae382e75"}
+{"em":"2026-10-27T15:03:04.284Z","fase":"checagem","nome":"remessa gerada","ok":true,"detalhe":"status gerada"}
+{"em":"2026-10-27T15:03:05.608Z","fase":"retorno","gar":10,"ocorrencia":"BI"}
+{"em":"2026-10-27T15:03:10.957Z","fase":"checagem","nome":"grupo REJEITADO","ok":true,"detalhe":"situação REJEITADO"}
+{"em":"2026-10-27T15:03:10.959Z","fase":"checagem","nome":"Alerta sispag-bordero-grupo-pendente emitido","ok":true,"detalhe":""}
+{"em":"2026-10-27T15:03:12.916Z","fase":"lote","grupoId":"1b755e5f-6ef2-42c1-8a8c-230ed9ad5af0","loteId":"09312f22-89dc-4048-abc4-06aaa20c5672"}
+{"em":"2026-10-27T15:03:15.971Z","fase":"v7","reaproveitou":false,"retirou":false,"r2":"{\"status\":\"erro\",\"avisos\":[\"action \\\"preparar o borderô do boleto agrupado\\\" invalid for lote 09312f22-89dc-4048-abc4-06aaa20c5672 in status FINALIZADO\"]}"}
+{"em":"2026-10-27T15:03:15.971Z","fase":"checagem","nome":"V7: o borderô antigo foi reaproveitado OU o grupo saiu com BORDERO_ANTERIOR_NAO_RESOLVIDO","ok":true,"detalhe":"reaproveitou false; retirou false; {\"status\":\"erro\",\"avisos\":[\"action \\\"preparar o borderô do boleto agrupado\\\" invalid for lote 09312f22-89dc-4048-abc4-06aaa20c5672 in status FINALIZADO\"]}"}
+{"em":"2026-10-27T15:03:16.251Z","fase":"checagem","nome":"nunca dois borderôs vivos para o grupo (fin010)","ok":true,"detalhe":"vivos 258"}
