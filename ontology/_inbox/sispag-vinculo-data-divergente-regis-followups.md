@@ -6,7 +6,11 @@ Revisão reduzida de 2026-10-27 (4 QAs: Fault Tolerance, Modifiability, Security
 Não implementados neste PR.
 
 ## P1
-- [ ] **testability-3** — executar o roteiro manual `sispag-vinculo-data-divergente-roteiro-qa.md` (9 casos) em HML/dev antes
+- [ ] **r8-rolagem-fim-de-semana** ⚠️ PRIMEIRO DA FILA (pedido do maintainer, 2026-10-27) (medição HML 2026-10-27) — `DataCandidataItem` usa `PrazoFinalBoleto` (rola com o
+  `BankingCalendar`, pulando feriados), mas o ERP rola a barra só sobre sábado/domingo (ADR-0078, emenda R8). Inalcançável na
+  Fase 1; antes de ligar a Fase 2, a janela do lote deve rolar só o fim de semana. Teste RED: barra sáb 31/10/2026, débito
+  ter 03/11 (Finados na segunda) ⇒ fora da janela.
+- [x] **testability-3** (executado 2026-10-27, ver o roteiro) — executar o roteiro manual `sispag-vinculo-data-divergente-roteiro-qa.md` (9 casos) em HML/dev antes
   de qualquer passo da fase 2; os CHECKs da migration 0091 só foram verificados contra o texto do SQL.
 - [ ] **modifiability-1** — extrair o fluxo do reconhecimento tipado de `BoletoSuggestionService` (1.287 LOC, +105 neste delta)
   antes do PR da fase 2.
@@ -15,10 +19,6 @@ Não implementados neste PR.
   `PrazoBoletoCalculador.ts:38-59`, `situacaoTitulos.ts:245-252`). Pré-existente desde a PR #131, fora do ADR-0078. Correção
   proposta: levar a data do boleto do grupo ao `PrazoBoletoCalculador` (teste RED: boleto 03/11, título 05/11, hoje 03/11 ⇒
   prazo 03/11) + emenda de ontologia.
-- [ ] **r8-rolagem-fim-de-semana** (medição HML 2026-10-27) — `DataCandidataItem` usa `PrazoFinalBoleto` (rola com o
-  `BankingCalendar`, pulando feriados), mas o ERP rola a barra só sobre sábado/domingo (ADR-0078, emenda R8). Inalcançável na
-  Fase 1; antes de ligar a Fase 2, a janela do lote deve rolar só o fim de semana. Teste RED: barra sáb 31/10/2026, débito
-  ter 03/11 (Finados na segunda) ⇒ fora da janela.
 
 ## P2
 - [ ] **fault-tolerance-1** — logar o motivo do fail-closed de `validadeDoReconhecimento` (hoje `catch {}` mudo).
