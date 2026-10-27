@@ -9,6 +9,12 @@ describe('sinaisVisiveis', () => {
     ])
   })
 
+  it('com DATA_DIVERGENTE_RECONHECIDA (ADR-0078), só NUMERO_IGUAL some', () => {
+    expect(
+      sinaisVisiveis(['NUMERO_IGUAL', 'NUMERO_CONFIAVEL', 'DATA_DIVERGENTE_RECONHECIDA']),
+    ).toEqual(['NUMERO_CONFIAVEL', 'DATA_DIVERGENTE_RECONHECIDA'])
+  })
+
   it('mantém NUMERO_IGUAL sozinho', () => {
     expect(sinaisVisiveis(['NUMERO_IGUAL', 'MESMO_DIA'])).toEqual(['NUMERO_IGUAL', 'MESMO_DIA'])
   })
