@@ -128,6 +128,21 @@ describe('MotorSugestaoBoleto — âncora de número (I15s, NUMERO_CONFIAVEL)', 
         });
     });
 
+    describe('mesmo boleto em dois arquivos DDA (linhas duplicadas no pool)', () => {
+        it('o mesmo codbar repetido não é "outro boleto": mantém NUMERO_CONFIAVEL', () => {
+            const t = titulo('25037');
+            const b37 = boleto('25037');
+            const b37Outro = { ...b37, ddcCod: 901, ditCod: 5000 };
+            const d = desfecho(
+                entrada({ titulos: [t], boletos: [b37, b37Outro, boleto('25041')] }),
+                t,
+            );
+            expect(escolha(d)?.numeroBoleto).toBe('25037');
+            expect(escolha(d)?.avaliacao.sinais).toContain(SINAL_SUGESTAO.NUMERO_CONFIAVEL);
+            expect(escolha(d)?.confirmavel).toBe(true);
+        });
+    });
+
     describe('âncora desligada (leitura de números indisponível)', () => {
         it('numeroAncoraDesligada: nenhum candidato recebe NUMERO_CONFIAVEL, mesmo no caso real', () => {
             const t = titulo('25037');
