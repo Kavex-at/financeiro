@@ -2298,6 +2298,8 @@ export const SINAIS_SUGESTAO_BOLETO = [
   'VENCE_ANTES_DO_TITULO',
   /** Gravado no snapshot da decisão quando o analista reconheceu `VENCE_ANTES_DO_TITULO`. */
   'RECONHECEU_VENCE_ANTES',
+  /** Gravado no snapshot da decisão quando o analista reconheceu a data divergente tipada (I15r, ADR-0078). */
+  'DATA_DIVERGENTE_RECONHECIDA',
   /** Número do boleto = DPS lido do PDF da NFS-e + `000` (âncora direta, I15p). */
   'DPS_IGUAL',
   /** Casado pela ordem de DPS no escopo provado do emissor (I15p). */

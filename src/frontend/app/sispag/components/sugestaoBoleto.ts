@@ -48,6 +48,10 @@ export const TEXTO_SINAL: Record<SinalSugestaoBoleto, { texto: string; atencao: 
     texto: 'aviso de vencimento antes do título reconhecido por quem confirmou',
     atencao: false,
   },
+  DATA_DIVERGENTE_RECONHECIDA: {
+    texto: 'data divergente reconhecida por quem confirmou',
+    atencao: false,
+  },
   DPS_IGUAL: { texto: 'número do boleto igual ao DPS da NFS-e', atencao: false },
   ORDEM_DPS: { texto: 'casado pela ordem do DPS da NFS-e deste emissor', atencao: false },
 }
