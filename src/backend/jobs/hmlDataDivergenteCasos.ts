@@ -52,8 +52,55 @@ export default class HmlDataDivergenteCasos {
         }));
     };
 
+    /**
+     * `SABADO=YYYY-MM-DD` do L-ROLAGEM: tem de ser um sábado cuja segunda seguinte é dia útil
+     * bancário (senão o teste não separa "rola" de "rola só até a segunda"). Devolve a segunda
+     * (o débito); lança ANTES de qualquer chamada ao ERP.
+     */
+    public static readonly validarSabado = (calendar: BankingCalendar, sabado: string): string => {
+        if (
+            !/^\d{4}-\d{2}-\d{2}$/.test(sabado) ||
+            Number.isNaN(Date.parse(`${sabado}T00:00:00Z`))
+        ) {
+            throw new Error(`SABADO inválido: "${sabado}" (use YYYY-MM-DD)`);
+        }
+        if (new Date(`${sabado}T00:00:00Z`).getUTCDay() !== 6) {
+            throw new Error(`SABADO=${sabado} não é um sábado`);
+        }
+        const segunda = calendar.addDays(sabado, 2);
+        if (!calendar.isBusinessDay(segunda)) {
+            throw new Error(
+                `SABADO=${sabado}: a segunda seguinte (${segunda}) não é dia útil bancário`,
+            );
+        }
+        return segunda;
+    };
+
+    /** `CASOS=L-ROLAGEM,L-R2`: só os lotes nomeados; ausente/vazio = todos. Nome desconhecido lança. */
+    public static readonly selecionar = (
+        lotes: LotePlanejado[],
+        casos: string | undefined,
+    ): LotePlanejado[] => {
+        const nomes = (casos ?? '')
+            .split(',')
+            .map((n) => n.trim())
+            .filter(Boolean);
+        if (nomes.length === 0) return lotes;
+        const desconhecidos = nomes.filter((n) => !lotes.some((l) => l.id === n));
+        if (desconhecidos.length > 0) {
+            throw new Error(
+                `CASOS desconhecido(s): ${desconhecidos.join(', ')} (válidos: ${lotes.map((l) => l.id).join(', ')})`,
+            );
+        }
+        return lotes.filter((l) => nomes.includes(l.id));
+    };
+
     /** V11 + V12: três lotes de rascunho, cada um respondendo a UMA pergunta sobre o ERP. */
-    public static readonly lotes = (calendar: BankingCalendar, hoje: string): LotePlanejado[] => {
+    public static readonly lotes = (
+        calendar: BankingCalendar,
+        hoje: string,
+        opcoes: { sabado?: string } = {},
+    ): LotePlanejado[] => {
         const util = (civil: string): string =>
             calendar.isBusinessDay(civil) ? civil : calendar.nextBusinessDay(civil);
         const debitoJ = util(calendar.addDays(hoje, 1));
@@ -61,8 +108,13 @@ export default class HmlDataDivergenteCasos {
         const barraJ2 = util(calendar.addDays(debitoJ, 7));
         const debitoR2 = util(calendar.addDays(hoje, 5));
         const barraR2 = util(calendar.addDays(hoje, 2));
-        const sabado = HmlDataDivergenteCasos.proximoSabado(calendar, calendar.addDays(hoje, 3));
-        const segunda = calendar.nextBusinessDay(sabado);
+        const sabado =
+            opcoes.sabado ??
+            HmlDataDivergenteCasos.proximoSabado(calendar, calendar.addDays(hoje, 3));
+        const segunda =
+            opcoes.sabado !== undefined
+                ? HmlDataDivergenteCasos.validarSabado(calendar, sabado)
+                : calendar.nextBusinessDay(sabado);
         return [
             {
                 id: 'L-J',

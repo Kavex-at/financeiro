@@ -57,6 +57,56 @@ describe('HmlDataDivergenteCasos', () => {
         });
     });
 
+    describe('SABADO e CASOS (sonda da rolagem de sábado)', () => {
+        it('aceita 07/11/2026 (segunda 09/11 é útil): débito = 09/11, barra = o sábado', () => {
+            expect(HmlDataDivergenteCasos.validarSabado(calendar, '2026-11-07')).toBe('2026-11-09');
+            const rol = HmlDataDivergenteCasos.lotes(calendar, HOJE, { sabado: '2026-11-07' }).find(
+                (l) => l.id === 'L-ROLAGEM',
+            );
+            expect(rol?.debito).toBe('2026-11-09');
+            expect(rol?.itens[0]?.barraVenc).toBe('2026-11-07');
+        });
+
+        it('recusa 31/10/2026: a segunda 02/11 é Finados', () => {
+            expect(() => HmlDataDivergenteCasos.validarSabado(calendar, '2026-10-31')).toThrow(
+                /não é dia útil/,
+            );
+            expect(() =>
+                HmlDataDivergenteCasos.lotes(calendar, HOJE, { sabado: '2026-10-31' }),
+            ).toThrow();
+        });
+
+        it('recusa quem não é sábado e formato inválido', () => {
+            expect(() => HmlDataDivergenteCasos.validarSabado(calendar, '2026-11-06')).toThrow(
+                /não é um sábado/,
+            );
+            expect(() => HmlDataDivergenteCasos.validarSabado(calendar, '07/11/2026')).toThrow(
+                /inválido/,
+            );
+        });
+
+        it('sem SABADO o plano é o de antes (próximo sábado depois de hoje+3)', () => {
+            const rol = HmlDataDivergenteCasos.lotes(calendar, HOJE).find(
+                (l) => l.id === 'L-ROLAGEM',
+            );
+            expect(rol?.itens[0]?.barraVenc).toBe('2026-10-31');
+            expect(rol?.debito).toBe('2026-11-03');
+        });
+
+        it('CASOS filtra por nome; ausente ou vazio = todos; nome desconhecido lança', () => {
+            const todos = HmlDataDivergenteCasos.lotes(calendar, HOJE);
+            expect(HmlDataDivergenteCasos.selecionar(todos, undefined)).toHaveLength(3);
+            expect(HmlDataDivergenteCasos.selecionar(todos, '')).toHaveLength(3);
+            expect(HmlDataDivergenteCasos.selecionar(todos, 'L-ROLAGEM').map((l) => l.id)).toEqual([
+                'L-ROLAGEM',
+            ]);
+            expect(
+                HmlDataDivergenteCasos.selecionar(todos, ' L-R2 , L-J ').map((l) => l.id),
+            ).toEqual(['L-J', 'L-R2']);
+            expect(() => HmlDataDivergenteCasos.selecionar(todos, 'L-X')).toThrow(/desconhecido/);
+        });
+    });
+
     describe('fonteDaData', () => {
         const ref = { titulo: '2025-12-02', barra: '2026-10-29', item: '2026-10-30' };
 
