@@ -50,3 +50,27 @@ Títulos consumidos: docs 284, 232, 640, 642 (use `JA_USADOS=284,232,640,642`). 
 - Nada foi enviado a banco; nenhuma escrita em PRD.
 - Em aberto: o banco recusa J com vencimento ≠ fator do código? Só um boleto real pequeno em PRD responde; a flag
   `SISPAG_BIND_CODBAR_DATA_DIVERGENTE_FILIAIS` fica `off` até lá (ADR-0078, emenda 2026-10-26).
+
+## V11/R8 — rolagem de sábado, 2026-10-27 (`probe-hml-vinculo-data-divergente-rem.ts`, `CASOS=L-ROLAGEM SABADO=2026-11-07`)
+
+Autorização do maintainer na sessão de 2026-10-27. Só o caso L-ROLAGEM; nenhuma remessa gerada; nada enviado a banco.
+
+| Tentativa | Lote | Débito | Item (barra vence) | Modalidade | `finalizar` | Leitura |
+|---|---|---|---|---|---|---|
+| 1 | **67** | seg 09/11 | 839/1, sáb 07/11 | 7 | recusado: "FALTA O CÓDIGO DE BARRAS DE ALGUM PAGAMENTO" | **inválida**: `confirmaCodigoBarras` recusou `FIN_015.TITULO_DEVE_SER_MODALIDADE_TITULO_PROPRIO` (barra do banco 341 = banco do lote exige modalidade 6, já medido em V10) |
+| 2 | **68** | seg 09/11 | 841/1, sáb 07/11 (`itsDtaPgto` relido 07/11) | 6 | **aceito** | o ERP compara o débito com a barra de sábado **rolada** para a segunda |
+
+**Achado (fecha a R8):** com débito na segunda 09/11 e item com data no sábado 07/11, o `finalizar` aceita; a regra
+"débito ≤ min(`itsDtaPgto`)" usa a data da barra **rolada ao dia útil seguinte**. Somado ao lote **55** (sábado 31/10,
+débito terça 03/11, recusado; segunda 02/11 = Finados), a leitura consistente é: o ERP **rola fim de semana para a segunda,
+mas não considera o feriado de Finados** (se considerasse, 31/10 rolaria para 03/11 e o lote 55 passaria). Não medido: outros
+feriados nacionais/bancários e boleto vencendo em feriado de dia de semana.
+
+**Consequência para a regra (aplicada: ADR-0078, emenda 2026-10-27 R8, decisão do maintainer):** o fail-closed atual do ADR-0078 ("débito ≤ data da barra **sem
+rolar**") é mais restrito do que o ERP. Pode ser relaxado para "débito ≤ data da barra rolada **só sobre sábado/domingo**";
+rolar com o `BankingCalendar` (que pula feriados) seria **errado** nos feriados, como o lote 55 mostra. Mudança de regra
+Decidida pelo maintainer em 2026-10-27 e registrada no ADR-0078 e na I8c; o código da janela (`DataCandidataItem`) ainda rola com feriados e fica como follow-up `r8-rolagem-fim-de-semana` antes da Fase 2.
+
+**Resíduo em HML:** lote **67** (rascunho, item 839/1 sem barra) e lote **68** (finalizado, item 841/1, sem remessa).
+Títulos consumidos: **839, 841** (somar ao `JA_USADOS`: `284,232,640,642,839,841`). Saída: `/tmp/hml-vinculo-data-divergente/v-sabado-tentativa1.json`
+e `v11-v12.json`; logs `/tmp/hml-vinculo-data-divergente-sabado.log` e `-sabado-2.log`.

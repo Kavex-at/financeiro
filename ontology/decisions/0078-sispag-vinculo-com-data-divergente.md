@@ -106,3 +106,22 @@ Resíduo em HML (não há cancelar lote no client): lotes 53 (finalizado, remess
 documentos 284, 232, 640 e 642 consumidos.
 
 *Versão da ontologia: sem bump (mesma convenção da emenda 2026-10-20 da ADR-0074).*
+
+## Emenda 2026-10-27: rolagem de sábado medida (R8)
+
+Evidência: `_inbox/sispag-vinculo-data-divergente-medicao.md`, seção "V11/R8 — rolagem de sábado" (HML, lote **68**).
+
+**Medido.** Item com barra no sábado 07/11 e `dataDebito` na segunda 09/11: o `finalizar` **aceita**. Com o lote **55**
+(barra no sábado 31/10, débito na terça 03/11, segunda 02/11 = Finados) **recusado**, a leitura é: o ERP compara a
+`dataDebito` com o `itsDtaPgto` **rolado sobre sábado/domingo para a segunda**, e **não considera feriado**.
+
+**Decisão do maintainer (2026-10-27), substitui o fail-closed "sem rolar" da emenda anterior.** A janela do lote (R2,
+I8c) usa a data da barra **rolada só sobre sábado/domingo** (sábado ou domingo ⇒ segunda seguinte); **feriado não rola**.
+A vigência bancária da I15h (próximo dia útil bancário, pula feriados) continua valendo para o **prazo exibido** e o
+"perdido" (I19t), não para a janela do ERP. Não medidos: outros feriados e barra vencendo em feriado de dia de semana
+(nesses casos vale a data da barra sem rolar).
+
+**Débito de código (antes de ligar a Fase 2).** `DataCandidataItem` (I8c) usa `PrazoFinalBoleto`, que rola com o
+`BankingCalendar` (pula feriados): mais permissivo que o ERP em sábado seguido de feriado. Inalcançável na Fase 1 (só
+item vinculado pelo caminho `DATA_DIVERGENTE`, que não existe sem a Fase 2); corrigir para rolagem só de fim de semana
+antes do `on`. Registrado em `_inbox/sispag-vinculo-data-divergente-regis-followups.md` (`r8-rolagem-fim-de-semana`).

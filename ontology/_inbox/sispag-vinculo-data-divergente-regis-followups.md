@@ -15,6 +15,10 @@ Não implementados neste PR.
   `PrazoBoletoCalculador.ts:38-59`, `situacaoTitulos.ts:245-252`). Pré-existente desde a PR #131, fora do ADR-0078. Correção
   proposta: levar a data do boleto do grupo ao `PrazoBoletoCalculador` (teste RED: boleto 03/11, título 05/11, hoje 03/11 ⇒
   prazo 03/11) + emenda de ontologia.
+- [ ] **r8-rolagem-fim-de-semana** (medição HML 2026-10-27) — `DataCandidataItem` usa `PrazoFinalBoleto` (rola com o
+  `BankingCalendar`, pulando feriados), mas o ERP rola a barra só sobre sábado/domingo (ADR-0078, emenda R8). Inalcançável na
+  Fase 1; antes de ligar a Fase 2, a janela do lote deve rolar só o fim de semana. Teste RED: barra sáb 31/10/2026, débito
+  ter 03/11 (Finados na segunda) ⇒ fora da janela.
 
 ## P2
 - [ ] **fault-tolerance-1** — logar o motivo do fail-closed de `validadeDoReconhecimento` (hoje `catch {}` mudo).
