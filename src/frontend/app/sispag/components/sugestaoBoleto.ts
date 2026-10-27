@@ -62,11 +62,16 @@ export const TEXTO_SINAL: Record<SinalSugestaoBoleto, { texto: string; atencao: 
 }
 
 /**
- * Sinais exibidos como evidência: `NUMERO_CONFIAVEL` suprime `NUMERO_IGUAL` (textos quase idênticos).
- * Só exibição — o backend e os dados mantêm os dois sinais (ADR-0079).
+ * Sinais exibidos como evidência: `NUMERO_CONFIAVEL` suprime `NUMERO_IGUAL` (textos quase idênticos)
+ * e `COLISAO_NUMERO` (na faixa ampliada da âncora, todo par de número igual fora dos limites globais
+ * emite a colisão, e o texto "coincide com o de outro título" contradiz a âncora confiável).
+ * Sem `NUMERO_CONFIAVEL`, ambos continuam visíveis. Só exibição — o backend e os dados mantêm os
+ * sinais (ADR-0079).
  */
 export const sinaisVisiveis = (sinais: SinalSugestaoBoleto[]): SinalSugestaoBoleto[] =>
-  sinais.includes('NUMERO_CONFIAVEL') ? sinais.filter((s) => s !== 'NUMERO_IGUAL') : sinais
+  sinais.includes('NUMERO_CONFIAVEL')
+    ? sinais.filter((s) => s !== 'NUMERO_IGUAL' && s !== 'COLISAO_NUMERO')
+    : sinais
 
 export const TIER_ROTULO: Record<SugestaoBoleto['avaliacao']['resultado'], string> = {
   CONHECIDO: 'sugestão forte · emissor conhecido',
