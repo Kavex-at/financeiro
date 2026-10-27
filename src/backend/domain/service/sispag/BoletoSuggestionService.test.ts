@@ -232,6 +232,7 @@ const montar = (over: Partial<Cenario> = {}) => {
     };
     const tituloRepo = {
         listAtivos: jest.fn(async () => cen.titulos),
+        listNumerosDocumento: jest.fn(async () => []),
         buscarPorChave: jest.fn(
             async (c: { filCod: number; docCod: string; titCod: string }) =>
                 cen.titulos.find((t) => t.docCod === c.docCod && t.titCod === c.titCod) ?? null,
@@ -332,6 +333,43 @@ describe('BoletoSuggestionService — DPS lidos entram no motor (I15p, ADR-0073)
             await service.listarSugestoes({});
             expect(dpsRepo.listarLidos).toHaveBeenCalledTimes(1);
             expect(espiao.mock.calls[0]?.[0].dps).toEqual([dps]);
+        } finally {
+            espiao.mockRestore();
+        }
+    });
+
+    it('I15s: lê os números de documento de TODOS os títulos e os entrega ao motor', async () => {
+        const espiao = jest.spyOn(motor, 'analisar');
+        try {
+            const { service, tituloRepo } = montar();
+            const numeros = [
+                { filCod: 2, docCod: '777', titCod: '1', pesCod: '7001', numeroDocumento: '25037' },
+            ];
+            tituloRepo.listNumerosDocumento.mockResolvedValueOnce(numeros as never[]);
+            await service.listarSugestoes({});
+            expect(tituloRepo.listNumerosDocumento).toHaveBeenCalledTimes(1);
+            expect(espiao.mock.calls[0]?.[0].titulosDoCredor).toEqual(numeros);
+        } finally {
+            espiao.mockRestore();
+        }
+    });
+
+    it('falha ao ler os números de documento não derruba a sugestão: desliga só a âncora de número e avisa', async () => {
+        const espiao = jest.spyOn(motor, 'analisar');
+        try {
+            const { service, tituloRepo, logService } = montar();
+            tituloRepo.listNumerosDocumento.mockRejectedValueOnce(new Error('timeout'));
+            const r = await service.listarSugestoes({});
+            expect(r.total).toBe(1);
+            const entrada = espiao.mock.calls[0]?.[0];
+            expect(entrada?.numeroAncoraDesligada).toBe(true);
+            expect(entrada?.titulosDoCredor).toBeUndefined();
+            expect(logService.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    message:
+                        'falha ao ler números de documento; âncora de número desligada nesta execução',
+                }),
+            );
         } finally {
             espiao.mockRestore();
         }

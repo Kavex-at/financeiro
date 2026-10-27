@@ -98,6 +98,13 @@ describe('rótulos e tons por situação', () => {
     })
     expect(TEXTO_SINAL.RECONHECEU_VENCE_ANTES.texto).toEqual(expect.any(String))
   })
+
+  it('a âncora de número (I15s) tem rótulo próprio e não é aviso', () => {
+    expect(TEXTO_SINAL.NUMERO_CONFIAVEL).toEqual({
+      texto: 'número do boleto igual ao do documento (confiável)',
+      atencao: false,
+    })
+  })
 })
 
 describe('mensagemVenceAntes (§3.4)', () => {

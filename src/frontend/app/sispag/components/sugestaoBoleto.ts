@@ -33,6 +33,7 @@ const SINAIS_ANCORA: ReadonlySet<SinalSugestaoBoleto> = new Set<SinalSugestaoBol
   'NUMERO_IGUAL',
   'DPS_IGUAL',
   'ORDEM_DPS',
+  'NUMERO_CONFIAVEL',
 ])
 
 export const TEXTO_SINAL: Record<SinalSugestaoBoleto, { texto: string; atencao: boolean }> = {
@@ -54,7 +55,18 @@ export const TEXTO_SINAL: Record<SinalSugestaoBoleto, { texto: string; atencao: 
   },
   DPS_IGUAL: { texto: 'número do boleto igual ao DPS da NFS-e', atencao: false },
   ORDEM_DPS: { texto: 'casado pela ordem do DPS da NFS-e deste emissor', atencao: false },
+  NUMERO_CONFIAVEL: {
+    texto: 'número do boleto igual ao do documento (confiável)',
+    atencao: false,
+  },
 }
+
+/**
+ * Sinais exibidos como evidência: `NUMERO_CONFIAVEL` suprime `NUMERO_IGUAL` (textos quase idênticos).
+ * Só exibição — o backend e os dados mantêm os dois sinais (ADR-0079).
+ */
+export const sinaisVisiveis = (sinais: SinalSugestaoBoleto[]): SinalSugestaoBoleto[] =>
+  sinais.includes('NUMERO_CONFIAVEL') ? sinais.filter((s) => s !== 'NUMERO_IGUAL') : sinais
 
 export const TIER_ROTULO: Record<SugestaoBoleto['avaliacao']['resultado'], string> = {
   CONHECIDO: 'sugestão forte · emissor conhecido',

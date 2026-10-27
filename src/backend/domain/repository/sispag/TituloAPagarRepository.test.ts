@@ -172,6 +172,20 @@ describe('TituloAPagarRepository', () => {
         expect(sql).toContain('doc_esp_numero');
     });
 
+    it('listNumerosDocumento lê SEM filtro ativo, só com SQL fixo, e mapeia as linhas (I15s)', async () => {
+        const { client } = buildDb();
+        (client.selectMany as jest.Mock).mockResolvedValue([
+            { fil_cod: 2, doc_cod: '25037', tit_cod: '1', pes_cod: '387', doc_esp_numero: '25037' },
+        ]);
+        const r = await new TituloAPagarRepository(client).listNumerosDocumento();
+        expect(r).toEqual([
+            { filCod: 2, docCod: '25037', titCod: '1', pesCod: '387', numeroDocumento: '25037' },
+        ]);
+        const sql = (client.selectMany as jest.Mock).mock.calls[0][0] as string;
+        expect(sql).not.toMatch(/ativo/i);
+        expect(sql).toContain('FROM titulo_a_pagar');
+    });
+
     it('listElegiveisParaFormacao exclui título em QUALQUER lote vivo, não só RASCUNHO (I3)', async () => {
         const { client } = buildDb();
         await new TituloAPagarRepository(client).listElegiveisParaFormacao(7, HOJE);

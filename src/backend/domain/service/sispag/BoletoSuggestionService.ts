@@ -33,6 +33,7 @@ import {
     DDA_DEFASADO_HORAS,
     type DesfechoTitulo,
     type DpsConhecido,
+    type TituloNumeroDocumento,
     type DesfechoTituloView,
     ESTADO_SUGESTAO,
     type FiltroSugestoes,
@@ -1040,6 +1041,25 @@ export default class BoletoSuggestionService {
         }
     };
 
+    /**
+     * Números de documento de todos os títulos (I15s) — só alimenta a guarda de duplicata da âncora
+     * de número. Falha na leitura desliga SÓ a âncora (fail-closed): `undefined` + o motor não
+     * ancora; `[]` significaria "sem duplicatas" e ancoraria tudo, por isso não se usa.
+     */
+    private numerosOuDesligado = async (): Promise<TituloNumeroDocumento[] | undefined> => {
+        try {
+            return await this.tituloRepo.listNumerosDocumento();
+        } catch (err: unknown) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'falha ao ler números de documento; âncora de número desligada nesta execução',
+                data: { erro: err instanceof Error ? err.message : String(err) },
+            });
+            return undefined;
+        }
+    };
+
     /** Lê o pool e a carteira persistidos e roda o motor com o estado de decisões de agora. */
     private sugerirAgora = async (): Promise<{
         sugestoes: SugestaoBoletoTitulo[];
@@ -1049,17 +1069,28 @@ export default class BoletoSuggestionService {
         titulos: number;
         boletos: number;
     }> => {
-        const [titulos, boletos, pares, rejeitadas, confirmadas, emLotes, dps, grupos] =
-            await Promise.all([
-                this.tituloRepo.listAtivos(),
-                this.boletoRepo.listBoletos({}),
-                this.repo.listarParesVigentes(),
-                this.repo.listarChaveadas(DECISAO_SUGESTAO_BOLETO.REJEITADA),
-                this.repo.listarChaveadas(DECISAO_SUGESTAO_BOLETO.CONFIRMADA),
-                this.loteRepo.listTitulosEmLotesAbertos(),
-                this.dpsLidosOuNenhum(),
-                this.grupoRepo.listarConfirmados(),
-            ]);
+        const [
+            titulos,
+            titulosDoCredor,
+            boletos,
+            pares,
+            rejeitadas,
+            confirmadas,
+            emLotes,
+            dps,
+            grupos,
+        ] = await Promise.all([
+            this.tituloRepo.listAtivos(),
+            // I15s: guarda de duplicata do número — TODOS os títulos, ativos ou não.
+            this.numerosOuDesligado(),
+            this.boletoRepo.listBoletos({}),
+            this.repo.listarParesVigentes(),
+            this.repo.listarChaveadas(DECISAO_SUGESTAO_BOLETO.REJEITADA),
+            this.repo.listarChaveadas(DECISAO_SUGESTAO_BOLETO.CONFIRMADA),
+            this.loteRepo.listTitulosEmLotesAbertos(),
+            this.dpsLidosOuNenhum(),
+            this.grupoRepo.listarConfirmados(),
+        ]);
         const datasDebito = this.mapaDatasDebito(emLotes);
         const { sugestoes, desfechos } = this.motor.analisar({
             titulos,
@@ -1075,6 +1106,7 @@ export default class BoletoSuggestionService {
                 ditCod: g.ditCod,
                 titulos: g.titulos,
             })),
+            ...(titulosDoCredor ? { titulosDoCredor } : { numeroAncoraDesligada: true }),
         });
         return {
             sugestoes,

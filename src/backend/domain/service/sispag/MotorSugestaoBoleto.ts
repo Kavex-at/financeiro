@@ -21,12 +21,16 @@ import {
     type SituacaoSugestaoTitulo,
     SUGESTAO_TOP_CANDIDATOS,
     type SugestaoBoletoTitulo,
+    type TituloNumeroDocumento,
 } from '../../interface/sispag/SugestaoBoleto.js';
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import ReconhecimentoDivergencia from '../../libs/boleto/ReconhecimentoDivergencia.js';
 import AncoraOrdemDps from './AncoraOrdemDps.js';
-import RegraSugestaoBoleto, { faixaDeCandidatos } from './RegraSugestaoBoleto.js';
+import RegraSugestaoBoleto, {
+    faixaDeCandidatos,
+    NUMERO_CONFIAVEL_MIN_DIGITOS,
+} from './RegraSugestaoBoleto.js';
 
 export interface EntradaMotorSugestao {
     /** Carteira ativa (`titulo_a_pagar`), inclusive os que o ERP já sinalizou (`temBoleto`). */
@@ -48,6 +52,17 @@ export interface EntradaMotorSugestao {
      * jogo (exclusão (4) da I15e). Ausente ≡ lista vazia.
      */
     gruposConfirmados?: GrupoConfirmadoChaveado[];
+    /**
+     * Números de documento de TODOS os títulos (ativos ou não, `titulo_a_pagar` sem filtro `ativo`),
+     * para a guarda de duplicata da âncora de número (I15s). Sem ela vale só `titulos`.
+     */
+    titulosDoCredor?: TituloNumeroDocumento[];
+    /**
+     * Fail-closed da âncora de número (I15s): a leitura de `titulosDoCredor` falhou, então a guarda
+     * de duplicata não pode ser avaliada e NENHUM candidato recebe `NUMERO_CONFIAVEL`. Ausente
+     * `titulosDoCredor` sem este sinal continua valendo só `titulos` (entrada legada).
+     */
+    numeroAncoraDesligada?: boolean;
 }
 
 /** Grupo `CONFIRMADO` no formato que o motor consome: o boleto e as chaves dos títulos. */
@@ -94,8 +109,17 @@ interface CandidatoCompleto extends Candidato {
     ancorado: boolean;
     /** 0 CONHECIDO · 1 FORTE · 2 ATENCAO ancorada · 3 ATENCAO sem âncora · 4 VENCIDO. */
     forca: number;
-    /** Ancorado por DPS (I15p); calculado uma vez, o comparador é o caminho quente do motor. */
-    porDps: boolean;
+    /**
+     * Âncora forte (DPS, I15p, ou número confiável, I15s); calculada uma vez, o comparador é o
+     * caminho quente do motor.
+     */
+    ancoraForte: boolean;
+}
+
+/** Índices da guarda de duplicata da âncora de número (I15s). */
+interface IndiceNumeros {
+    boletos: Map<string, number>;
+    documentos: Map<string, Set<string>>;
 }
 
 interface PendenteCompleto {
@@ -147,11 +171,17 @@ const SINAIS_ANCORA: ReadonlySet<string> = new Set([
     SINAL_SUGESTAO.NUMERO_IGUAL,
     SINAL_SUGESTAO.DPS_IGUAL,
     SINAL_SUGESTAO.ORDEM_DPS,
+    SINAL_SUGESTAO.NUMERO_CONFIAVEL,
 ]);
 const ancoradoPor = (sinais: readonly string[]): boolean =>
     sinais.some((x) => SINAIS_ANCORA.has(x));
 const ancoradoPorDps = (sinais: readonly string[]): boolean =>
     sinais.includes(SINAL_SUGESTAO.DPS_IGUAL) || sinais.includes(SINAL_SUGESTAO.ORDEM_DPS);
+const ancoradoPorNumero = (sinais: readonly string[]): boolean =>
+    sinais.includes(SINAL_SUGESTAO.NUMERO_CONFIAVEL);
+/** Âncora de identidade (camada 0): DPS (I15p) ou número confiável (I15s). */
+const ancoraForte = (sinais: readonly string[]): boolean =>
+    ancoradoPorDps(sinais) || ancoradoPorNumero(sinais);
 
 const comparaDoc = (a: string, b: string): number => {
     const na = Number(a);
@@ -166,6 +196,8 @@ const MOTIVO_FRACO =
     'Sem confirmação do emissor nem do número do documento: só informativo, não pode ser confirmado.';
 const MOTIVO_AMBIGUO =
     'Mais de um boleto igualmente provável para este título: rejeite os que não são deste título para liberar a confirmação.';
+const MOTIVO_CONFLITO_ANCORAS =
+    'O DPS da NFS-e e o número do documento apontam para boletos diferentes: rejeite o que não é deste título para liberar a confirmação.';
 const MOTIVO_MAIS_FORTE = 'Há um candidato mais forte para este título.';
 const MOTIVO_SEM_CANDIDATO =
     'Nenhum boleto livre no pool DDA dentro do envelope (±R$ 10,00 ou 2 %, ±10 dias).';
@@ -286,6 +318,7 @@ export default class MotorSugestaoBoleto {
             });
         }
         this.ancorarPorOrdem(pendentes, p, entrada);
+        if (!entrada.numeroAncoraDesligada) this.ancorarPorNumero(pendentes, entrada);
         pendentes.sort((x, y) => this.prioridade(x.alvo, y.alvo));
 
         // O contrato legado só enxerga o que `aceita`; a ordem relativa da lista completa é a mesma.
@@ -517,10 +550,12 @@ export default class MotorSugestaoBoleto {
     private alocar = (pendentes: Pendente[], ocupados: Set<string>): SugestaoBoletoTitulo[] => {
         const ocupadosAgora = new Set(ocupados);
         const resolvidos = new Set<string>();
-        const porDps = this.escolhasPorDps(pendentes, ocupadosAgora);
+        const { escolhas: porAncora, conflitos } = this.escolhasPorAncora(pendentes, ocupadosAgora);
         const camadaDps: SugestaoBoletoTitulo[] = [];
         for (const { alvo } of pendentes) {
-            const c = porDps.get(alvo.chave);
+            // Âncoras divergentes: sem sugestão (o desfecho mostra AMBIGUA).
+            if (conflitos.has(alvo.chave)) resolvidos.add(alvo.chave);
+            const c = porAncora.get(alvo.chave);
             if (!c) continue;
             ocupadosAgora.add(c.boleto.chave);
             resolvidos.add(alvo.chave);
@@ -536,35 +571,46 @@ export default class MotorSugestaoBoleto {
     };
 
     /**
-     * Camada 0 (I15p): o par ancorado por DPS reserva o boleto ANTES das demais camadas — é a prova
-     * de identidade mais forte que o motor tem, e nenhum título de menor vencimento ancorado só pelo
-     * emissor pode levá-lo. Vale só para o candidato DPS ÚNICO do título, num boleto que nenhum outro
-     * título reivindica por DPS, e nunca para vencido no débito (I15h).
+     * Camada 0 (I15p, I15s): o par com âncora forte (DPS ou número confiável) reserva o boleto ANTES
+     * das demais camadas — é a prova de identidade mais forte que o motor tem, e nenhum título de
+     * menor vencimento ancorado só pelo emissor pode levá-lo. Vale só para o candidato ancorado ÚNICO
+     * do título, num boleto que nenhum outro título reivindica por âncora forte, e nunca para vencido
+     * no débito (I15h). DPS e número em boletos diferentes do mesmo título é conflito: o título não
+     * escolhe nem reivindica nada (AMBIGUA).
      */
-    private escolhasPorDps = <C extends Candidato>(
+    private escolhasPorAncora = <C extends Candidato>(
         pendentes: ReadonlyArray<{ alvo: TituloElegivel; candidatos: C[] }>,
         ocupados: ReadonlySet<string>,
-    ): Map<string, C> => {
-        const dpsDoTitulo = new Map<string, C[]>();
+    ): { escolhas: Map<string, C>; conflitos: Set<string> } => {
+        const fortesDoTitulo = new Map<string, C[]>();
         const reivindicacoes = new Map<string, number>();
+        const conflitos = new Set<string>();
         for (const { alvo, candidatos } of pendentes) {
-            const doDps = candidatos.filter(
+            const fortes = candidatos.filter(
                 (c) =>
-                    ancoradoPorDps(c.avaliacao.sinais) &&
+                    ancoraForte(c.avaliacao.sinais) &&
                     (FORCA[c.avaliacao.resultado] ?? 9) <= FORCA_ATENCAO_ANCORADA &&
                     !ocupados.has(c.boleto.chave),
             );
-            dpsDoTitulo.set(alvo.chave, doDps);
-            for (const c of doDps) {
+            const divergem =
+                fortes.some((c) => ancoradoPorDps(c.avaliacao.sinais)) &&
+                fortes.some((c) => ancoradoPorNumero(c.avaliacao.sinais)) &&
+                new Set(fortes.map((c) => c.boleto.chave)).size > 1;
+            if (divergem) {
+                conflitos.add(alvo.chave);
+                continue;
+            }
+            fortesDoTitulo.set(alvo.chave, fortes);
+            for (const c of fortes) {
                 reivindicacoes.set(c.boleto.chave, (reivindicacoes.get(c.boleto.chave) ?? 0) + 1);
             }
         }
         const escolhas = new Map<string, C>();
-        for (const [titulo, doDps] of dpsDoTitulo) {
-            const unico = doDps.length === 1 ? doDps[0] : undefined;
+        for (const [titulo, fortes] of fortesDoTitulo) {
+            const unico = fortes.length === 1 ? fortes[0] : undefined;
             if (unico && reivindicacoes.get(unico.boleto.chave) === 1) escolhas.set(titulo, unico);
         }
-        return escolhas;
+        return { escolhas, conflitos };
     };
 
     /** Camada 1. Ambíguo (2+ da mesma força) = sem sugestão, e o título sai do jogo. */
@@ -762,7 +808,7 @@ export default class MotorSugestaoBoleto {
             avaliacao,
             ancorado,
             forca: this.forcaCompleta(avaliacao, ancorado),
-            porDps: ancoradoPorDps(avaliacao.sinais),
+            ancoraForte: ancoraForte(avaliacao.sinais),
         };
     };
 
@@ -819,6 +865,76 @@ export default class MotorSugestaoBoleto {
         }
     };
 
+    /**
+     * I15s: marca com `NUMERO_CONFIAVEL` o candidato cujo número é igual ao do documento do título
+     * quando nada na carteira, no pool ou na lista de candidatos torna o número ambíguo. Muta só a
+     * lista de candidatos montada nesta execução; os índices são calculados na primeira necessidade.
+     */
+    private ancorarPorNumero = (
+        pendentes: PendenteCompleto[],
+        entrada: EntradaMotorSugestao,
+    ): void => {
+        let indice: IndiceNumeros | undefined;
+        for (const pendente of pendentes) {
+            const { alvo } = pendente;
+            const numero = RegraSugestaoBoleto.normalizarNumero(alvo.titulo.numeroDocumento);
+            const pesCod = alvo.titulo.pesCod;
+            if (numero.length < NUMERO_CONFIAVEL_MIN_DIGITOS || !pesCod) continue;
+            const iguais = pendente.candidatos.filter((c) =>
+                RegraSugestaoBoleto.numerosIguais(alvo.titulo.numeroDocumento, c.boleto.numero),
+            );
+            const unico = iguais.length === 1 ? iguais[0] : undefined;
+            const emissor = unico?.boleto.emissor;
+            if (!unico || !emissor || unico.forca > 1) continue;
+            indice ??= this.indiceNumeros(entrada);
+            if (indice.boletos.get(`${numero}|${emissor.chave}`) !== 1) continue;
+            const docs = indice.documentos.get(`${pesCod}|${numero}`);
+            const proprio = `${alvo.titulo.filCod}:${alvo.titulo.docCod}`;
+            if (docs && [...docs].some((d) => d !== proprio)) continue;
+            pendente.candidatos = pendente.candidatos
+                .map((c) =>
+                    c === unico
+                        ? {
+                              ...c,
+                              avaliacao: {
+                                  ...c.avaliacao,
+                                  sinais: [...c.avaliacao.sinais, SINAL_SUGESTAO.NUMERO_CONFIAVEL],
+                              },
+                              ancorado: true,
+                              ancoraForte: true,
+                          }
+                        : c,
+                )
+                .sort((x, y) => this.melhorCompleto(x, y));
+        }
+    };
+
+    /**
+     * Contagens da guarda de duplicata (I15s): boletos do pool COMPLETO por (número, emissor), de
+     * qualquer data e vinculados inclusive; e os documentos (`fil:doc`) de cada (credor, número) na
+     * carteira ativa e na lista sem filtro `ativo`. Parcelas do mesmo documento são o mesmo `fil:doc`.
+     */
+    private indiceNumeros = (entrada: EntradaMotorSugestao): IndiceNumeros => {
+        const boletos = new Map<string, number>();
+        for (const b of entrada.boletos) {
+            const numero = RegraSugestaoBoleto.normalizarNumero(b.numero);
+            const emissor = numero ? this.codigoBarras.emissor(b.codbar) : undefined;
+            if (!emissor) continue;
+            const k = `${numero}|${emissor.chave}`;
+            boletos.set(k, (boletos.get(k) ?? 0) + 1);
+        }
+        const documentos = new Map<string, Set<string>>();
+        for (const t of [...entrada.titulos, ...(entrada.titulosDoCredor ?? [])]) {
+            const numero = RegraSugestaoBoleto.normalizarNumero(t.numeroDocumento);
+            if (!numero || !t.pesCod) continue;
+            const k = `${t.pesCod}|${numero}`;
+            const docs = documentos.get(k) ?? new Set<string>();
+            docs.add(`${t.filCod}:${t.docCod}`);
+            documentos.set(k, docs);
+        }
+        return { boletos, documentos };
+    };
+
     private forcaCompleta = (a: AvaliacaoSugestao, ancorado: boolean): number => {
         if (a.resultado === RESULTADO_SUGESTAO.CONHECIDO) return 0;
         if (a.resultado === RESULTADO_SUGESTAO.FORTE) return 1;
@@ -831,23 +947,29 @@ export default class MotorSugestaoBoleto {
     /** Força → |Δvalor| → |Δdias| → chave do boleto: ordem total, independe da entrada. */
     private melhorCompleto = (x: CandidatoCompleto, y: CandidatoCompleto): number =>
         x.forca - y.forca ||
-        Number(y.porDps) - Number(x.porDps) ||
+        Number(y.ancoraForte) - Number(x.ancoraForte) ||
         Math.abs(x.avaliacao.deltaValor) - Math.abs(y.avaliacao.deltaValor) ||
         Math.abs(x.avaliacao.deltaDias) - Math.abs(y.avaliacao.deltaDias) ||
         x.boleto.ddcCod - y.boleto.ddcCod ||
         x.boleto.ditCod - y.boleto.ditCod;
 
-    /** Camada 0 do desfecho (I15p): a âncora DPS reserva o boleto antes de tudo. */
-    private reservarPorDps = (
+    /** Camada 0 do desfecho (I15p, I15s): a âncora forte reserva o boleto antes de tudo. */
+    private reservarPorAncora = (
         pendentes: PendenteCompleto[],
         estado: {
             reservadoPor: Map<string, ChaveTitulo>;
             escolhido: Map<string, CandidatoCompleto>;
             situacao: Map<string, SituacaoSugestaoTitulo>;
+            conflitos: Set<string>;
         },
     ): void => {
         const alvoPorChave = new Map(pendentes.map(({ alvo }) => [alvo.chave, alvo]));
-        for (const [titulo, c] of this.escolhasPorDps(pendentes, new Set())) {
+        const { escolhas, conflitos } = this.escolhasPorAncora(pendentes, new Set());
+        for (const titulo of conflitos) {
+            estado.conflitos.add(titulo);
+            estado.situacao.set(titulo, SITUACAO_SUGESTAO_TITULO.AMBIGUA);
+        }
+        for (const [titulo, c] of escolhas) {
             const alvo = alvoPorChave.get(titulo);
             if (!alvo) continue;
             estado.reservadoPor.set(c.boleto.chave, this.chaveDe(alvo));
@@ -871,7 +993,8 @@ export default class MotorSugestaoBoleto {
         const reservadoPor = new Map<string, ChaveTitulo>();
         const escolhido = new Map<string, CandidatoCompleto>();
         const situacao = new Map<string, SituacaoSugestaoTitulo>();
-        this.reservarPorDps(pendentes, { reservadoPor, escolhido, situacao });
+        const conflitos = new Set<string>();
+        this.reservarPorAncora(pendentes, { reservadoPor, escolhido, situacao, conflitos });
 
         // Camada 1: seguros. 2+ da mesma força = ambíguo (sem reserva).
         for (const { alvo, candidatos } of pendentes) {
@@ -935,7 +1058,9 @@ export default class MotorSugestaoBoleto {
                     }),
                 ),
                 totalCandidatos: candidatos.length,
-                motivo: MOTIVO_POR_SITUACAO[sit],
+                motivo: conflitos.has(alvo.chave)
+                    ? MOTIVO_CONFLITO_ANCORAS
+                    : MOTIVO_POR_SITUACAO[sit],
             };
         });
     };

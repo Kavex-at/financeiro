@@ -88,6 +88,12 @@ export const SINAL_SUGESTAO = {
      * o k-ésimo título por NFS-e casa com o k-ésimo boleto por número. Não sobe tier.
      */
     ORDEM_DPS: 'ORDEM_DPS',
+    /**
+     * Âncora de número (I15s, ADR-0079): o número do documento é igual ao do boleto dentro do
+     * envelope FORTE e sem nenhuma duplicata (pool, títulos do credor, candidatos). Sempre junto de
+     * `NUMERO_IGUAL`. Prova de identidade como o DPS: não sobe tier nem alarga limite.
+     */
+    NUMERO_CONFIAVEL: 'NUMERO_CONFIAVEL',
 } as const;
 export type SinalSugestao = (typeof SINAL_SUGESTAO)[keyof typeof SINAL_SUGESTAO];
 
@@ -215,6 +221,18 @@ export interface DpsConhecido {
 /** `motivoOrfa` quando o reconhecimento tipado deixa de valer (I15r/I19i, ADR-0078). */
 export const MOTIVO_ORFA_RECONHECIMENTO_INVALIDADO =
     'Reconhecimento de data divergente invalidado: o vencimento do título ou o valor do boleto mudaram depois da confirmação. Anule a confirmação e confirme de novo com um novo reconhecimento.';
+
+/**
+ * Número do documento de um título de QUALQUER situação (ativo ou não), para a guarda de duplicata
+ * da âncora de número (I15s). Só o que a guarda lê.
+ */
+export interface TituloNumeroDocumento {
+    filCod: number;
+    docCod: string;
+    titCod: string;
+    pesCod?: string;
+    numeroDocumento?: string;
+}
 
 /** Estado da sugestão devolvida para um título. */
 export const ESTADO_SUGESTAO = {

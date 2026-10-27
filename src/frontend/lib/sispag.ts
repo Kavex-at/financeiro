@@ -2304,6 +2304,8 @@ export const SINAIS_SUGESTAO_BOLETO = [
   'DPS_IGUAL',
   /** Casado pela ordem de DPS no escopo provado do emissor (I15p). */
   'ORDEM_DPS',
+  /** Número do documento = número do boleto, sem nenhuma duplicata (âncora de número, I15s). */
+  'NUMERO_CONFIAVEL',
 ] as const
 export type SinalSugestaoBoleto = (typeof SINAIS_SUGESTAO_BOLETO)[number]
 

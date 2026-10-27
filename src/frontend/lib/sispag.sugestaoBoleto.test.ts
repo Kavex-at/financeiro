@@ -270,6 +270,25 @@ describe('contrato do desfecho por título (ADR-0072)', () => {
     expect(r.sugestoes[0]?.avaliacao.sinais).toEqual(['VALOR_IGUAL', 'DPS_IGUAL', 'ORDEM_DPS'])
   })
 
+  it('o sinal da âncora de número (I15s, ADR-0079) passa no schema', () => {
+    const r = listagemSugestoesBoletoSchema.parse({
+      sugestoes: [
+        {
+          ...sugestao,
+          avaliacao: {
+            ...sugestao.avaliacao,
+            sinais: ['VALOR_ATE_5_CENTAVOS', 'NUMERO_IGUAL', 'NUMERO_CONFIAVEL'],
+          },
+        },
+      ],
+      total: 1,
+      pagina: 1,
+      tamanho: 50,
+      contagem: {},
+    })
+    expect(r.sugestoes[0]?.avaliacao.sinais).toContain('NUMERO_CONFIAVEL')
+  })
+
   it('resposta antiga (sem os campos novos) ainda é aceita', () => {
     const r = listagemSugestoesBoletoSchema.parse({
       sugestoes: [sugestao],
