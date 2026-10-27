@@ -20,6 +20,15 @@ export const diferencaDias = (a: string, b: string): number => Math.round((emMs(
 export const diaDoPrazo = (t: TituloAPagar): string | undefined =>
   t.prazoBoleto?.prazoEfetivo ?? diaDoErp(t.vencimento)
 
+/**
+ * Dias em que o título é achado pelo filtro de/até: o do prazo efetivo e o do próprio vencimento
+ * (QA case 6, ADR-0078): a linha mostra as duas datas, então qualquer uma a encontra. Sem repetir.
+ */
+export const diasDoTitulo = (t: TituloAPagar): string[] => {
+  const dias = [diaDoPrazo(t), diaDoErp(t.vencimento)].filter((d): d is string => d !== undefined)
+  return [...new Set(dias)]
+}
+
 /** Dias até o prazo efetivo (negativo = passou, 0 = hoje). */
 export const diasAtePrazo = (t: TituloAPagar): number | undefined => {
   if (t.diasAteVencimento === undefined) return undefined

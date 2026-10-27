@@ -8,7 +8,7 @@ import {
   ORDEM_FORMA_DE_PAGAMENTO,
   type TituloAPagar,
 } from '@/lib/sispag'
-import { diaDoPrazo } from '../situacao/prazoTitulo'
+import { diasDoTitulo } from '../situacao/prazoTitulo'
 import { diaDoErp, diaEmBrasilia } from './filtroDatas'
 
 /**
@@ -36,8 +36,8 @@ const chave = (c: ChaveTitulo) => `${c.filCod}:${c.docCod}:${c.titCod}`
  * dividido em com/sem DDA. Um chip por forma presente na carteira.
  */
 export const filtroTitulos: OpcoesFiltroExtra<TituloAPagar> = {
-  // I19t: o prazo efetivo (boleto sugerido ou título) no lugar do vencimento isolado.
-  getDatas: (t) => [diaDoPrazo(t)],
+  // I19t + QA case 6: o prazo efetivo (boleto sugerido) e o vencimento do título, os dois dias.
+  getDatas: (t) => diasDoTitulo(t),
   getCategoria: (t) => {
     const { chave, rotulo } = formaDePagamento(t)
     return { chave, rotulo }

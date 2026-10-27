@@ -328,11 +328,12 @@ describe('prazo efetivo do boleto sugerido (I19t)', () => {
     expect(f(['1-2'])).toEqual([])
   })
 
-  it('de/até compara o prazo efetivo, não o vencimento do título', () => {
+  it('de/até acha o título pelo prazo efetivo E pelo próprio vencimento (QA case 6)', () => {
     const r = (vencDe: string, vencAte: string) =>
       docs(aplicarFiltros(tudo, com({ vencDe, vencAte })))
     expect(r('2026-10-20', '2026-10-20')).toEqual(['P1'])
-    expect(r('2026-10-22', '2026-10-22')).toEqual([])
+    expect(r('2026-10-22', '2026-10-22').sort()).toEqual(['P1', 'P3'])
+    expect(r('2026-10-21', '2026-10-21')).toEqual([])
   })
 
   it('perdido não vira motivo VENCIDO nem some do estado (continua bloqueado pelo título)', () => {
