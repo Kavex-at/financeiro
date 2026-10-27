@@ -9,6 +9,18 @@
 
 ---
 
+## P1 — decisão do Yuri, tarefa separada (emenda 2026-10-27 tarde do ADR-0079)
+
+- **Emendar ADR-0074 I18a(4) para aceitar Δdias +1..+5 (renegociação mantém vencimento original; após
+  ela, I17c 0≤Δ≤5 aceita), com prova em HML de escrita fin070 antes de ligar.** Origem: a emenda 1 do
+  ADR-0079 deixa a âncora de número aceitar \|Δ\| ≤ R$ 0,05 com o boleto +1 a +5 dias depois do título.
+  Confirmado esse par, o ajuste de centavos não dispara (I18a(4) exige mesmo vencimento) e o vínculo de
+  código de barras (I17b) exige valor igual, então o item fica bloqueado até renegociação manual no
+  Conexos. O estado já existia (analista rejeita os FORTE rivais e confirma o ATENCAO ancorado); a
+  emenda o torna mais frequente. Exige `/feature-tweak` próprio (ADR-0074 + entrevista). Não implementado aqui.
+
+---
+
 ## Regis-Review P2 (não implementados aqui — backlog)
 
 - **F-modifiability-2 + F-performance-1 + F-performance-2 (cross-QA — mesma causa-raiz)** —

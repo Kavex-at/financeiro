@@ -18,6 +18,14 @@ Feature: `sispag-numdoc-desempate` (`/feature-tweak sugestao-boleto-dda-sispag`)
 - Medido: 18/22 nos pares vinculados pelo ERP (4 falsos num aglomerado de boletos idênticos); ~212
   títulos em aberto deixam de depender de rejeição manual. Lacuna conhecida: títulos fora da janela
   de ingestão (−15/+45 d) não entram na checagem de duplicata.
+- **Emenda 2026-10-27 (tarde):** (1) o envelope da âncora aceita também \|Δ\| ≤ R$ 0,05 **com** o
+  boleto +1 a +5 dias depois do título (não antes do débito); o candidato segue `ATENCAO` (I15c
+  inalterada) e a âncora o torna confirmável. Gatilho: título 2/40919/1 NELSON HEUSI, `AMBIGUA` atrás
+  de 4 FORTE de títulos inativos. (2) Duplicata contada por boleto distinto (`codbar`), não por linha
+  de `boleto_dda`. Medido: PRD 159 → 259 âncoras (teto); 79 pares do ERP sem falso novo, mas todos
+  Δ0/valor igual (faixa nova sem verdade-terreno); proxy pago/inativo +1..+5 = 6/6. Par confirmado na
+  faixa nova não tem ajuste de centavos (I18a(4)) nem vínculo de barra (I17b): follow-up P1. Nota de
+  remissão na I18a (sem mudança de regra).
 - Letra I15s: I15q é do PR #131 (`sispag-boleto-agrupado`, ADR-0077) e I15r do PR #132
   (`sispag-vinculo-data-divergente`, ADR-0078), ambos já em `main`.
 

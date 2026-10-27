@@ -303,5 +303,9 @@
   credor com número reaproveitado dentro do envelope.
 - **Limiar N da âncora de número como configuração por tenant** (ADR-0079). Revisitar no 2º cliente se o
   N ótimo medido for diferente de 4.
+- **Faixa estendida da âncora de número sem verdade-terreno** (ADR-0079, emenda 2026-10-27 tarde):
+  \|Δ\| ≤ R$ 0,05 com +1..+5 dias. Os 79 pares do ERP são todos Δ0/valor igual; a evidência é só o proxy
+  pago/inativo (6/6). Revisitar quando houver vínculos do ERP (ou confirmações da analista) nessa faixa:
+  medir precisão e, se aparecer falso, recuar a faixa.
 - **Lacuna da checagem de título duplicado da I15s** (ADR-0079, D6): só a carteira local (janela −15/+45 d).
   Revisitar (índice persistido de um `fin064` amplo) se um falso por documento fora da janela for observado.
