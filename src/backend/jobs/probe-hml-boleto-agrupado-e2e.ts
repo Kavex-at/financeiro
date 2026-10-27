@@ -26,7 +26,7 @@ import GrupoBoletoService from '../domain/service/sispag/GrupoBoletoService.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
 import { conexosRequestContext } from '../domain/libs/requestContext/ConexosRequestContext.js';
-import GuardaHmlE2e, { FASES_E2E } from './hmlE2eGuarda.js';
+import GuardaHmlE2e, { escolherOcorrenciaRejeicao, FASES_E2E } from './hmlE2eGuarda.js';
 
 /**
  * HML (ESCREVE) — prova ponta a ponta do boleto agrupado com o código de PRODUÇÃO (Task 21,
@@ -87,7 +87,8 @@ const BANCO_BARRA = process.env.BANCO_BARRA ?? '422';
 const BANCO_RECUSADO = process.env.BANCO_RECUSADO ?? '329';
 /** Posição da ocorrência no J do `.RET` (confirmar no `ger015` salvo da conta). */
 const POS_OC = Number(process.env.POS_OC ?? 231);
-const OCORRENCIA_REJEICAO = process.env.OCORRENCIA_REJEICAO ?? 'AE';
+/** Opcional: só vale se o ERP a marcar como rejeição (`fbeVldTpret 2`); sem ela, escolhe-se da tabela. */
+const OCORRENCIA_REJEICAO_PEDIDA = process.env.OCORRENCIA_REJEICAO;
 const VENC_BOLETO = process.env.VENC_BOLETO ?? '';
 const DOCS = (process.env.DOCS ?? '')
     .split(',')
@@ -599,6 +600,21 @@ const faseRetomadaVarredura = async (titulos: TituloHml[]): Promise<void> => {
 };
 
 const faseV7 = async (titulos: TituloHml[]): Promise<void> => {
+    // Só LEITURA (fin050), ANTES de semear ou escrever qualquer coisa: o código tem de ser
+    // rejeição de verdade (HML 2026-10-27: `AE` é informativo e a rodada foi perdida).
+    const eventos = await container
+        .resolve(ConexosSispagRetornoClient)
+        .listEventosBancarios({ filCod: FIL, bncCod: BNC });
+    const escolha = escolherOcorrenciaRejeicao(eventos, OCORRENCIA_REJEICAO_PEDIDA);
+    if (!escolha.ok) {
+        log(`ABORTADO antes de escrever: ${escolha.motivo}`);
+        checar('ocorrência escolhida é tpret 2', false, escolha.motivo);
+        return;
+    }
+    const ocorrenciaRejeicao = escolha.cod;
+    log(`ocorrência de rejeição: ${escolha.cod} — ${escolha.descricao}`);
+    trilha('ocorrencia', { cod: escolha.cod, descricao: escolha.descricao, tpret: 2 });
+    checar('ocorrência escolhida é tpret 2', true, `${escolha.cod} ${escolha.descricao}`);
     const c = await semear(titulos, BANCO_BARRA);
     const { grupoId, lote } = await montarLote(c);
     const r = await gerarRemessaComoRequest(lote.id);
@@ -606,7 +622,7 @@ const faseV7 = async (titulos: TituloHml[]): Promise<void> => {
     const gar = await devolverRetorno(
         r.conteudo ?? '',
         r.arquivo ?? `lote${lote.id}.REM`,
-        OCORRENCIA_REJEICAO,
+        ocorrenciaRejeicao,
     );
     await container.resolve(ConciliacaoRetornoService).conciliar({
         filCod: FIL,

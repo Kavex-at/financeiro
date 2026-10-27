@@ -1,6 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import GuardaHmlE2e, { FASES_E2E, FASES_QUE_ESCREVEM } from './hmlE2eGuarda.js';
+import GuardaHmlE2e, {
+    escolherOcorrenciaRejeicao,
+    FASES_E2E,
+    FASES_QUE_ESCREVEM,
+} from './hmlE2eGuarda.js';
 
 /**
  * Prova HML ponta a ponta do boleto agrupado (ADR-0077, Task 21). O job ESCREVE em HML (lote
@@ -214,5 +218,37 @@ describe('o job (fonte)', () => {
         const iContainer = CODIGO.indexOf('appContainer');
         expect(iEnv).toBeGreaterThan(-1);
         expect(iEnv).toBeLessThan(iContainer);
+    });
+});
+
+describe('escolherOcorrenciaRejeicao (V7)', () => {
+    const EVENTOS = [
+        { cod: '00', descricao: 'PAGAMENTO EFETUADO', tipo: 2, tipoRetorno: 1 },
+        { cod: 'AE', descricao: 'DATA DE PAGAMENTO ALTERADA', tipo: 2, tipoRetorno: 0 },
+        { cod: 'NA', descricao: 'PAGAMENTO CANCELADO', tipo: 2, tipoRetorno: 2 },
+        { cod: 'XX', descricao: 'TIPO 1', tipo: 1, tipoRetorno: 2 },
+    ];
+
+    it('sem pedido, escolhe uma rejeição (tipo 2, tpret 2)', () => {
+        expect(escolherOcorrenciaRejeicao(EVENTOS)).toEqual({
+            ok: true,
+            cod: 'NA',
+            descricao: 'PAGAMENTO CANCELADO',
+        });
+    });
+
+    it('recusa o pedido `AE` (informativo): não é rejeição', () => {
+        const r = escolherOcorrenciaRejeicao(EVENTOS, 'AE');
+        expect(r.ok).toBe(false);
+        if (!r.ok) expect(r.motivo).toMatch(/não é rejeição/);
+    });
+
+    it('aceita o pedido que o ERP marca como rejeição e recusa código inexistente', () => {
+        expect(escolherOcorrenciaRejeicao(EVENTOS, 'NA').ok).toBe(true);
+        expect(escolherOcorrenciaRejeicao(EVENTOS, 'ZZ').ok).toBe(false);
+    });
+
+    it('sem nenhuma rejeição na tabela, recusa', () => {
+        expect(escolherOcorrenciaRejeicao(EVENTOS.slice(0, 2)).ok).toBe(false);
     });
 });
