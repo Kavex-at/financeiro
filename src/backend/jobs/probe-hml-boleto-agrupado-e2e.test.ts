@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import GuardaHmlE2e, {
+    avaliarCaminhoV7,
+    avaliarProvaV7Bloqueada,
     escolherOcorrenciaRejeicao,
     FASES_E2E,
     FASES_QUE_ESCREVEM,
@@ -250,5 +252,133 @@ describe('escolherOcorrenciaRejeicao (V7)', () => {
 
     it('sem nenhuma rejeição na tabela, recusa', () => {
         expect(escolherOcorrenciaRejeicao(EVENTOS.slice(0, 2)).ok).toBe(false);
+    });
+});
+
+describe('avaliarCaminhoV7 (a 2ª remessa não pode passar por erro)', () => {
+    it('erro na 2ª remessa NÃO é prova, mesmo sem caminho', () => {
+        expect(avaliarCaminhoV7({ reaproveitou: false, retirou: false, status: 'erro' }).ok).toBe(
+            false,
+        );
+    });
+    it('caminho indefinido falha', () => {
+        const r = avaliarCaminhoV7({ reaproveitou: false, retirou: false, status: 'gerada' });
+        expect(r).toEqual({ ok: false, caminho: 'indefinido' });
+    });
+    it('reaproveitado ou retirado, sem erro, passa', () => {
+        expect(avaliarCaminhoV7({ reaproveitou: true, retirou: false, status: 'gerada' }).ok).toBe(
+            true,
+        );
+        expect(
+            avaliarCaminhoV7({ reaproveitou: false, retirou: true, status: 'gerada' }).caminho,
+        ).toBe('RETIRADO');
+    });
+});
+
+describe('avaliarProvaV7Bloqueada — evidência observada', () => {
+    const evidence = {
+        status: 'gerada',
+        motivo: 'BORDERO_ANTERIOR_NAO_RESOLVIDO',
+        freshGuardWithdrawal: true,
+        oldContext: 'presente' as const,
+        oldItemBefore: 'item-1',
+        oldItemAfter: 'item-1',
+        oldBorderoBefore: 'bordero-1',
+        oldBorderoAfter: 'bordero-1',
+        oldBaixasBefore: 'baixas-1',
+        oldBaixasAfter: 'baixas-1',
+        remainingGroupItems: 0,
+        newNativeGroupItems: 0,
+        rejectionAlertIds: ['rejeicao'],
+        newAlerts: [
+            {
+                id: 'guarda',
+                alvo: '2:grupo:G',
+                acao: 'confira o borderô',
+                situacao:
+                    'borderô antigo 9, lote nativo 7: o item 1 ainda está vinculado ao lote anterior',
+            },
+        ],
+        rejectionTarget: 'G',
+        expectedGuardTarget: '2:grupo:G',
+        expectedGuardContext: ['borderô antigo 9', 'lote nativo 7', 'ainda está vinculado'],
+        groupSignature: 'sha-group',
+        controlSignature: 'sha-control',
+        controlCents: 5000,
+        js: [
+            {
+                mascara: '42200…2000',
+                signature: 'sha-control',
+                barraCentavos: 5000,
+                pagCentavos: 5000,
+            },
+        ],
+    };
+    it('aceita retirada com contexto preservado e somente o controle na remessa', () => {
+        expect(avaliarProvaV7Bloqueada(evidence)).toEqual({ ok: true, falhas: [] });
+    });
+    it.each(['ausente', 'ambiguo'] as const)('recusa contexto antigo %s', (oldContext) => {
+        expect(avaliarProvaV7Bloqueada({ ...evidence, oldContext }).ok).toBe(false);
+    });
+    it.each([
+        'oldItemBefore',
+        'oldItemAfter',
+        'oldBorderoAfter',
+        'oldBaixasAfter',
+    ] as const)('recusa perda ou alteração de %s', (field) => {
+        expect(avaliarProvaV7Bloqueada({ ...evidence, [field]: '' }).ok).toBe(false);
+    });
+    it('recusa mutação do código no J mesmo mantendo a máscara e os valores', () => {
+        expect(
+            avaliarProvaV7Bloqueada({
+                ...evidence,
+                js: [{ ...evidence.js[0], signature: 'sha-other-code-same-mask' }],
+            }).ok,
+        ).toBe(false);
+    });
+    it('recusa mutação do snapshot antigo mesmo quando ainda presente', () => {
+        expect(
+            avaliarProvaV7Bloqueada({ ...evidence, oldItemAfter: 'sha-mutated-middle-digits' }).ok,
+        ).toBe(false);
+    });
+    it('recusa membros restantes ou import nativo do grupo', () => {
+        expect(avaliarProvaV7Bloqueada({ ...evidence, remainingGroupItems: 1 }).ok).toBe(false);
+        expect(avaliarProvaV7Bloqueada({ ...evidence, newNativeGroupItems: 1 }).ok).toBe(false);
+    });
+    it('recusa remessa sem controle correto ou contendo o grupo', () => {
+        for (const js of [
+            [],
+            [{ ...evidence.js[0], pagCentavos: 4999 }],
+            [...evidence.js, { ...evidence.js[0], signature: evidence.groupSignature }],
+        ]) {
+            expect(avaliarProvaV7Bloqueada({ ...evidence, js }).ok).toBe(false);
+        }
+    });
+    it('exige alerta novo, acionável, com alvo distinto da rejeição', () => {
+        for (const newAlerts of [
+            [],
+            [{ ...evidence.newAlerts[0], id: 'rejeicao' }],
+            [{ ...evidence.newAlerts[0], alvo: 'G' }],
+            [{ ...evidence.newAlerts[0], acao: '' }],
+        ]) {
+            expect(avaliarProvaV7Bloqueada({ ...evidence, newAlerts }).ok).toBe(false);
+        }
+    });
+    it('recusa alerta sem evidência do vínculo antigo', () => {
+        expect(
+            avaliarProvaV7Bloqueada({
+                ...evidence,
+                newAlerts: [{ ...evidence.newAlerts[0], situacao: 'outro problema' }],
+            }).ok,
+        ).toBe(false);
+    });
+    it('ledger com import ou adoção não prova retirada antes do import', () => {
+        expect(avaliarProvaV7Bloqueada({ ...evidence, freshGuardWithdrawal: false }).ok).toBe(
+            false,
+        );
+    });
+    it('erro ou retirada sem motivo correto não prova a guarda', () => {
+        expect(avaliarProvaV7Bloqueada({ ...evidence, status: 'erro' }).ok).toBe(false);
+        expect(avaliarProvaV7Bloqueada({ ...evidence, motivo: '' }).ok).toBe(false);
     });
 });

@@ -28,6 +28,19 @@ export const FASES_QUE_ESCREVEM: readonly FaseE2e[] = [
     'v7',
 ];
 
+/**
+ * Veredito do caminho da 2ª remessa na V7: só vale REAPROVEITADO ou RETIRADO. Erro na 2ª remessa
+ * ou caminho indefinido NÃO é prova (HML 2026-10-27: o check passava com `status: 'erro'`).
+ */
+export const avaliarCaminhoV7 = (r: {
+    reaproveitou: boolean;
+    retirou: boolean;
+    status: string;
+}): { ok: boolean; caminho: 'REAPROVEITADO' | 'RETIRADO' | 'indefinido' } => {
+    const caminho = r.reaproveitou ? 'REAPROVEITADO' : r.retirou ? 'RETIRADO' : 'indefinido';
+    return { ok: caminho !== 'indefinido' && r.status !== 'erro', caminho };
+};
+
 export interface EventoBancarioE2e {
     cod: string;
     descricao?: string;
@@ -147,3 +160,78 @@ export default class GuardaHmlE2e {
         }
     };
 }
+
+export interface ProvaV7Bloqueada {
+    status: string;
+    motivo: string;
+    freshGuardWithdrawal: boolean;
+    oldContext: 'presente' | 'ausente' | 'ambiguo';
+    oldItemBefore: string;
+    oldItemAfter: string;
+    oldBorderoBefore: string;
+    oldBorderoAfter: string;
+    oldBaixasBefore: string;
+    oldBaixasAfter: string;
+    remainingGroupItems: number;
+    newNativeGroupItems: number;
+    rejectionAlertIds: readonly string[];
+    newAlerts: readonly { id: string; alvo: string; acao: string; situacao: string }[];
+    rejectionTarget: string;
+    expectedGuardTarget: string;
+    expectedGuardContext: readonly string[];
+    groupSignature: string;
+    controlSignature: string;
+    controlCents: number;
+    js: readonly {
+        mascara: string;
+        signature: string;
+        barraCentavos: number;
+        pagCentavos: number;
+    }[];
+}
+
+export const avaliarProvaV7Bloqueada = (e: ProvaV7Bloqueada): { ok: boolean; falhas: string[] } => {
+    const falhas: string[] = [];
+    if (e.status !== 'gerada' || e.motivo !== 'BORDERO_ANTERIOR_NAO_RESOLVIDO')
+        falhas.push('a guarda não retirou o grupo com remessa gerada');
+    if (!e.freshGuardWithdrawal) falhas.push('a nova execução importou ou adotou o borderô');
+    if (e.oldContext !== 'presente') falhas.push('contexto antigo ausente ou ambíguo');
+    falhas.push(
+        ...[
+            ['item antigo', e.oldItemBefore, e.oldItemAfter],
+            ['borderô antigo', e.oldBorderoBefore, e.oldBorderoAfter],
+            ['baixas antigas', e.oldBaixasBefore, e.oldBaixasAfter],
+        ]
+            .filter(([, antes, depois]) => !antes || antes !== depois)
+            .map(([nome]) => `${nome} ausente ou alterado`),
+    );
+    if (e.remainingGroupItems !== 0) falhas.push('membros do grupo permaneceram no lote local');
+    if (e.newNativeGroupItems !== 0) falhas.push('grupo importado no novo lote nativo');
+    if (
+        e.groupSignature === e.controlSignature ||
+        e.js.some((j) => j.signature === e.groupSignature)
+    )
+        falhas.push('grupo presente na nova remessa');
+    if (
+        e.js.length !== 1 ||
+        !e.js.some(
+            (j) =>
+                j.signature === e.controlSignature &&
+                j.barraCentavos === e.controlCents &&
+                j.pagCentavos === e.controlCents,
+        )
+    )
+        falhas.push('o J do controle não tem a barra e o valor esperados');
+    if (
+        e.expectedGuardTarget === e.rejectionTarget ||
+        !e.newAlerts.some(
+            (a) =>
+                !e.rejectionAlertIds.includes(a.id) &&
+                a.alvo === e.expectedGuardTarget &&
+                a.acao.trim() &&
+                e.expectedGuardContext.every((part) => a.situacao.includes(part)),
+        )
+    )
+        falhas.push('alerta novo e acionável da guarda ausente');
+    return { ok: falhas.length === 0, falhas };
+};
