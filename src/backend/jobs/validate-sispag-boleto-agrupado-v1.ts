@@ -275,6 +275,21 @@ export class ValidacaoBoletoAgrupadoV1 {
 
 const chaveadas = (d: DecisaoChaveada[]): DecisaoChaveada[] => d;
 
+/**
+ * Antes do merge da #131 a migration 0090 não existe em PRD: sem a tabela não há grupo confirmado,
+ * então a medição segue com zero grupos e registra o fato na saída. Qualquer outro erro sobe.
+ */
+const preMigracao = { tabelaGruposAusente: false };
+const listarConfirmadosOuNenhum = async () => {
+    try {
+        return await container.resolve(GrupoBoletoRepository).listarConfirmados();
+    } catch (e) {
+        if ((e as { code?: string }).code !== '42P01') throw e;
+        preMigracao.tabelaGruposAusente = true;
+        return [];
+    }
+};
+
 /** O cenário local do motor (o mesmo da tela), só com SELECT. */
 const carregarEntrada = async (): Promise<EntradaMotorGrupo> => {
     const [titulos, boletos, pares, decisoes, grupos, marcas, comprometidos] = await Promise.all([
@@ -284,7 +299,7 @@ const carregarEntrada = async (): Promise<EntradaMotorGrupo> => {
         container
             .resolve(SugestaoBoletoRepository)
             .listarChaveadas(DECISAO_SUGESTAO_BOLETO.CONFIRMADA),
-        container.resolve(GrupoBoletoRepository).listarConfirmados(),
+        listarConfirmadosOuNenhum(),
         container.resolve(BloqueioDuplicidadeRepository).listAtivos(),
         container.resolve(LotePagamentoRepository).listTitulosEmLotesComprometidos(),
     ]);
@@ -355,6 +370,7 @@ const main = async (): Promise<number> => {
         ...resultado,
         carteira: entrada.titulos.length,
         boletosNoPool: entrada.boletos.length,
+        tabelaGruposAusente: preMigracao.tabelaGruposAusente,
         logins: sessao.logins(),
         chamadas: chamadas.length,
         recusadas,
