@@ -217,6 +217,19 @@ describe('ConciliacaoRetornoService', () => {
             expect(res.itens[0]).toMatchObject({ rejeitado: false, borCod: 249, bxaCodSeq: 1 });
         });
 
+        it('evento informativo (`AE`, DATA DE PAGAMENTO ALTERADA, tipoRetorno 0) não conta como pago nem como rejeitado', async () => {
+            const retorno = buildRetorno({
+                AE: [detalhe({ eventoCod: 'AE', borCod: undefined, bxaCodSeq: undefined })],
+            });
+            retorno.listEventosBancarios.mockResolvedValue([
+                ...EVENTOS,
+                { cod: 'AE', descricao: 'DATA DE PAGAMENTO ALTERADA', tipo: 2, tipoRetorno: 0 },
+            ]);
+            const res = await make({ retorno }).conciliar({ ...CHAVE, ator: 'u' });
+            expect(res.pagos).toBe(0);
+            expect(res.rejeitados).toBe(0);
+        });
+
         it('`NA` (tipoRetorno 2) conta como rejeitado', async () => {
             const retorno = buildRetorno({
                 NA: [detalhe({ eventoCod: 'NA', borCod: undefined, bxaCodSeq: undefined })],

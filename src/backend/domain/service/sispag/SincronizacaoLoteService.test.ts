@@ -153,7 +153,12 @@ const setup = ({ lotes, titulos = {}, baixas = baixas22320, detalhe, casar }: Se
         listEventosBancarios: jest.fn().mockResolvedValue([
             { cod: 'BD', descricao: 'PAGAMENTO AGENDADO', tipo: 2, tipoRetorno: 1 },
             { cod: '00', descricao: 'PAGAMENTO EFETUADO', tipo: 2, tipoRetorno: 1 },
-            { cod: 'AE', descricao: 'DATA INVALIDA', tipo: 2, tipoRetorno: 2 },
+            {
+                cod: 'XR',
+                descricao: 'REJEIÇÃO SINTÉTICA (TESTE; não é código real do Itaú)',
+                tipo: 2,
+                tipoRetorno: 2,
+            },
             { cod: 'ZZ', descricao: 'IRRELEVANTE', tipo: 2, tipoRetorno: 1 },
         ]),
         listDetalhe: jest.fn(async (p: { garCodSeq: number; eventoCod: string }) =>
@@ -277,7 +282,7 @@ describe('SincronizacaoLoteService — T1..T8 (ADR-0055)', () => {
         const s = setup({ lotes: [loteFil1()] });
         await s.service.sincronizarTodos(AGORA);
         const codigos = s.retorno.listDetalhe.mock.calls.map((c) => c[0].eventoCod).sort();
-        expect(codigos).toEqual(['00', 'AE', 'BD']);
+        expect(codigos).toEqual(['00', 'BD', 'XR']);
     });
 
     it('T4: duas passadas sem baixa → sem transição, sem versão, sem alerta; só sincronizado_em', async () => {
@@ -317,8 +322,15 @@ describe('SincronizacaoLoteService — T1..T8 (ADR-0055)', () => {
             lotes: [lote],
             titulos: { '2:38700:1': pago },
             detalhe: (p) =>
-                p.garCodSeq === 9 && p.eventoCod === 'AE'
-                    ? [{ ...linhasBdGar9[1], eventoCod: 'AE', eventoDescricao: 'DATA INVALIDA' }]
+                p.garCodSeq === 9 && p.eventoCod === 'XR'
+                    ? [
+                          {
+                              ...linhasBdGar9[1],
+                              eventoCod: 'XR',
+                              eventoDescricao:
+                                  'REJEIÇÃO SINTÉTICA (TESTE; não é código real do Itaú)',
+                          },
+                      ]
                     : [],
         });
         await sincronizarUm(s.service, 'L-fil2');
@@ -399,8 +411,15 @@ describe('SincronizacaoLoteService — T1..T8 (ADR-0055)', () => {
             lotes: [loteFil2()],
             titulos: { '2:38682:1': pago },
             detalhe: (p) =>
-                p.eventoCod === 'AE'
-                    ? [{ ...linhasBdGar9[1], eventoCod: 'AE', eventoDescricao: 'DATA INVALIDA' }]
+                p.eventoCod === 'XR'
+                    ? [
+                          {
+                              ...linhasBdGar9[1],
+                              eventoCod: 'XR',
+                              eventoDescricao:
+                                  'REJEIÇÃO SINTÉTICA (TESTE; não é código real do Itaú)',
+                          },
+                      ]
                     : [],
         });
         await sincronizarUm(s.service, 'L-fil2');
@@ -449,7 +468,7 @@ describe('SincronizacaoLoteService — T1..T8 (ADR-0055)', () => {
     it('falha ao ler um código de evento não derruba a passada (e não vira rejeição)', async () => {
         const s = setup({ lotes: [loteFil1()] });
         s.retorno.listDetalhe.mockImplementation(async (p: { eventoCod: string }) => {
-            if (p.eventoCod === 'AE') throw new Error('timeout');
+            if (p.eventoCod === 'XR') throw new Error('timeout');
             return p.eventoCod === 'BD' ? linhasBdGar9 : [];
         });
         const resumo = await s.service.sincronizarTodos(AGORA);
@@ -472,8 +491,15 @@ describe('SincronizacaoLoteService — T1..T8 (ADR-0055)', () => {
         const s = setup({
             lotes: [loteFil2()],
             detalhe: (p) =>
-                p.eventoCod === 'AE'
-                    ? [{ ...linhasBdGar9[1], eventoCod: 'AE', eventoDescricao: 'DATA INVALIDA' }]
+                p.eventoCod === 'XR'
+                    ? [
+                          {
+                              ...linhasBdGar9[1],
+                              eventoCod: 'XR',
+                              eventoDescricao:
+                                  'REJEIÇÃO SINTÉTICA (TESTE; não é código real do Itaú)',
+                          },
+                      ]
                     : [],
         });
         s.notificacao.emitir.mockRejectedValue(new Error('banco fora'));
@@ -497,13 +523,13 @@ describe('SincronizacaoLoteService — boleto agrupado (ADR-0077, I21r, I11i)', 
         flpCod: 24,
         itsCodSeq: 1,
         borCod: 252,
-        eventoCod: 'AE',
-        eventoDescricao: 'DATA INVALIDA',
+        eventoCod: 'XR',
+        eventoDescricao: 'REJEIÇÃO SINTÉTICA (TESTE; não é código real do Itaú)',
     };
     const comJ = (over: Partial<Setup> = {}) =>
         setup({
             lotes: [loteComGrupo()],
-            detalhe: (p) => (p.garCodSeq === 9 && p.eventoCod === 'AE' ? [linhaJ] : []),
+            detalhe: (p) => (p.garCodSeq === 9 && p.eventoCod === 'XR' ? [linhaJ] : []),
             casar: () => ({ grupoId: 'G1', execucaoId: 'E1', titulos: TITULOS }),
             ...over,
         });
@@ -549,8 +575,8 @@ describe('SincronizacaoLoteService — boleto agrupado (ADR-0077, I21r, I11i)', 
                 grupoBoletoId: 'G1',
                 situacao: 'REJEITADO',
                 rejeitado: true,
-                retornoEvento: 'AE',
-                retornoDescricao: 'DATA INVALIDA',
+                retornoEvento: 'XR',
+                retornoDescricao: 'REJEIÇÃO SINTÉTICA (TESTE; não é código real do Itaú)',
                 sincronizadoEm: ANTES,
             }),
         );

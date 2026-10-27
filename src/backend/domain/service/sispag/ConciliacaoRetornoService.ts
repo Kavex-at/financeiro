@@ -347,7 +347,12 @@ export default class ConciliacaoRetornoService {
             }
         }
 
-        const pagos = itens.filter((i) => !i.rejeitado && i.reconhecido).length;
+        // `pago` = evento com `fbeVldTpret = 1`. Evento informativo (ex.: `AE`, "DATA DE PAGAMENTO
+        // ALTERADA", medido em HML 2026-10-27) não é pagamento nem rejeição.
+        const pagoPorCodigo = new Map(eventos.map((e) => [e.cod, e.tipoRetorno === 1]));
+        const pagos = itens.filter(
+            (i) => !i.rejeitado && i.reconhecido && pagoPorCodigo.get(i.evento ?? '') === true,
+        ).length;
         const rejeitados = itens.filter((i) => i.rejeitado).length;
         const naoReconhecidos = itens.filter((i) => !i.reconhecido).length;
 
