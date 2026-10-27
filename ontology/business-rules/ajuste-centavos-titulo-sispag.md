@@ -25,7 +25,7 @@ related_files:
   - src/backend/domain/libs/runtime/ServerProcessMarker.ts
   - src/backend/routes/sispag.ts
   - src/backend/migrations/0088_sispag_ajuste_centavos.sql
-last_review: 2026-10-19
+last_review: 2026-10-27
 has_canonical_test: true
 canonical_test: src/backend/domain/service/sispag/AjusteCentavosTituloService.test.ts
 universality_evidence:
@@ -79,6 +79,11 @@ o valor do título.
 | **I18l** | **Modos e kill-switch (sem flag dedicada; emenda 2026-10-20 da ADR-0074).** Dois modos, global (sem filial), derivados dos kill-switches existentes e do processo: `on` (executa) quando o processo é o servidor (`ServerProcessMarker`), há credencial Conexos do servidor, `sispagLiveWriteEnabled` e `conexosWriteEnabled` ligados e `conexosDryRun` desligado — ou seja, **ativo por padrão no servidor**. Qualquer condição falsa ⇒ `shadow`: I18a inteira **ao vivo** (leituras no ERP permitidas), **zero escrita**; grava `AJUSTE_SIMULADO`, lista os candidatos por endpoint e loga os motivos em `warn` (pt-BR); a UI mostra "diferença de centavos — ajuste em simulação". Não existe `off` por configuração. **Kill-switch: `SISPAG_LIVE_WRITE_ENABLED=false`.** |
 | **I18m** | **Acima do limite, nada é automático.** \|Δ\| > R$ 0,05, Δdias ≠ 0, número diferente, par não vigente ou título não aprovado ⇒ **nenhuma escrita**; o vínculo continua `VALOR_DIFERENTE` (I17b) e o caminho é o fluxo manual do Conexos, por outra pessoa. A I18 **não alarga** a tolerância de nenhum par (I15d) nem cria tier novo. |
 | **I18n** | **Portões de rollout em PRD (D6).** `on` em PRD só depois de: **G1** sonda **só leitura** de permissão (`ger014`) do login do servidor para `fin070` e `fin103` (espelho do V-PRD1; respeitar a memória "probe local derruba sessão"); **G2** HML provando composição com vencimento **passado e de hoje** (P1-3); **G3** HML provando cancelamento de renegociação **não finalizada** e reconhecimento pelo marcador na obs; **G4** medição só leitura em PRD do líquido em títulos com pagamento parcial e da divergência das duas fórmulas da I17b (P1-4), antes do merge; **G5** `shadow` em PRD e então **um** título real controlado, com go explícito do maintainer. *(Emenda 2026-10-20: o maintainer decidiu ativar após o merge, sem flag; a G1 já passou em PRD para MPS_FRANCINEI; o acompanhamento da G5 segue pelo ledger, e o freio é `SISPAG_LIVE_WRITE_ENABLED=false`.)* |
+
+> **Nota à I18a (ver ADR-0079, emenda 2026-10-27 tarde):** a âncora de número (I15s) passou a aceitar pares com
+> \|Δ\| ≤ R$ 0,05 **e** boleto +1 a +5 dias depois do título. Esses pares **não** são elegíveis pela
+> I18a(4) (mesmo vencimento), que segue inalterada aqui. Emenda proposta como follow-up P1 em
+> `_inbox/sispag-numdoc-desempate-regis-followups.md`. Só remissão; nenhuma regra muda.
 
 ## Privacidade e trilha
 

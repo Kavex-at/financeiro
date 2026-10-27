@@ -13,6 +13,7 @@ decided_on: 2026-10-27
 evidence:
   - "teste da analista (2026-10-26): título 2|40100|1 NELSON HEUSI (pesCod 387), doc 25037, R$ 647,56, venc. 2026-10-27; boletos 25037 e 25041 (R$ 647,57, mesmo dia, emissor 341:8262:53318) ambos FORTE ⇒ AMBIGUA; o 25041 é o doc do título irmão 2|40107|1"
   - "simulação somente leitura (2026-10-27): 79 pares vinculados pelo ERP, 45 mil títulos do fin064 (2026-01-01 a +120 d, pagos ou não, 7 filiais), 23.266 boletos do pool"
+  - "emenda 2026-10-27 (tarde): cópia local de PRD, título 2/40919/1 NELSON HEUSI, doc 25349, R$ 647,56, venc. 27/10; boleto 25349 R$ 647,57, venc. 28/10 ficou AMBIGUA atrás de 4 boletos FORTE de títulos inativos"
 ---
 
 # ADR 0079: âncora de número na sugestão de boleto DDA
@@ -73,8 +74,9 @@ Nova invariante **I15s — âncora de número (número confiável)**, sinal `NUM
 (ver `business-rules/sugestao-boleto-dda-sispag.md`):
 
 1. **Confiável = todas:** (1) par dentro do envelope `FORTE` (limites globais I15c, não vencido no
-   débito); (2) número do título com ≥ 4 dígitos significativos (normalização de `numerosIguais`);
-   (3) sem duplicata: nenhum outro boleto do pool com o mesmo número e a mesma `emissorChave`, nem com
+   débito) **ou**, desde a emenda de 2026-10-27 (tarde), na faixa estendida \|Δ\| ≤ R$ 0,05 com
+   boleto +1 a +5 dias depois do título, não antes do débito (o candidato segue `ATENCAO`); (2) número do título com ≥ 4 dígitos significativos (normalização de `numerosIguais`);
+   (3) sem duplicata (contada por boleto distinto, `codbar`; emenda 2): nenhum outro boleto do pool com o mesmo número e a mesma `emissorChave`, nem com
    o mesmo número e emissor não lido (qualquer data, livre ou vinculado); nenhum outro título do
    **mesmo credor** (`pesCod`) com o mesmo número de documento (qualquer filial ou situação), sem
    contar as outras parcelas do mesmo documento; nenhum outro candidato do título com o mesmo número;
@@ -106,6 +108,9 @@ compartilhada). Sem entidade, ação ou estado novos.
 | D8 (Q4) | Boleto sem emissor lido | Candidato sem `emissorChave` ⇒ **sem âncora**; outro boleto do pool com o mesmo número e emissor não lido **conta como possível duplicata** |
 | D9 (Q5) | Escopo da checagem de título duplicado | **Só o mesmo credor** (`pesCod`); credores diferentes caem no conflito de dois títulos |
 | D10 (Q6) | Numeração | ADR-0079 / ontologia 0.50.0 aprovados; letra ajustada para **I15s** pelo orquestrador (ver nota no topo) |
+| D11 (emenda, tarde) | Faixa \|Δ\| ≤ R$ 0,05 **com** +1..+5 dias entra no envelope da âncora? | **Sim**, só para a âncora; tiers globais (I15c) inalterados |
+| D12 (emenda, tarde) | Duplicata conta linha de `boleto_dda` ou boleto? | **Boleto distinto (`codbar`)**, no pool e nos candidatos do título |
+| D13 (emenda, tarde) | Ajuste de centavos para a faixa nova | **Fora deste ADR**: follow-up P1 (emendar ADR-0074 I18a(4)) |
 
 ## Trade-off registrado: constante global × configuração por cliente
 
@@ -143,7 +148,7 @@ medir outro N ótimo, o N migra para configuração por tenant sem mudança estr
 - **N = 3:** ganha 1 par e abre números de 3 dígitos, mais propensos a coincidência. **N = 5/6:**
   perdem acertos sem tirar nenhum falso.
 - **Tratar o aglomerado TIME LOG à parte:** REJECT-WORKAROUND; é calibração sobre um caso.
-- **Número igual fora do envelope FORTE como identidade:** REJECT-PREMATURE. I15f (colisão) e
+- **Número igual fora do envelope da âncora (FORTE + faixa estendida da emenda) como identidade:** REJECT-PREMATURE. I15f (colisão) e
   ADR-0078 (ack tipado para data divergente) cobrem esses casos.
 - **Hierarquia DPS lido > número > ORDEM_DPS:** rejeitada em D5; conflito vira `AMBIGUA`.
 - **Ampliar a ingestão do `fin064` para fechar a lacuna (D6 opção 2):** mais carga no Conexos e
@@ -152,3 +157,54 @@ medir outro N ótimo, o N migra para configuração por tenant sem mudança estr
   puro (sem I/O).
 - **Auto-confirmar a âncora de número:** muda a política de humano no controle (passo 3, ADR própria).
 - **Persistir a âncora:** REJECT-NOT-DOMAIN (I-DDA1; a sugestão é derivada).
+
+## Emenda 2026-10-27 (tarde)
+
+Aprovada pelo Yuri no chat em 2026-10-27. Mesma branch, ADR e ontologia 0.50.0 (não mergeado; emenda
+no lugar). Muda a I15s(1) e esclarece a I15s(3); o resto da I15s fica como está.
+
+### Gatilho
+
+Caso real na cópia local de PRD: título 2/40919/1 (NELSON HEUSI, R$ 647,56, venc. 27/10, doc 25349)
+e boleto 25349 (R$ 647,57, venc. 28/10). O par tem centavo **e** dia de diferença, então é `ATENCAO`
+pela I15c e ficava fora do envelope da âncora; o título continuou `AMBIGUA` atrás de 4 boletos
+`FORTE` de títulos inativos, embora o número longo e único apontasse o boleto certo.
+
+### Emenda 1: envelope mais largo, só para a âncora
+
+`NUMERO_CONFIAVEL` aceita o envelope `FORTE` **ou** a faixa
+\|Δvalor\| ≤ R$ 0,05 (`LIMITE_VALOR_MESMO_DIA`) **com** o boleto vencendo de 1 a 5 dias **depois**
+do título (`DIAS_DEPOIS_MIN..DIAS_DEPOIS_MAX`) e não antes da data de débito (I15h). Não muda:
+≥ 4 dígitos significativos, sem duplicata, emissor lido, reserva na camada 0, conflito com DPS ⇒
+`AMBIGUA`. Os tiers globais da I15c **não mudam**: o candidato na faixa nova continua `ATENCAO`; é a
+âncora que o torna a escolha confirmável do título (vence os rivais `FORTE`/`CONHECIDO`, D2). Sem
+constante nova: as duas fronteiras reaproveitam as constantes da I15c.
+
+### Emenda 2: duplicata é por boleto distinto (`codbar`)
+
+A mesma cobrança aparece uma vez por arquivo DDA; a cópia de PRD tem 3.277 `codbar` com mais de uma
+linha em `boleto_dda`. A contagem de duplicata, tanto no pool (I15s(3)(a)) quanto entre os
+candidatos do título (I15s(3)(c)), é por `codbar` distinto. É esclarecimento da intenção original
+("outro boleto"), não regra nova.
+
+### Medição (somente leitura, 2026-10-27 tarde)
+
+- **Cópia de PRD:** 159 → 259 âncoras com a faixa nova (teto superior; não diz quantas são corretas).
+- **79 pares vinculados pelo ERP (HML):** 18 corretas / 4 falsas nas duas variantes; nenhuma âncora
+  falsa nova. **Limitação, dita sem rodeio:** os 79 pares são todos Δdias = 0 e valor igual, então
+  a faixa nova **não tem verdade-terreno do ERP**. Este número mostra só que ela não estraga o que
+  já funcionava.
+- **Proxy pago/inativo na cópia de PRD** (`ativo = false` como "pago"; não confirmado pelo ERP):
+  faixa +1..+5 dias, 6/6 âncoras, todas no boleto de número igual.
+- Dados: `resultado-b.md` no scratchpad da sessão (fora do repositório).
+
+### Consequência conhecida, não resolvida aqui
+
+Confirmar um par da faixa nova (+centavos, +1..+5 dias) **não** dispara o ajuste de centavos:
+a I18a(4) do ADR-0074 exige mesmo vencimento. O vínculo de código de barras (I17b) exige valor igual
+ao centavo. O item fica bloqueado até a analista renegociar à mão no Conexos. Esse estado já existe
+hoje quando a analista rejeita os rivais `FORTE` e confirma o `ATENCAO` ancorado; a emenda o torna
+mais frequente. Follow-up P1 (tarefa separada, decisão do Yuri): emendar a I18a(4) para aceitar
+Δdias +1..+5 (a renegociação mantém o vencimento original; depois dela, a I17c 0 ≤ Δ ≤ 5 aceita),
+com prova em HML da escrita no `fin070` antes de ligar. Ver
+`_inbox/sispag-numdoc-desempate-regis-followups.md`.
