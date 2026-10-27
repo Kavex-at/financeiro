@@ -34,6 +34,9 @@ import HmlDataDivergenteCasos from './hmlDataDivergenteCasos.js';
  * SEGURANÇA (recusa e sai com 1): base com `-hml`; credenciais só de `HML_ENV_FILE`;
  * `databaseConnectionString=""`; só barras sintéticas; 1 sessão, sequencial.
  *
+ * Opcionais: `CASOS=L-ROLAGEM` (lista; padrão = todos) e `SABADO=2026-11-07` (sábado do L-ROLAGEM,
+ * cuja segunda seguinte seja dia útil; débito = essa segunda, barra = o sábado).
+ *
  *   cd src/backend
  *   HML_ENV_FILE=/home/inteli/.claude-tech/hml-conexos.env \
  *   CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api \
@@ -409,7 +412,19 @@ const listarPlano = (lotes: Lote[]): void => {
 async function main(): Promise<void> {
     const calendar = new BankingCalendar();
     const hoje = calendar.todayBrt();
-    const lotes = HmlDataDivergenteCasos.lotes(calendar, hoje);
+    // CASOS e SABADO são validados AQUI, antes de qualquer chamada ao ERP (nem login).
+    let lotes: Lote[];
+    try {
+        lotes = HmlDataDivergenteCasos.selecionar(
+            HmlDataDivergenteCasos.lotes(calendar, hoje, {
+                ...(process.env.SABADO ? { sabado: process.env.SABADO } : {}),
+            }),
+            process.env.CASOS,
+        );
+    } catch (e) {
+        console.error(`RECUSADO: ${e instanceof Error ? e.message : String(e)}`);
+        process.exit(1);
+    }
     log(
         `${DRY ? 'DRY' : ESCREVER ? 'ESCREVER' : 'DESCOBERTA'} · fil=${FIL} bnc=${BNC} · hoje ${hoje}`,
     );
