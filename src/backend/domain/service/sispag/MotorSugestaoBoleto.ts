@@ -82,6 +82,7 @@ interface BoletoLivre {
     valor: number;
     vencimento: string;
     numero?: string;
+    codbar?: string;
     emissor?: EmissorBoleto;
 }
 
@@ -118,7 +119,8 @@ interface CandidatoCompleto extends Candidato {
 
 /** Índices da guarda de duplicata da âncora de número (I15s). */
 interface IndiceNumeros {
-    boletos: Map<string, number>;
+    /** (número|emissor) → códigos de barras DISTINTOS: o mesmo boleto em dois arquivos DDA é um só. */
+    boletos: Map<string, Set<string>>;
     documentos: Map<string, Set<string>>;
 }
 
@@ -429,6 +431,7 @@ export default class MotorSugestaoBoleto {
                     valor: b.valor,
                     vencimento: String(b.vencimento),
                     ...(b.numero ? { numero: b.numero } : {}),
+                    ...(b.codbar ? { codbar: b.codbar } : {}),
                     ...(emissor ? { emissor } : {}),
                 };
             })
@@ -880,14 +883,11 @@ export default class MotorSugestaoBoleto {
             const numero = RegraSugestaoBoleto.normalizarNumero(alvo.titulo.numeroDocumento);
             const pesCod = alvo.titulo.pesCod;
             if (numero.length < NUMERO_CONFIAVEL_MIN_DIGITOS || !pesCod) continue;
-            const iguais = pendente.candidatos.filter((c) =>
-                RegraSugestaoBoleto.numerosIguais(alvo.titulo.numeroDocumento, c.boleto.numero),
-            );
-            const unico = iguais.length === 1 ? iguais[0] : undefined;
+            const unico = this.candidatoUnicoPorNumero(pendente);
             const emissor = unico?.boleto.emissor;
             if (!unico || !emissor || unico.forca > 1) continue;
             indice ??= this.indiceNumeros(entrada);
-            if (indice.boletos.get(`${numero}|${emissor.chave}`) !== 1) continue;
+            if (indice.boletos.get(`${numero}|${emissor.chave}`)?.size !== 1) continue;
             const docs = indice.documentos.get(`${pesCod}|${numero}`);
             const proprio = `${alvo.titulo.filCod}:${alvo.titulo.docCod}`;
             if (docs && [...docs].some((d) => d !== proprio)) continue;
@@ -909,19 +909,35 @@ export default class MotorSugestaoBoleto {
         }
     };
 
+    /** Único candidato de número igual ao do título; o mesmo codbar repetido conta como um só. */
+    private candidatoUnicoPorNumero = (
+        pendente: PendenteCompleto,
+    ): CandidatoCompleto | undefined => {
+        const iguais = pendente.candidatos.filter((c) =>
+            RegraSugestaoBoleto.numerosIguais(
+                pendente.alvo.titulo.numeroDocumento,
+                c.boleto.numero,
+            ),
+        );
+        const distintos = new Set(iguais.map((c) => c.boleto.codbar ?? c.boleto.chave));
+        return distintos.size === 1 ? iguais[0] : undefined;
+    };
+
     /**
      * Contagens da guarda de duplicata (I15s): boletos do pool COMPLETO por (número, emissor), de
      * qualquer data e vinculados inclusive; e os documentos (`fil:doc`) de cada (credor, número) na
      * carteira ativa e na lista sem filtro `ativo`. Parcelas do mesmo documento são o mesmo `fil:doc`.
      */
     private indiceNumeros = (entrada: EntradaMotorSugestao): IndiceNumeros => {
-        const boletos = new Map<string, number>();
+        const boletos = new Map<string, Set<string>>();
         for (const b of entrada.boletos) {
             const numero = RegraSugestaoBoleto.normalizarNumero(b.numero);
             const emissor = numero ? this.codigoBarras.emissor(b.codbar) : undefined;
             if (!emissor) continue;
             const k = `${numero}|${emissor.chave}`;
-            boletos.set(k, (boletos.get(k) ?? 0) + 1);
+            const codbares = boletos.get(k) ?? new Set<string>();
+            codbares.add(b.codbar ?? chaveBoleto(b));
+            boletos.set(k, codbares);
         }
         const documentos = new Map<string, Set<string>>();
         for (const t of [...entrada.titulos, ...(entrada.titulosDoCredor ?? [])]) {
