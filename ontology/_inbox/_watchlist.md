@@ -294,3 +294,14 @@
 - **Δ > 0: débito na data do título ou da barra** — em aberto, depende de V12 (I17q).
 - **Desempate da I16d.1** — pendência registrada na entrevista, fora desta fatia.
 - **Universalidade** — 1 cliente; revisar com o Francinei (fator de vencimento é norma FEBRABAN).
+
+## sispag-numdoc-desempate (2026-10-27, ADR-0079)
+
+- **Credor que numera o boleto pelo documento, aprendido por (credor, emissor)** (ADR-0079, REJECT-PREMATURE,
+  2026-10-27). NELSON HEUSI 12/12, TIME LOG 3/8, MULTILOG 0/26 nos vínculos do ERP. Revisitar se a guarda
+  de duplicata da I15s produzir falso fora de aglomerado de boletos idênticos, ou se um 2º cliente mostrar
+  credor com número reaproveitado dentro do envelope.
+- **Limiar N da âncora de número como configuração por tenant** (ADR-0079). Revisitar no 2º cliente se o
+  N ótimo medido for diferente de 4.
+- **Lacuna da checagem de título duplicado da I15s** (ADR-0079, D6): só a carteira local (janela −15/+45 d).
+  Revisitar (índice persistido de um `fin064` amplo) se um falso por documento fora da janela for observado.

@@ -3,6 +3,24 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.50.0 — SISPAG: âncora de número na sugestão de boleto DDA (2026-10-27, ADR-0079)
+
+Feature: `sispag-numdoc-desempate` (`/feature-tweak sugestao-boleto-dda-sispag`).
+
+- **Invariante nova I15s (`planned`):** número do documento igual ao do boleto, dentro do envelope
+  FORTE, com ≥ 4 dígitos e sem duplicata (pool do mesmo emissor ou sem emissor lido, títulos do mesmo
+  credor na carteira local, candidatos do título; parcelas do mesmo documento não contam) é
+  **âncora de identidade** (`NUMERO_CONFIAVEL`): desempata seguros, vence CONHECIDO e reserva o
+  boleto na camada 0, junto com a âncora DPS.
+- Conflito DPS × número no mesmo título ⇒ `AMBIGUA`; dois títulos (inclusive parcelas) no mesmo
+  boleto ⇒ nenhum reserva.
+- Emendas I15c/e/f/m/n/p. Sem entidade, ação ou estado novos. Coverage inalterado.
+- Medido: 18/22 nos pares vinculados pelo ERP (4 falsos num aglomerado de boletos idênticos); ~212
+  títulos em aberto deixam de depender de rejeição manual. Lacuna conhecida: títulos fora da janela
+  de ingestão (−15/+45 d) não entram na checagem de duplicata.
+- Letra I15s: I15q é do PR #131 (`sispag-boleto-agrupado`, ADR-0077) e I15r do PR #132
+  (`sispag-vinculo-data-divergente`, ADR-0078), ambos já em `main`.
+
 ## v0.49.0 — SISPAG: vínculo de código de barras com data divergente (2026-10-26, ADR-0078)
 
 Feature: `sispag-vinculo-data-divergente` (`/feature-tweak`). `entity_changed = true`. **Ontologia à frente do
