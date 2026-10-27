@@ -4,6 +4,7 @@ import PostgreeDatabaseClient, {
     type TransactionClient,
 } from '../../client/database/PostgreeDatabaseClient.js';
 import type { TituloAPagar } from '../../interface/sispag/SispagInterface.js';
+import type { TituloNumeroDocumento } from '../../interface/sispag/SugestaoBoleto.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -243,6 +244,32 @@ export default class TituloAPagarRepository {
              ORDER BY vencimento ASC NULLS LAST`,
         )) as TituloRow[];
         return rows.map(this.map);
+    };
+
+    /**
+     * Número do documento de TODOS os títulos com credor e número — ativos ou não, pagos ou não
+     * (SEM filtro `ativo`). Serve à guarda de duplicata da âncora de número (I15s): o mesmo número
+     * em outro documento do credor, mesmo que já fora da carteira, torna o número ambíguo.
+     */
+    public listNumerosDocumento = async (): Promise<TituloNumeroDocumento[]> => {
+        const rows = (await this.databaseClient.selectMany(
+            `SELECT fil_cod, doc_cod, tit_cod, pes_cod, doc_esp_numero
+             FROM titulo_a_pagar
+             WHERE pes_cod IS NOT NULL AND doc_esp_numero IS NOT NULL AND doc_esp_numero <> ''`,
+        )) as Array<{
+            fil_cod: number;
+            doc_cod: string;
+            tit_cod: string;
+            pes_cod: string;
+            doc_esp_numero: string;
+        }>;
+        return rows.map((r) => ({
+            filCod: Number(r.fil_cod),
+            docCod: String(r.doc_cod),
+            titCod: String(r.tit_cod),
+            pesCod: String(r.pes_cod),
+            numeroDocumento: String(r.doc_esp_numero),
+        }));
     };
 
     /**

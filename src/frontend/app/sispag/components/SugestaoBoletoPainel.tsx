@@ -37,6 +37,7 @@ import {
   formatDeltaValor,
   mensagemVenceAntes,
   seloDoAjusteCentavos,
+  sinaisVisiveis,
   TEXTO_SINAL,
   TIER_ROTULO,
 } from './sugestaoBoleto'
@@ -379,7 +380,7 @@ export function SugestaoBoletoPainel({
                   aria-label="Evidências"
                   className="mt-2 list-disc pl-5 text-xs text-muted-foreground"
                 >
-                  {a.sinais.map((sinal) => {
+                  {sinaisVisiveis(a.sinais).map((sinal) => {
                     const t = TEXTO_SINAL[sinal]
                     return (
                       <li key={sinal} className={t.atencao ? 'text-warning-foreground' : undefined}>

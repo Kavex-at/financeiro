@@ -47,6 +47,14 @@ const RECONHECIMENTO_DEPOIS_MAX = ENVELOPE_DIAS;
  */
 export const REGRA_CANDIDATO_TEXTO = `candidato = diferença de até R$ ${LIMITE_VALOR_MESMO_DIA.toFixed(2).replace('.', ',')} no mesmo dia, ou valor igual com vencimento de ${DIAS_DEPOIS_MIN} a ${DIAS_DEPOIS_MAX} dias depois do título (nunca antes da data de débito)`;
 
+/**
+ * Âncora de número (I15s, ADR-0079): mínimo de dígitos significativos (sem zeros à esquerda) para o
+ * número do documento igual ao do boleto valer como prova de identidade. Medido em PRD: com N = 4 a
+ * âncora acerta 15/15 fora de um aglomerado de boletos idênticos; abaixo disso o número é curto
+ * demais para não repetir.
+ */
+export const NUMERO_CONFIAVEL_MIN_DIGITOS = 4;
+
 const centavos = (valor: number): number => Math.round(valor * 100);
 
 /** Memo de `Date.parse` por data civil: o motor avalia ~10⁵ pares sobre poucas datas distintas. */
@@ -188,6 +196,9 @@ export default class RegraSugestaoBoleto {
      */
     public static numerosIguais = (doTitulo?: string, doBoleto?: string): boolean =>
         digitos(doTitulo) !== '' && digitos(doTitulo) === digitos(doBoleto);
+
+    /** Número normalizado da I15f (dígitos, sem zeros à esquerda); vazio = sem número. */
+    public static normalizarNumero = (numero?: string): string => digitos(numero);
 
     /** O boleto do emissor de NFS-e numera como `<DPS>000` (I15p(1)); a ordem vem do motor (I15p(2)). */
     private sinaisDps = (dps: string | undefined, doBoleto: string | undefined, ordem: boolean) => {

@@ -4,6 +4,7 @@ import RegraSugestaoBoleto, {
     DIAS_DEPOIS_MAX,
     DIAS_DEPOIS_MIN,
     LIMITE_VALOR_MESMO_DIA,
+    NUMERO_CONFIAVEL_MIN_DIGITOS,
 } from './RegraSugestaoBoleto.js';
 
 const regra = new RegraSugestaoBoleto();
@@ -473,5 +474,18 @@ describe('RegraSugestaoBoleto — prazo final da barra e exigência de reconheci
         expect(avaliar({ vencBoleto: '2026-10-26', dataDebito: '2026-10-20' }).confirmavel).toBe(
             true,
         );
+    });
+});
+
+describe('RegraSugestaoBoleto.normalizarNumero / NUMERO_CONFIAVEL_MIN_DIGITOS (I15s)', () => {
+    it('normaliza dígitos sem zeros à esquerda; vazio vira vazio', () => {
+        expect(RegraSugestaoBoleto.normalizarNumero('0025037')).toBe('25037');
+        expect(RegraSugestaoBoleto.normalizarNumero('NF 25.037-A')).toBe('25037');
+        expect(RegraSugestaoBoleto.normalizarNumero(undefined)).toBe('');
+        expect(RegraSugestaoBoleto.normalizarNumero('000')).toBe('');
+    });
+
+    it('o mínimo de dígitos da âncora de número é 4', () => {
+        expect(NUMERO_CONFIAVEL_MIN_DIGITOS).toBe(4);
     });
 });
