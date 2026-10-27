@@ -918,7 +918,7 @@ const decisaoParaApi = (
     reconhecimentoValido?: boolean,
 ): Omit<DecisaoSugestao, 'emissorChave'> & { reconhecimentoValido?: boolean } => {
     const { emissorChave: _chave, ...resto } = d;
-    // `reconhecimentoValido` é derivado (I15q): nunca coluna; só sai quando há reconhecimento.
+    // `reconhecimentoValido` é derivado (I15r): nunca coluna; só sai quando há reconhecimento.
     return reconhecimentoValido === undefined ? resto : { ...resto, reconhecimentoValido };
 };
 
@@ -969,7 +969,7 @@ router.get(
 // disputado) · 422 boleto vencido, aviso `VENCE_ANTES_DO_TITULO` sem `reconheceAvisos`, divergência de
 // data com valor igual sem `reconhecimento` (`RECONHECIMENTO_DE_DIVERGENCIA_OBRIGATORIO`) ou com
 // `reconhecimento` que não bate com o Δ/valor de agora (`RECONHECIMENTO_DE_DIVERGENCIA_DESATUALIZADO`).
-// A decisão devolvida traz `reconhecimento` e o derivado `reconhecimentoValido` (ADR-0078, I15q).
+// A decisão devolvida traz `reconhecimento` e o derivado `reconhecimentoValido` (ADR-0078, I15r).
 router.post(
     '/sugestoes-boleto/confirmar',
     exigirPermissao(PERMISSION.SISPAG_EXECUTAR),

@@ -3,7 +3,7 @@ import Format from './DivergenceAcknowledgementFormat.js';
 
 /**
  * O candidato exige o reconhecimento tipado da divergência de data (`exigeReconhecimento =
- * DATA_DIVERGENTE`, I15q, ADR-0078) e o pedido não o trouxe. Validado no servidor contra a avaliação
+ * DATA_DIVERGENTE`, I15r, ADR-0078) e o pedido não o trouxe. Validado no servidor contra a avaliação
  * recalculada ao vivo. HTTP 422. O código aparece só mascarado (5+4).
  */
 export default class DivergenceAcknowledgementRequiredError extends Error implements HandlerError {

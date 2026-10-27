@@ -507,11 +507,11 @@ export const VINCULO_ORIGEM = {
 
 export type VinculoOrigem = (typeof VINCULO_ORIGEM)[keyof typeof VINCULO_ORIGEM];
 
-/** Caminho pelo qual o código foi vinculado (I17o, ADR-0078; paridade com o CHECK da 0091). */
+/** Caminho pelo qual o código foi vinculado (I17p, ADR-0078; paridade com o CHECK da 0091). */
 export const VINCULO_CAMINHO = {
     /** Passo 2 original: valor igual, Δdias ∈ [0,5]. */
     JANELA_PADRAO: 'JANELA_PADRAO',
-    /** Valor igual, Δdias ∈ [-10,-1] ∪ [6,10], com reconhecimento tipado (I15q). */
+    /** Valor igual, Δdias ∈ [-10,-1] ∪ [6,10], com reconhecimento tipado (I15r). */
     DATA_DIVERGENTE: 'DATA_DIVERGENTE',
 } as const;
 
@@ -523,7 +523,7 @@ export interface VinculoCodigoBarrasItem {
     caminho?: VinculoCaminho;
     /** Vencimento da barra − vencimento do título, em dias (só quando `caminho` existe). */
     deltaDias?: number;
-    /** Decisão cujo reconhecimento autorizou o caminho `DATA_DIVERGENTE` (I15q). */
+    /** Decisão cujo reconhecimento autorizou o caminho `DATA_DIVERGENTE` (I15r). */
     reconhecimentoId?: string;
     /** `DecisaoSugestaoBoleto` que autorizou (só `DECISAO_HUMANA`). */
     decisaoId?: string;

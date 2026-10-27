@@ -81,7 +81,7 @@ export interface NovaDecisao {
     motivo?: string;
     confirmacaoEmissorId?: string;
     /**
-     * Reconhecimento tipado (I15q, ADR-0078), gravado na MESMA linha e na mesma transação da
+     * Reconhecimento tipado (I15r, ADR-0078), gravado na MESMA linha e na mesma transação da
      * confirmação. `reconhecidoPor` vem do JWT; `reconhecido_em` é a hora do servidor.
      */
     reconhecimento?: Omit<ReconhecimentoDecisao, 'reconhecidoEm'>;

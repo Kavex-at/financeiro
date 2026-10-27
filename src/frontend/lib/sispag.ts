@@ -2350,7 +2350,7 @@ export const sugestaoBoletoSchema = z.object({
     /** Vencimento da barra rolado ao próximo dia útil bancário (I15h); ausente em resposta antiga. */
     prazoFinalBoleto: z.string().optional(),
     /**
-     * Reconhecimento que confirmar este par exige (I15q, ADR-0078). `DATA_DIVERGENTE` = valor igual
+     * Reconhecimento que confirmar este par exige (I15r, ADR-0078). `DATA_DIVERGENTE` = valor igual
      * e data fora da janela: ack tipado (checkbox + motivo). Ausente em backend antigo = `NENHUM`.
      */
     exigeReconhecimento: z.enum(['NENHUM', 'DATA_DIVERGENTE']).optional(),
@@ -2606,12 +2606,12 @@ export async function fetchTodasSugestoesBoleto(): Promise<ListagemSugestoesBole
   return fetchSugestoesBoleto({ pagina: 1, tamanho: SUGESTOES_TAMANHO_TELA })
 }
 
-/** Menor/maior motivo do reconhecimento tipado (o servidor tem a mesma regra, I15q). */
+/** Menor/maior motivo do reconhecimento tipado (o servidor tem a mesma regra, I15r). */
 export const MOTIVO_RECONHECIMENTO_MIN = 10
 export const MOTIVO_RECONHECIMENTO_MAX = 500
 
 /**
- * Reconhecimento TIPADO da divergência de data (I15q, ADR-0078). `deltaDiasVisto` e
+ * Reconhecimento TIPADO da divergência de data (I15r, ADR-0078). `deltaDiasVisto` e
  * `valorBoletoVisto` (centavos) são o que a tela mostrou: o servidor os confere contra a avaliação
  * recalculada ao vivo e recusa (422) se mudaram. O autor sai do token, nunca do corpo.
  */

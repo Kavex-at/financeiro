@@ -335,7 +335,7 @@ export default class MotorSugestaoBoleto {
             if (alvo) {
                 const vivo = porChave.get(chaveBoleto(d));
                 if (vivo && this.reconhecimentoInvalido(d, alvo, vivo, pares)) {
-                    // I15q: o Δ ou o valor mudaram desde o ack. A decisão segue CONFIRMADA (o
+                    // I15r: o Δ ou o valor mudaram desde o ack. A decisão segue CONFIRMADA (o
                     // sistema não a anula, I15g) e continua reservando título e boleto; a tela a
                     // mostra órfã até a analista anular e reconfirmar.
                     ocupados.add(chaveBoleto(d));
@@ -698,7 +698,7 @@ export default class MotorSugestaoBoleto {
         return 'O boleto confirmado deixou de estar livre no pool DDA. Anule a confirmação.';
     };
 
-    /** I15q: o reconhecimento gravado ainda bate com o Δdias e o valor de AGORA? Derivado, sem coluna. */
+    /** I15r: o reconhecimento gravado ainda bate com o Δdias e o valor de AGORA? Derivado, sem coluna. */
     private reconhecimentoInvalido = (
         d: DecisaoConfirmadaChaveada,
         alvo: TituloElegivel,

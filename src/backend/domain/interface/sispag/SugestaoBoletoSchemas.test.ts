@@ -61,7 +61,7 @@ describe('schemas da sugestão de boleto (I15o, ADR-0072)', () => {
     });
 });
 
-describe('ReconhecimentoDivergenciaSchema no confirmar (I15q, ADR-0078)', () => {
+describe('ReconhecimentoDivergenciaSchema no confirmar (I15r, ADR-0078)', () => {
     const ack = {
         tipo: 'DATA_DIVERGENTE',
         aceito: true,

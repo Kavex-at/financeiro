@@ -35,7 +35,7 @@ export const ENVELOPE_VALOR_ABSOLUTO = 10;
 export const ENVELOPE_VALOR_PERCENTUAL = 2;
 export const ENVELOPE_DIAS = 10;
 
-/** Δdias (boleto − título) que, com valor igual, exigem o reconhecimento tipado (I15q, ADR-0078). */
+/** Δdias (boleto − título) que, com valor igual, exigem o reconhecimento tipado (I15r, ADR-0078). */
 const RECONHECIMENTO_ANTES_MIN = -ENVELOPE_DIAS;
 const RECONHECIMENTO_ANTES_MAX = -1;
 const RECONHECIMENTO_DEPOIS_MIN = DIAS_DEPOIS_MAX + 1;
@@ -165,7 +165,7 @@ export default class RegraSugestaoBoleto {
     };
 
     /**
-     * I15q: valor igual em centavos e Δdias ∈ [-10,-1] ∪ [6,10]. Só chega aqui dentro do envelope e
+     * I15r: valor igual em centavos e Δdias ∈ [-10,-1] ∪ [6,10]. Só chega aqui dentro do envelope e
      * com a barra vigente na data de débito; o reconhecimento não muda tier nem limite (I15d).
      */
     private exigeReconhecimento = (

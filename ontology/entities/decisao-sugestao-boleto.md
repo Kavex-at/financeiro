@@ -55,7 +55,7 @@ universality_evidence:
 | `anuladaPor` · `anuladaEm` · `motivoAnulacao` | string? · Date? · string? | Todos preenchidos em `ANULADA` e só nela (CHECK). `anuladaPor` nunca `unknown`; nunca `sistema`, **exceto** com `tipoAnulacao = TITULO_RENEGOCIADO` (ADR-0074, M1; CHECK da 0084 relaxado só para esse caso na migration 0088). Motivo de 10 a 500 caracteres; na cascata é `par revogado: <motivo da revogação>`; na renegociação, `título renegociado X/Y → X/Z, frnCod N`. |
 | `tipoAnulacao` | enum? | `MANUAL \| PAR_REVOGADO \| TITULO_RENEGOCIADO` (ADR-0074, `implemented` (migration 0088); legado sem backfill ⇒ derivado do motivo). Preenchido só em `ANULADA`. |
 | `origemDecisaoId` · `transferidaPor` | string? · string? | Só na decisão nascida da transferência (I18j): a decisão do título antigo e o ator `sistema`. Nulos em decisão tomada por pessoa. (ADR-0074, `planned`) |
-| `reconhecimento` | objeto? | `{ tipo: DATA_DIVERGENTE, motivo (10–500), deltaDiasVisto, valorBoletoVisto, reconhecidoPor, reconhecidoEm }` (colunas nuláveis, **migration 0091**, ADR-0078, `implemented` Fase 1). Preenchido só em `CONFIRMADA` com `exigeReconhecimento` (I15q); imutável depois (reconfirmar cria linha nova, I15l). Autor = JWT. **Validade é derivada** (`reconhecimentoValido`), nunca coluna. |
+| `reconhecimento` | objeto? | `{ tipo: DATA_DIVERGENTE, motivo (10–500), deltaDiasVisto, valorBoletoVisto, reconhecidoPor, reconhecidoEm }` (colunas nuláveis, **migration 0091**, ADR-0078, `implemented` Fase 1). Preenchido só em `CONFIRMADA` com `exigeReconhecimento` (I15r); imutável depois (reconfirmar cria linha nova, I15l). Autor = JWT. **Validade é derivada** (`reconhecimentoValido`), nunca coluna. |
 | `versao` | number | Lock otimista da anulação (`UPDATE ... WHERE versao = ? AND decisao = 'CONFIRMADA'`). |
 
 ## Estados (I15l)
@@ -101,7 +101,7 @@ sob par `REVOGADA`.
 estado `APLICADO_NO_ERP` (a aplicação é por remessa × tentativa; a decisão sobrevive a lote cancelado).
 `decisao` segue `CONFIRMADA | REJEITADA | ANULADA`.
 
-**Reconhecimento da divergência de data (ADR-0078, `implemented` Fase 1; a retirada do vínculo, I17l, segue `planned`) — derivados, não persistidos:** `exigeReconhecimento ∈ {NENHUM, DATA_DIVERGENTE}` (por candidato, recalculado ao vivo; I15m) e `reconhecimentoValido` (verdadeiro enquanto `Δdias` e `valorBoleto` atuais forem iguais aos gravados em `reconhecimento`; I15q). Reconhecimento inválido torna a decisão `orfa` com `motivoOrfa` "reconhecimento de data divergente invalidado" (I15l/I19i) e retira o vínculo (I17l). **Não existe** estado `CONFIRMADA_COM_RESSALVA`/`AGUARDANDO_ACK`.
+**Reconhecimento da divergência de data (ADR-0078, `implemented` Fase 1; a retirada do vínculo, I17l, segue `planned`) — derivados, não persistidos:** `exigeReconhecimento ∈ {NENHUM, DATA_DIVERGENTE}` (por candidato, recalculado ao vivo; I15m) e `reconhecimentoValido` (verdadeiro enquanto `Δdias` e `valorBoleto` atuais forem iguais aos gravados em `reconhecimento`; I15r). Reconhecimento inválido torna a decisão `orfa` com `motivoOrfa` "reconhecimento de data divergente invalidado" (I15l/I19i) e retira o vínculo (I17l). **Não existe** estado `CONFIRMADA_COM_RESSALVA`/`AGUARDANDO_ACK`.
 
 **Ajuste de centavos (ADR-0074, `implemented`) — derivado, não persistido:** `ajuste` =
 `NAO_APLICAVEL | DESLIGADO | AGUARDANDO | SIMULADO | EM_ANDAMENTO | AJUSTADO | AGUARDANDO_APROVACAO_MANUAL |

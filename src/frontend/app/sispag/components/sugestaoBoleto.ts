@@ -188,13 +188,13 @@ export const mensagemVenceAntes = (
 
 /**
  * O candidato exige reconhecimento ao confirmar (o servidor confere de novo): o aviso simples de
- * vence-antes (I15o) ou o ack TIPADO de data divergente (I15q).
+ * vence-antes (I15o) ou o ack TIPADO de data divergente (I15r).
  */
 export const exigeReconhecimento = (c: Pick<CandidatoTituloBoleto, 'avaliacao'>): boolean =>
   c.avaliacao.sinais.includes('VENCE_ANTES_DO_TITULO') || exigeReconhecimentoTipado(c)
 
 /**
- * O par exige o reconhecimento TIPADO da divergência de data (I15q, ADR-0078): valor igual e
+ * O par exige o reconhecimento TIPADO da divergência de data (I15r, ADR-0078): valor igual e
  * Δdias fora da janela padrão (Δ<0 ou Δ>5). Substitui o aviso simples nesse caso; o Δ<0 com valor
  * diferente segue no aviso simples. Backend antigo (sem o campo) nunca pede o tipado.
  */

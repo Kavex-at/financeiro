@@ -113,7 +113,7 @@ describe('SugestaoBoletoRepository.transferirDecisao (I18j, M1)', () => {
         expect(params.motivo).toBe('título renegociado 536/1 → 536/2, frnCod 3');
     });
 
-    it('a decisão nova HERDA o reconhecimento (I15q/I18j): copia as seis colunas; a validade é derivada', async () => {
+    it('a decisão nova HERDA o reconhecimento (I15r/I18j): copia as seis colunas; a validade é derivada', async () => {
         const tx = {
             selectFirst: jest.fn(async () => linha),
             selectMany: jest.fn(),
