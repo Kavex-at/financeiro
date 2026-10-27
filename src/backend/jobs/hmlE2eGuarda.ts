@@ -28,6 +28,48 @@ export const FASES_QUE_ESCREVEM: readonly FaseE2e[] = [
     'v7',
 ];
 
+export interface EventoBancarioE2e {
+    cod: string;
+    descricao?: string;
+    tipo: number;
+    tipoRetorno?: number;
+}
+
+export type EscolhaOcorrencia =
+    | { ok: true; cod: string; descricao: string }
+    | { ok: false; motivo: string };
+
+/**
+ * Código de ocorrência da rejeição sintética (V7). Só serve o que o ERP marca como rejeição
+ * (`fbeVldTipo 2` + `fbeVldTpret 2`): `AE` ("DATA DE PAGAMENTO ALTERADA", medido em HML
+ * 2026-10-27) é informativo e o retorno passa como não rejeitado. Pura: sem rede, sem env.
+ */
+export const escolherOcorrenciaRejeicao = (
+    eventos: readonly EventoBancarioE2e[],
+    pedido?: string,
+): EscolhaOcorrencia => {
+    const rejeicoes = eventos.filter((e) => e.tipo === 2 && e.tipoRetorno === 2);
+    const descrever = (e: EventoBancarioE2e): string => e.descricao ?? '';
+    if (pedido !== undefined && pedido !== '') {
+        const achado = rejeicoes.find((e) => e.cod === pedido);
+        if (!achado) {
+            const existe = eventos.find((e) => e.cod === pedido);
+            return {
+                ok: false,
+                motivo: existe
+                    ? `OCORRENCIA_REJEICAO=${pedido} (${descrever(existe)}) não é rejeição no ERP (tipo ${existe.tipo}, tpret ${existe.tipoRetorno ?? 'ausente'}).`
+                    : `OCORRENCIA_REJEICAO=${pedido} não existe na tabela de eventos do banco.`,
+            };
+        }
+        return { ok: true, cod: achado.cod, descricao: descrever(achado) };
+    }
+    const [primeiro] = [...rejeicoes].sort((a, b) => a.cod.localeCompare(b.cod));
+    if (!primeiro) {
+        return { ok: false, motivo: 'a tabela de eventos do banco não tem código de rejeição.' };
+    }
+    return { ok: true, cod: primeiro.cod, descricao: descrever(primeiro) };
+};
+
 export interface EntradaGuardaE2e {
     conexosBaseUrl?: string;
     hmlEnvFile?: string;
