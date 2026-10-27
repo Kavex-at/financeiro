@@ -135,6 +135,36 @@ Rejeitados nesta emenda:
   errado (reflete o import).
 - **`borCod` sozinho como identidade** — rejeitado: o ERP reusa o número.
 
+## Emenda 2026-10-27 — conclusão da execução do borderô (V7, 2ª rodada)
+
+A V7 em HML (`ontology/_inbox/evidencias/sispag-boleto-agrupado-hml-2026-10-27/`) mostrou que a execução do borderô
+nunca saía de `importado`: nada gravava `codbar_vinculado` nem `concluido`. Com isso a remessa seguinte de um grupo com J
+rejeitado batia no índice "no máximo uma execução não terminal por grupo" e a execução antiga virava `indeterminado`
+("execução pendente em outro lote nativo"), em vez de reaproveitar o borderô em cadastro (I21s, PI-9). Decidido, sem
+estado nem regra novos: o fechamento do grupo (pago ou J rejeitado) conclui a execução **do lote em fechamento** pelas
+arestas já existentes (`importado → codbar_vinculado → concluido`), e a preparação conclui, antes de decidir, a execução
+rejeitada que ainda esteja `importado` (linha anterior à correção). Segue valendo: borderô antigo nunca é limpo e nunca
+há dois borderôs vivos. Fail-closed: continuava sem pagamento em dobro mesmo com o defeito.
+
+## Emenda 2026-10-27 — liberação do item do lote rejeitado (V7, 3ª rodada)
+
+A terceira V7 (851/1 + 852/1, borderô 259, lotes nativos 63 e 64) passou **5/6**: a execução foi concluída
+e o borderô reaproveitado, mas o ERP recusou finalizar o lote 64 por item contido em outro lote ativo.
+**Estar em `borderosPendentes` do lote novo não prova que saiu do antigo.** O Yuri aprovou duas frentes:
+
+1. **Bloqueante antes do merge da PR #131:** antes de reaproveitar/importar (também numa retomada),
+   comprovar ao vivo a ausência do item no lote antigo, com chaves e identidade reconhecidas. Item ainda
+   associado, leitura inconclusiva ou contexto insuficiente ⇒ retirar o grupo inteiro com
+   `BORDERO_ANTERIOR_NAO_RESOLVIDO` e `Alerta` acionável com filial, lote antigo e borderô. Nenhuma
+   alteração no lote/borderô antigo; nenhuma criação de segundo borderô. Os demais itens seguem pela
+   retirada existente. `RETORNADO` local e a rejeição do J não são prova de liberação.
+2. **Investigação paralela:** identificar e provar operação suportada de liberação do item rejeitado,
+   preservando os demais itens do lote. Não implementar cancelamento automático por suposição.
+
+Plano e critérios: `_inbox/sispag-boleto-agrupado-reenvio-rejeitado-plano.md`. Investigação:
+`_inbox/sispag-boleto-agrupado-reenvio-rejeitado-exploracao.md`. A prova HML da nova guarda permanece
+obrigatória na Task 21; testes locais não aprovam a V7. Nenhuma escrita em HML/PRD nesta implementação.
+
 ## Rejeitado
 
 - **`fin146` (Baixa Agrupada)** — REJECT-WORKAROUND: baixa os títulos ao finalizar, antes de o banco pagar

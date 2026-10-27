@@ -379,9 +379,13 @@ nativo. Só pelas ações
 | 9 | retorno (`fin052` `processar`) | parser `ger015.gtbLngSql`: `BOR_COD` não nulo → `FIN_BORDERO` → `FIN_TITULO_RETBANCO` com `BOR_COD` → `PRC_BAIXA_RETORNO_PAGFOR('BAIXAR')`: finaliza o borderô e baixa os N (H7). Chave do J nas posições 183–202 (`fil(2) bnc(4) flp(7) its(7)`), ocorrência em 231. `.RET` sintético com J-52 falha (limite do sintético, H8). Linha de detalhe do `fin052` para o item de borderô (G4, `PG191081B.RET`, gar 7): **uma** linha (o J), com `filCod/bncCod/flpCod/itsCodSeq`, `borVldTipo/borCod/borDtaMvto/borVldFinalizado` e `ardEspObs "BORDERO: n - DATA DE CREDITO: …"`; **sem** `docCod/titCod`, `bxaCodSeq`, `pesCod`, valor pago ou `gerNum`. Casamento pela chave do item nativo e/ou `borCod` (I21r, I11i). |
 | 10 | limpeza | `DELETE finItemSispag` → `excluirBaixa` × N → `excluirBordero`; só enquanto o **lote nativo** não está finalizado e não tem `.REM` gerado (lido ao vivo), e só o borderô com o nosso `borCod` + `borTimCad`. Nunca `finalizarBordero`/`cancelarBordero`/`fin146`. Ordem confirmada em HML (2026-10-20) e imposta pelo ERP: com o item no lote, `excluirBaixa`/`excluirBordero` ⇒ `400 FIN_014.FIN_HAS_REMESSA_PGTO`. Medido: `vldHasRemessaPgto` vira 1 no `importar` e volta a 0 no `DELETE` do item (não na geração do `.REM`); reflete o import e **não é guarda** (emenda 2026-10-21). |
 
-Depois de um J rejeitado, o borderô antigo fica em cadastro e **nunca** é limpo por nós (se ele segue ligado
-ao lote rejeitado, e com que valor de `vldHasRemessaPgto`, é medição da V7, não premissa). Se ele reaparecer em `borderosPendentes` (passo 5) do lote novo, é **reaproveitado** (I21s);
-se não reaparecer nem tiver sido resolvido pela analista, o grupo é retirado da remessa (V7 em medição).
+Depois de um J rejeitado, o borderô antigo fica em cadastro e **nunca** é limpo por nós. A V7, 3ª rodada
+(2026-10-27), mostrou que ele aparece em `borderosPendentes` do lote novo mesmo com o item ainda no lote
+antigo: a importação é aceita e a finalização falha. Por isso o reaproveitamento (I21s) exige também
+leitura completa ao vivo que comprove a ausência do item no lote antigo. Vínculo persistente ou liberação
+não verificável ⇒ retirada integral `BORDERO_ANTERIOR_NAO_RESOLVIDO` + alerta acionável antes de importar,
+inclusive na retomada. Lote/borderô antigos preservados. Liberação automática é investigação separada;
+`vldHasRemessaPgto` não substitui a leitura dos itens e `RETORNADO` local não comprova liberação.
 Não confundir com o borderô de **permuta** (Frente I, seção `fin010` acima): mesmo endpoint, outro uso.
 
 ## FRENTE IV (Recebimentos) — superfícies NOVAS (SKELETON, ADR-0022)
