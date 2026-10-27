@@ -220,12 +220,15 @@ export default class ElegibilidadeVinculoCodigoBarras {
         if (grupo.orfao) return nega(MOTIVO_INELEGIVEL_VINCULO.GRUPO_ORFAO);
         if (!grupo.parVigente) return nega(MOTIVO_INELEGIVEL_VINCULO.PAR_NAO_VIGENTE);
 
-        const lido = this.lerCodigo({
-            codigo: entrada.codigo,
-            poolValor: entrada.poolValor,
-            poolVencimento: entrada.poolVencimento,
-            vencimentoTitulo: grupo.vencimentoBoleto,
-        } as EntradaElegibilidadeVinculo);
+        const lido = this.lerCodigo(
+            {
+                codigo: entrada.codigo,
+                poolValor: entrada.poolValor,
+                poolVencimento: entrada.poolVencimento,
+                vencimentoTitulo: grupo.vencimentoBoleto,
+            } as EntradaElegibilidadeVinculo,
+            MOTIVO_INELEGIVEL_VINCULO.BOLETO_INCONSISTENTE,
+        );
         if ('motivo' in lido) return nega(lido.motivo, lido.extra);
         const { decodificado, comCodigo } = lido;
 
@@ -272,8 +275,13 @@ export default class ElegibilidadeVinculoCodigoBarras {
         return undefined;
     };
 
+    /**
+     * `motivoFatorDiverge`: o 1:1 devolve `FATOR_VENCIMENTO_DIVERGE` (7º check de I17d, ADR-0078); o
+     * item de borderô mantém `BOLETO_INCONSISTENTE` (I21o, ADR-0077), contrato que o grupo já tinha.
+     */
     private lerCodigo = (
         e: EntradaElegibilidadeVinculo,
+        motivoFatorDiverge: MotivoInelegivelVinculo = MOTIVO_INELEGIVEL_VINCULO.FATOR_VENCIMENTO_DIVERGE,
     ):
         | {
               decodificado: NonNullable<ReturnType<CodigoBarrasBoleto['decodificar']>>;
@@ -307,7 +315,7 @@ export default class ElegibilidadeVinculoCodigoBarras {
             decodificado.semVencimento !== true &&
             decodificado.vencimento !== e.poolVencimento;
         if (fatorDiverge) {
-            return { motivo: MOTIVO_INELEGIVEL_VINCULO.FATOR_VENCIMENTO_DIVERGE, extra: comCodigo };
+            return { motivo: motivoFatorDiverge, extra: comCodigo };
         }
         return { decodificado, comCodigo };
     };
