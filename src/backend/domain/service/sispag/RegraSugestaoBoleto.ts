@@ -197,6 +197,20 @@ export default class RegraSugestaoBoleto {
     public static numerosIguais = (doTitulo?: string, doBoleto?: string): boolean =>
         digitos(doTitulo) !== '' && digitos(doTitulo) === digitos(doBoleto);
 
+    /**
+     * Banda da âncora de número (I15s, emenda 2026-10-27): |Δvalor| ≤ R$ 0,05, boleto vencendo de 1
+     * a 5 dias DEPOIS do título e vigente na data de débito (I15h). Não muda o tier do candidato.
+     */
+    public static dentroDoEnvelopeAncoraNumero = (
+        deltaCentavos: number,
+        deltaDias: number,
+        venceAntesDoDebito: boolean,
+    ): boolean =>
+        !venceAntesDoDebito &&
+        Math.abs(deltaCentavos) <= centavos(LIMITE_VALOR_MESMO_DIA) &&
+        deltaDias >= DIAS_DEPOIS_MIN &&
+        deltaDias <= DIAS_DEPOIS_MAX;
+
     /** Número normalizado da I15f (dígitos, sem zeros à esquerda); vazio = sem número. */
     public static normalizarNumero = (numero?: string): string => digitos(numero);
 

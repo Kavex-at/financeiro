@@ -143,6 +143,58 @@ describe('MotorSugestaoBoleto — âncora de número (I15s, NUMERO_CONFIAVEL)', 
         });
     });
 
+    describe('banda do âncora: até R$ 0,05 vencendo de 1 a 5 dias depois (caso real 2/40919/1)', () => {
+        const t = titulo('25349');
+        const rivais = ['25037', '25041', '25047', '25052'].map((n) => boleto(n));
+        const ancora = (over: Partial<BoletoDda>) => boleto('25349', over);
+        const d = (b: BoletoDda) => desfecho(entrada({ titulos: [t], boletos: [...rivais, b] }), t);
+        const ancorou = (x: DesfechoTitulo | undefined) =>
+            x?.candidatos.some((c) => c.avaliacao.sinais.includes(SINAL_SUGESTAO.NUMERO_CONFIAVEL));
+
+        it('+R$ 0,01 e Δ+1: o 25349 é escolhido, confirmável, e os FORTES não', () => {
+            const r = d(ancora({ vencimento: '2026-10-28' }));
+            expect(r?.situacao).not.toBe(SITUACAO_SUGESTAO_TITULO.AMBIGUA);
+            expect(escolha(r)?.numeroBoleto).toBe('25349');
+            expect(escolha(r)?.avaliacao.sinais).toContain(SINAL_SUGESTAO.NUMERO_CONFIAVEL);
+            expect(escolha(r)?.confirmavel).toBe(true);
+            expect(r?.candidatos.filter((c) => c.confirmavel)).toHaveLength(1);
+        });
+
+        it('+R$ 0,06 e Δ+1: não ancora', () => {
+            expect(ancorou(d(ancora({ vencimento: '2026-10-28', valor: 647.62 })))).toBe(false);
+        });
+
+        it('+R$ 0,01 e Δ+6: não ancora', () => {
+            expect(ancorou(d(ancora({ vencimento: '2026-11-02' })))).toBe(false);
+        });
+
+        it('+R$ 0,01 e Δ−1: não ancora', () => {
+            expect(ancorou(d(ancora({ vencimento: '2026-10-26' })))).toBe(false);
+        });
+
+        it('valor igual e Δ+3: ancora, como antes', () => {
+            const r = d(ancora({ vencimento: '2026-10-30', valor: 647.56 }));
+            expect(ancorou(r)).toBe(true);
+            expect(escolha(r)?.numeroBoleto).toBe('25349');
+        });
+    });
+
+    describe('RegraSugestaoBoleto.dentroDoEnvelopeAncoraNumero', () => {
+        const f = RegraSugestaoBoleto.dentroDoEnvelopeAncoraNumero;
+        it('aceita |Δ| ≤ 5 centavos com 1..5 dias depois', () => {
+            expect(f(1, 1, false)).toBe(true);
+            expect(f(-5, 5, false)).toBe(true);
+            expect(f(0, 3, false)).toBe(true);
+        });
+        it('recusa fora da banda ou vencido no débito', () => {
+            expect(f(6, 1, false)).toBe(false);
+            expect(f(1, 6, false)).toBe(false);
+            expect(f(1, 0, false)).toBe(false);
+            expect(f(1, -1, false)).toBe(false);
+            expect(f(1, 2, true)).toBe(false);
+        });
+    });
+
     describe('âncora desligada (leitura de números indisponível)', () => {
         it('numeroAncoraDesligada: nenhum candidato recebe NUMERO_CONFIAVEL, mesmo no caso real', () => {
             const t = titulo('25037');

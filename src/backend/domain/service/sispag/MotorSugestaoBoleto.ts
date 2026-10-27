@@ -885,7 +885,8 @@ export default class MotorSugestaoBoleto {
             if (numero.length < NUMERO_CONFIAVEL_MIN_DIGITOS || !pesCod) continue;
             const unico = this.candidatoUnicoPorNumero(pendente);
             const emissor = unico?.boleto.emissor;
-            if (!unico || !emissor || unico.forca > 1) continue;
+            if (!unico || !emissor) continue;
+            if (!this.dentroDoEnvelopeDaAncora(unico)) continue;
             indice ??= this.indiceNumeros(entrada);
             if (indice.boletos.get(`${numero}|${emissor.chave}`)?.size !== 1) continue;
             const docs = indice.documentos.get(`${pesCod}|${numero}`);
@@ -922,6 +923,15 @@ export default class MotorSugestaoBoleto {
         const distintos = new Set(iguais.map((c) => c.boleto.codbar ?? c.boleto.chave));
         return distintos.size === 1 ? iguais[0] : undefined;
     };
+
+    /** Envelope da âncora (I15s): FORTE/CONHECIDO, ou a banda de centavos com 1–5 dias depois. */
+    private dentroDoEnvelopeDaAncora = (c: CandidatoCompleto): boolean =>
+        c.forca <= 1 ||
+        RegraSugestaoBoleto.dentroDoEnvelopeAncoraNumero(
+            Math.round(c.avaliacao.deltaValor * 100),
+            c.avaliacao.deltaDias,
+            c.avaliacao.diasVencidoNoDebito > 0,
+        );
 
     /**
      * Contagens da guarda de duplicata (I15s): boletos do pool COMPLETO por (número, emissor), de
