@@ -85,7 +85,7 @@ universality_evidence:
 | V9 | `finalizar` aceita barra = data de débito e barras até +10 dias do débito. |
 
 | V10 *(medido 2026-10-26, ADR-0078)* | O ERP não compara a barra com a data do título: aceita Δ −5..+10 e devolve a data da **barra** em `itsDtaPgtoResult`. Modalidade 6 aceita; modalidade 7 recusada quando o banco da barra = banco do lote (sem relação com a data). |
-| V11 *(medido 2026-10-26; rolagem inconclusiva)* | R2 confirmada: `finalizar` aceita `dataDebito ≤ min(itsDtaPgto)` e recusa acima ("EXISTEM TÍTULOS QUE IRÃO VENCER ANTES DA DATA DE PAGAMENTO"). Rolagem de sábado **não** distinguida (feriado de Finados no caso medido); regra segura: débito em ou antes da data da barra, sem rolar (I15h/I8c). |
+| V11 *(medido 2026-10-26; rolagem medida 2026-10-27)* | R2 confirmada: `finalizar` aceita `dataDebito ≤ min(itsDtaPgto)` e recusa acima ("EXISTEM TÍTULOS QUE IRÃO VENCER ANTES DA DATA DE PAGAMENTO"). **Rolagem (R8):** barra no sábado é comparada como a segunda seguinte (lote 68 aceito); feriado não rola (lote 55, Finados, recusado). Regra: débito em ou antes da data da barra rolada só sobre sábado/domingo (I8c, ADR-0078 emenda 2026-10-27). |
 | V12 *(medido 2026-10-26)* | Segmento J do `.REM`: *vencimento* = data do **título**; *data de pagamento* = data da **barra** (`itsDtaPgto`). O código de barras do mesmo J carrega o fator da barra. **Não medido: se o banco recusa J com vencimento ≠ fator do código** (só um boleto real pequeno e controlado em PRD responde). |
 
 **Abertos:** V6; V-PRD1 (permissão do robô para o `PUT`, sonda só de leitura implementada e **não
