@@ -5,9 +5,16 @@
 - **O número do documento desempata.** Quando um título tem dois ou mais boletos igualmente prováveis
   (mesmo emissor, mesmo valor, mesmo dia), o boleto cujo número é igual ao do documento do título passa
   a ser a sugestão única, sem precisar rejeitar os outros à mão. Vale só dentro da faixa segura (até
-  R$ 0,05 no mesmo dia, ou valor igual vencendo de 1 a 5 dias depois), com número de 4 dígitos ou mais
+  R$ 0,05 no mesmo dia, até R$ 0,05 vencendo de 1 a 5 dias depois, ou valor igual vencendo de 1 a 5 dias
+  depois), com número de 4 dígitos ou mais
   e sem repetição: nenhum outro boleto do mesmo emissor nem outro documento do mesmo fornecedor com o
   mesmo número.
+- **Par com centavos e data diferente ainda pede renegociação.** Quando o boleto de número igual vence de
+  1 a 5 dias depois do título e difere em até R$ 0,05, ele passa a ser sugerido, mas, depois de
+  confirmado, a renegociação no Conexos continua manual: o ajuste automático de centavos só cobre pares
+  do mesmo dia.
+- **O mesmo boleto em dois arquivos DDA não trava mais.** Repetido em dois arquivos, ele conta como um
+  só e não impede a sugestão pelo número.
 - **O boleto fica reservado para o título certo.** Um boleto casado pelo número não vai mais para outro
   título só porque esse outro vence antes; o outro título o mostra como disputado.
 - **Conflito fica à vista.** Se o DPS da NFS-e e o número do documento apontarem para boletos
