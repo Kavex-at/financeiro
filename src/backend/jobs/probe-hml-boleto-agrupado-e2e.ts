@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import 'dotenv/config';
 import './hmlEnvFile.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { container } from 'tsyringe';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
@@ -21,12 +21,18 @@ import GrupoBoletoExecucaoRepository from '../domain/repository/sispag/GrupoBole
 import GrupoBoletoRepository from '../domain/repository/sispag/GrupoBoletoRepository.js';
 import SugestaoBoletoRepository from '../domain/repository/sispag/SugestaoBoletoRepository.js';
 import TituloAPagarRepository from '../domain/repository/sispag/TituloAPagarRepository.js';
+import BoletoSuggestionService from '../domain/service/sispag/BoletoSuggestionService.js';
 import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetornoService.js';
 import GrupoBoletoService from '../domain/service/sispag/GrupoBoletoService.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
 import { conexosRequestContext } from '../domain/libs/requestContext/ConexosRequestContext.js';
-import GuardaHmlE2e, { escolherOcorrenciaRejeicao, FASES_E2E } from './hmlE2eGuarda.js';
+import GuardaHmlE2e, {
+    avaliarCaminhoV7,
+    avaliarProvaV7Bloqueada,
+    escolherOcorrenciaRejeicao,
+    FASES_E2E,
+} from './hmlE2eGuarda.js';
 
 /**
  * HML (ESCREVE) — prova ponta a ponta do boleto agrupado com o código de PRODUÇÃO (Task 21,
@@ -67,7 +73,10 @@ import GuardaHmlE2e, { escolherOcorrenciaRejeicao, FASES_E2E } from './hmlE2eGua
  *   retomada  lote nativo em rascunho com o item de borderô, ou limpo se a rodada terminar em retirada
  *   retomada-varredura  lote nativo em rascunho + borderô em cadastro (o grupo fica indeterminado
  *             para conferência humana; o job não limpa)
- *   v7        dois lotes nativos; borderô do grupo em cadastro ou limpo conforme o caminho (V7)
+ *   v7        dois lotes nativos; borderô do grupo em cadastro ou limpo conforme o caminho (V7).
+ *             CONTROL_DOC=doc/tit opcional: boleto sintético independente no SEGUNDO lote;
+ *             confirma pelo BoletoSuggestionService, define BOLETO e vincula por FIL:on.
+ *             A prova pós-fix exige retirada, preservação do contexto antigo e J só do controle.
  *
  *   cd src/backend
  *   HML_ENV_FILE=/home/inteli/.claude-tech/hml-conexos.env \
@@ -89,6 +98,7 @@ const BANCO_RECUSADO = process.env.BANCO_RECUSADO ?? '329';
 const POS_OC = Number(process.env.POS_OC ?? 231);
 /** Opcional: só vale se o ERP a marcar como rejeição (`fbeVldTpret 2`); sem ela, escolhe-se da tabela. */
 const OCORRENCIA_REJEICAO_PEDIDA = process.env.OCORRENCIA_REJEICAO;
+const CONTROL_DOC = process.env.CONTROL_DOC ?? '';
 const VENC_BOLETO = process.env.VENC_BOLETO ?? '';
 const DOCS = (process.env.DOCS ?? '')
     .split(',')
@@ -124,10 +134,11 @@ if (!veredito.permitido) {
 process.env.CONEXOS_WRITE_ENABLED = 'true';
 process.env.CONEXOS_DRY_RUN = 'false';
 process.env.SISPAG_LIVE_WRITE_ENABLED = 'true';
-// O vínculo por título fica `off`: a barra do borderô independe dele (P0-5).
-process.env.SISPAG_BIND_CODBAR_FILIAIS = '';
+// Somente a V7 com controle sintético exercita o vínculo comum de título (ADR-0071).
+process.env.SISPAG_BIND_CODBAR_FILIAIS = FASE === 'v7' && CONTROL_DOC ? `${FIL}:on` : '';
 
 type Row = Record<string, unknown>;
+const signature = (value: string): string => createHash('sha256').update(value).digest('hex');
 const mask = (m: string): string => AnaliseCodigoBarrasRepetido.mascarar(m);
 const txt = (v: unknown, n = 500): string => {
     const s = typeof v === 'string' ? v : JSON.stringify(v);
@@ -158,10 +169,10 @@ interface TituloHml {
 }
 
 /** Lê os `DOCS` em HML (só leitura): a identidade e o líquido ao vivo (régua da I17b). */
-const lerTitulosHml = async (): Promise<TituloHml[]> => {
+const lerTitulosHml = async (docs = DOCS): Promise<TituloHml[]> => {
     const sispag = container.resolve(ConexosSispagClient);
     const lidos: TituloHml[] = [];
-    for (const { doc, tit } of DOCS) {
+    for (const { doc, tit } of docs) {
         const titulo = await sispag.getTituloAPagar(FIL, doc, tit);
         if (!titulo) throw new Error(`título ${doc}/${tit} não existe em HML (filial ${FIL})`);
         const aberto = await sispag.lerValoresAberto(FIL, doc, tit);
@@ -199,13 +210,17 @@ let proximoDdc = 990_000 + (Math.floor(Date.now() / 1000) % 9000);
  * Semeia o Postgres LOCAL com o que a produção leria do ERP e do DDA: os títulos (dados reais de
  * HML), UM boleto do pool com barra SINTÉTICA (Σ do líquido) e o par credor×emissor vigente.
  */
-const semear = async (titulos: TituloHml[], banco: string): Promise<Cenario> => {
+const semear = async (
+    titulos: TituloHml[],
+    banco: string,
+    vencimento = VENC_BOLETO,
+): Promise<Cenario> => {
     const somaCentavos = titulos.reduce((a, t) => a + t.liquidoCentavos, 0);
     const ddcCod = proximoDdc++;
     const ditCod = 1;
     const barras = CodigoBarrasSintetico.barras({
         valor: somaCentavos / 100,
-        vencimento: VENC_BOLETO,
+        vencimento,
         banco,
         serie: ddcCod % 1000,
     });
@@ -230,7 +245,7 @@ const semear = async (titulos: TituloHml[], banco: string): Promise<Cenario> => 
                     ditCod,
                     numero: `E2E${ddcCod}`,
                     valor: somaCentavos / 100,
-                    vencimento: VENC_BOLETO,
+                    vencimento,
                     codbar: barras,
                 },
             ],
@@ -257,6 +272,7 @@ const semear = async (titulos: TituloHml[], banco: string): Promise<Cenario> => 
 const montarLote = async (
     c: Cenario,
     loteExistente?: LotePagamento,
+    controle?: Cenario,
 ): Promise<{ grupoId: string; lote: LotePagamento }> => {
     const grupos = container.resolve(GrupoBoletoService);
     const lotes = container.resolve(LotePagamentoService);
@@ -273,11 +289,32 @@ const montarLote = async (
         ator: ATOR,
     });
     const rascunho = loteExistente ?? (await lotes.criarLote({ filCod: FIL, ator: ATOR }));
-    const { lote } = await lotes.incluirGrupo({
+    const incluido = await lotes.incluirGrupo({
         loteId: rascunho.id,
         grupoId: grupo.id,
         ator: ATOR,
     });
+    let lote = incluido.lote;
+    if (controle) {
+        const t = controle.titulos[0]?.titulo;
+        if (!t) throw new Error('controle sem título');
+        lote = await lotes.incluirTitulo({
+            loteId: lote.id,
+            filCod: FIL,
+            docCod: t.docCod,
+            titCod: t.titCod,
+            ator: ATOR,
+        });
+        lote = await lotes.atualizarModalidadeItem({
+            loteId: lote.id,
+            filCod: FIL,
+            docCod: t.docCod,
+            titCod: t.titCod,
+            modalidade: 'BOLETO',
+            versao: lote.versao,
+            ator: ATOR,
+        });
+    }
     const finalizado = await lotes.finalizarLote({
         loteId: lote.id,
         versao: lote.versao,
@@ -345,12 +382,13 @@ const devolverRetorno = async (rem: string, nome: string, ocorrencia: string): P
 /** Os J (sem J-52) de um `.REM`: barra mascarada, valor da barra e pagamento, em centavos. */
 const lerJs = (
     rem: string,
-): Array<{ mascara: string; barraCentavos: number; pagCentavos: number }> =>
+): Array<{ mascara: string; signature: string; barraCentavos: number; pagCentavos: number }> =>
     rem
         .split(/\r?\n/)
         .filter((l) => l[7] === '3' && l[13] === 'J' && l.slice(17, 19) !== '52')
         .map((l) => ({
             mascara: mask(l.slice(17, 61)),
+            signature: signature(l.slice(17, 61)),
             barraCentavos: Number(l.slice(26, 36)),
             pagCentavos: Number(l.slice(152, 167)),
         }));
@@ -599,7 +637,67 @@ const faseRetomadaVarredura = async (titulos: TituloHml[]): Promise<void> => {
     checar('Alerta sispag-bordero-grupo-pendente emitido', alertas.length > 0);
 };
 
+/** Leitura completa do grid nativo; não conclui ausência de página truncada. */
+const lerItensNativos = async (loteId: string): Promise<Row[]> => {
+    const lote = await container.resolve(LotePagamentoService).getLote(loteId);
+    if (lote?.nativeFlpCod === undefined || lote.nativeBncCod === undefined)
+        throw new Error('lote sem identidade nativa: a prova não pode concluir ausência');
+    const base = container.resolve(ConexosBaseClient);
+    const rows: Row[] = [];
+    for (let pageNumber = 1; pageNumber <= 40; pageNumber += 1) {
+        await base.ensureSid();
+        const page = await base.listGenericPaginated<Row>(
+            `fin015/finItemSispag/list/${FIL}/${lote.nativeBncCod}/${lote.nativeFlpCod}`,
+            { fieldList: [], filterList: {}, serviceName: 'fin015', pageNumber, pageSize: 500 },
+            { filCod: FIL },
+        );
+        if (!Array.isArray(page.rows)) throw new Error('grid nativo sem rows legíveis');
+        rows.push(...page.rows);
+        const count = page.count == null ? undefined : Number(page.count);
+        if (count !== undefined && (!Number.isInteger(count) || count < rows.length))
+            throw new Error('contagem inconsistente no grid nativo');
+        if (page.rows.length < 500 || (count !== undefined && rows.length >= count)) return rows;
+    }
+    throw new Error('leitura incompleta dos itens nativos');
+};
+
+/** Só campos materiais; jamais persiste códigos de barras completos na trilha. */
+const snapshotOldItem = (rows: Row[], borCod: number): string => {
+    const matches = rows.filter((r) => Number(r.borCod) === borCod && !r.docCod);
+    if (matches.length !== 1) return '';
+    const r = matches[0];
+    if (!r || !Number.isInteger(Number(r.itsCodSeq)) || Number(r.itsMnyValor) <= 0) return '';
+    return signature(JSON.stringify(Object.entries(r).sort(([a], [b]) => a.localeCompare(b))));
+};
+
+const lerAlertasV7 = async (): Promise<Row[]> =>
+    container
+        .resolve(PostgreeDatabaseClient)
+        .selectMany('SELECT id, alvo, detalhe FROM alerta WHERE tipo = $tipo', {
+            tipo: 'sispag-bordero-grupo-pendente',
+        });
+
+const lerControleHml = async (): Promise<TituloHml | undefined> => {
+    let controlTitle: TituloHml | undefined;
+    if (CONTROL_DOC) {
+        if (!/^\d+\/\d+$/.test(CONTROL_DOC)) throw new Error('CONTROL_DOC exige doc/tit.');
+        const [doc = '', tit = ''] = CONTROL_DOC.split('/');
+        if (DOCS.some((d) => d.doc === doc && d.tit === tit))
+            throw new Error('CONTROL_DOC precisa ser separado dos membros de DOCS.');
+        [controlTitle] = await lerTitulosHml([{ doc, tit }]);
+        if (
+            !controlTitle?.titulo.liberado ||
+            controlTitle.titulo.pago ||
+            controlTitle.liquidoCentavos <= 0
+        )
+            throw new Error('controle precisa estar aprovado, aberto e com valor positivo.');
+    }
+    return controlTitle;
+};
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: roteiro sequencial de observações HML, mantido junto para auditoria da prova.
 const faseV7 = async (titulos: TituloHml[]): Promise<void> => {
+    const controlTitle = await lerControleHml();
     // Só LEITURA (fin050), ANTES de semear ou escrever qualquer coisa: o código tem de ser
     // rejeição de verdade (HML 2026-10-27: `AE` é informativo e a rodada foi perdida).
     const eventos = await container
@@ -642,22 +740,155 @@ const faseV7 = async (titulos: TituloHml[]): Promise<void> => {
         });
     checar('Alerta sispag-bordero-grupo-pendente emitido', alertas.length > 0);
 
-    // Inclusão manual num lote NOVO: o serviço reconhece o borderô antigo ao vivo (I21s, PI-9).
-    const novo = await montarLote(c);
+    // Captura ANTES do retry: contexto ausente/ambíguo nunca prova a guarda pós-fix.
+    const oldExec = await container.resolve(GrupoBoletoExecucaoRepository).ultimaPorGrupo(grupoId);
+    const baixa = container.resolve(ConexosBaixaClient);
+    const snapshotOld = async () => {
+        if (oldExec?.borCod === undefined || oldExec.borTimCad === undefined)
+            return { context: 'ambiguo' as const, item: '', bordero: '', baixas: '' };
+        const identity = await baixa.buscarBorderoPorIdentidade({
+            filCod: FIL,
+            borCod: oldExec.borCod,
+            borTimCad: oldExec.borTimCad,
+        });
+        const baixas = await baixa.listBaixas({ filCod: FIL, borCod: oldExec.borCod });
+        return {
+            context:
+                identity.situacao === IDENTIDADE_BORDERO.PRESENTE
+                    ? ('presente' as const)
+                    : ('ambiguo' as const),
+            item: snapshotOldItem(await lerItensNativos(lote.id), oldExec.borCod),
+            bordero:
+                identity.situacao === IDENTIDADE_BORDERO.PRESENTE
+                    ? signature(JSON.stringify(identity.bordero))
+                    : '',
+            baixas:
+                baixas.length === titulos.length
+                    ? signature(JSON.stringify(baixas.sort((a, b) => a.docCod - b.docCod)))
+                    : '',
+        };
+    };
+    const before = controlTitle ? await snapshotOld() : undefined;
+    if (before) {
+        const valid =
+            before.context === 'presente' &&
+            Boolean(before.item && before.bordero && before.baixas);
+        checar('V7 pré-retry: item antigo observado no lote anterior', valid);
+        trilha('v7-antes-retry', { observacao: before });
+        if (!valid) return;
+    }
+    const alertsBefore = await lerAlertasV7();
+    let controle: Cenario | undefined;
+    if (controlTitle) {
+        if (controlTitle.titulo.vencimento === undefined)
+            throw new Error('controle sem vencimento.');
+        const venc = new Date(controlTitle.titulo.vencimento).toISOString().slice(0, 10);
+        controle = await semear([controlTitle], BANCO_BARRA, venc);
+        await container.resolve(BoletoSuggestionService).confirmar({
+            filCod: FIL,
+            docCod: controlTitle.titulo.docCod,
+            titCod: controlTitle.titulo.titCod,
+            ddcCod: controle.ddcCod,
+            ditCod: controle.ditCod,
+            ator: ATOR,
+        });
+        trilha('controle', {
+            titulo: CONTROL_DOC,
+            boleto: mask(controle.barras),
+            centavos: controle.somaCentavos,
+            vencimento: venc,
+        });
+    }
+    // Inclusão manual num lote NOVO, controle ordinário somente depois da rejeição.
+    const novo = await montarLote(c, undefined, controle);
     const r2 = await gerarRemessaComoRequest(novo.lote.id).then(
-        (x) => ({ status: x.status, avisos: x.avisos ?? [] }),
-        (e: unknown) => ({ status: 'erro', avisos: [erro(e)] }),
+        (x) => ({ status: x.status, avisos: x.avisos ?? [], conteudo: x.conteudo ?? '' }),
+        (e: unknown) => ({ status: 'erro', avisos: [erro(e)], conteudo: '' }),
     );
-    log(`V7 — 2ª remessa do grupo: ${txt(r2)}`);
+    log(`V7 — 2ª remessa do grupo: ${txt({ status: r2.status, avisos: r2.avisos })}`);
     const execs = await container.resolve(GrupoBoletoExecucaoRepository).listarPorGrupo(grupoId);
     const reaproveitou = execs.some((e) => e.borCodReaproveitadoDe !== undefined);
     const retirou = execs.some((e) => e.motivo?.includes('BORDERO_ANTERIOR_NAO_RESOLVIDO'));
-    trilha('v7', { reaproveitou, retirou, r2: txt(r2) });
+    trilha('v7', {
+        reaproveitou,
+        retirou,
+        r2: { status: r2.status, avisos: r2.avisos.map((a) => txt(a)) },
+    });
     checar(
         'V7: o borderô antigo foi reaproveitado OU o grupo saiu com BORDERO_ANTERIOR_NAO_RESOLVIDO',
-        reaproveitou || retirou || r2.status === 'erro',
-        `reaproveitou ${reaproveitou}; retirou ${retirou}; ${txt(r2)}`,
+        avaliarCaminhoV7({ reaproveitou, retirou, status: r2.status }).ok,
+        `reaproveitou ${reaproveitou}; retirou ${retirou}; ${txt({ status: r2.status, avisos: r2.avisos })}`,
     );
+    if (controle && before) {
+        const after = await snapshotOld();
+        const local = await container.resolve(LotePagamentoService).getLote(novo.lote.id);
+        const native = await lerItensNativos(novo.lote.id);
+        const alerts = await lerAlertasV7();
+        const members = (row: { docCod: unknown; titCod: unknown }) =>
+            titulos.some(
+                (t) =>
+                    t.titulo.docCod === String(row.docCod) &&
+                    t.titulo.titCod === String(row.titCod),
+            );
+        const proof = avaliarProvaV7Bloqueada({
+            status: r2.status,
+            motivo: retirou ? 'BORDERO_ANTERIOR_NAO_RESOLVIDO' : '',
+            freshGuardWithdrawal: execs.some(
+                (e) =>
+                    e.loteId === novo.lote.id &&
+                    e.motivo?.includes('BORDERO_ANTERIOR_NAO_RESOLVIDO') === true &&
+                    e.borCod === undefined &&
+                    e.itsCodSeq === undefined &&
+                    e.borCodReaproveitadoDe === undefined,
+            ),
+            oldContext:
+                before.context === 'presente' && after.context === 'presente'
+                    ? 'presente'
+                    : 'ambiguo',
+            oldItemBefore: before.item,
+            oldItemAfter: after.item,
+            oldBorderoBefore: before.bordero,
+            oldBorderoAfter: after.bordero,
+            oldBaixasBefore: before.baixas,
+            oldBaixasAfter: after.baixas,
+            remainingGroupItems: local ? local.itens.filter(members).length : -1,
+            newNativeGroupItems: native.filter(
+                (row) =>
+                    (Number(row.borCod) > 0 && !row.docCod) ||
+                    members({ docCod: row.docCod, titCod: row.titCod }),
+            ).length,
+            rejectionAlertIds: alertsBefore.map((a) => String(a.id)),
+            newAlerts: alerts.map((a) => ({
+                id: String(a.id),
+                alvo: String(a.alvo),
+                acao: String((a.detalhe as Row | undefined)?.acao ?? ''),
+                situacao: String((a.detalhe as Row | undefined)?.situacao ?? ''),
+            })),
+            rejectionTarget: grupoId,
+            expectedGuardTarget: `${FIL}:grupo:${grupoId}`,
+            expectedGuardContext: [
+                `borderô antigo ${oldExec?.borCod}`,
+                `lote nativo ${oldExec?.flpCod}`,
+                'ainda está vinculado',
+            ],
+            groupSignature: signature(c.barras),
+            controlSignature: signature(controle.barras),
+            controlCents: controle.somaCentavos,
+            js: lerJs(r2.conteudo),
+        });
+        checar(
+            'V7 pós-fix: grupo bloqueado, contexto antigo preservado e controle gerado',
+            proof.ok,
+            proof.falhas.join('; '),
+        );
+        trilha('v7-pos-fix', {
+            antes: before,
+            depois: after,
+            prova: proof,
+            controle: mask(controle.barras),
+            js: lerJs(r2.conteudo),
+        });
+    }
     const vivos = await borderosVivos(grupoId);
     checar(
         'nunca dois borderôs vivos para o grupo (fin010)',
@@ -679,6 +910,11 @@ const fasePlano = async (titulos: TituloHml[]): Promise<void> => {
     log(
         `fases que escrevem: canonico, falha, retomada, v7 (exigem HML_AUTORIZO_ESCRITA=${hojeBrt()})`,
     );
+    const control = await lerControleHml();
+    if (control)
+        log(
+            `controle BOLETO ${CONTROL_DOC}: pesCod ${control.titulo.pesCod ?? '—'}, líquido ${control.liquidoCentavos}, vencimento próprio; só entra no segundo lote V7 com barra sintética e FIL:on`,
+        );
     log('nada foi escrito (plano).');
 };
 
