@@ -15,6 +15,25 @@ describe('sinaisVisiveis', () => {
     ).toEqual(['NUMERO_CONFIAVEL', 'DATA_DIVERGENTE_RECONHECIDA'])
   })
 
+  it('com NUMERO_CONFIAVEL, NUMERO_IGUAL e COLISAO_NUMERO somem (faixa ampliada da âncora)', () => {
+    expect(
+      sinaisVisiveis([
+        'VALOR_ATE_5_CENTAVOS',
+        'DIAS_DEPOIS',
+        'NUMERO_IGUAL',
+        'COLISAO_NUMERO',
+        'NUMERO_CONFIAVEL',
+      ]),
+    ).toEqual(['VALOR_ATE_5_CENTAVOS', 'DIAS_DEPOIS', 'NUMERO_CONFIAVEL'])
+  })
+
+  it('mantém COLISAO_NUMERO quando NUMERO_CONFIAVEL está ausente', () => {
+    expect(sinaisVisiveis(['NUMERO_IGUAL', 'COLISAO_NUMERO'])).toEqual([
+      'NUMERO_IGUAL',
+      'COLISAO_NUMERO',
+    ])
+  })
+
   it('mantém NUMERO_IGUAL sozinho', () => {
     expect(sinaisVisiveis(['NUMERO_IGUAL', 'MESMO_DIA'])).toEqual(['NUMERO_IGUAL', 'MESMO_DIA'])
   })
