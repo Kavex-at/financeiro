@@ -217,6 +217,21 @@ describe('cliente da sugestão de boleto', () => {
     })
   })
 
+  it('confirmar e anular aceitam a decisão com o sinal DATA_DIVERGENTE_RECONHECIDA (ADR-0078)', async () => {
+    const comAck = {
+      ...decisao,
+      sinais: ['VALOR_IGUAL', 'DATA_DIVERGENTE_RECONHECIDA', 'RECONHECEU_VENCE_ANTES'],
+    }
+    mock.mockResolvedValueOnce(resp(201, { criada: true, decisao: comAck }))
+    const c = await confirmarSugestaoBoleto(CHAVE)
+    expect(c.decisao.sinais).toContain('DATA_DIVERGENTE_RECONHECIDA')
+    mock.mockResolvedValueOnce(
+      resp(200, { anulada: true, decisao: { ...comAck, decisao: 'ANULADA' } }),
+    )
+    const a = await anularConfirmacaoBoleto({ filCod: 1, docCod: '9', titCod: '1' }, 'ack errado')
+    expect(a.decisao.sinais).toContain('DATA_DIVERGENTE_RECONHECIDA')
+  })
+
   it('copiar-linha devolve só a string', async () => {
     mock.mockResolvedValue(resp(200, { linhaDigitavel: 'TESTE' }))
     expect(await copiarLinhaSugestao(CHAVE)).toBe('TESTE')
