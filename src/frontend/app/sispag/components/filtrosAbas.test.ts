@@ -46,7 +46,7 @@ describe('filtros por aba', () => {
     const t = titulo({ vencimento: dia('2026-10-06'), temBoleto: true, formaPagamentoConexos: 6 })
     expect(filtroTitulos.getDatas?.(t)).toEqual(['2026-10-06'])
     expect(filtroTitulos.getCategoria?.(t).chave).toBe('boleto-com-dda')
-    // I19t: o prazo efetivo do boleto sugerido substitui o vencimento isolado no de/até.
+    // I19t + QA case 6: de/até acha o título pelo prazo efetivo E pelo próprio dia (sem duplicar).
     expect(
       filtroTitulos.getDatas?.({
         ...t,
@@ -58,7 +58,18 @@ describe('filtros por aba', () => {
           perdido: false,
         },
       }),
-    ).toEqual(['2026-10-04'])
+    ).toEqual(['2026-10-04', '2026-10-06'])
+    expect(
+      filtroTitulos.getDatas?.({
+        ...t,
+        prazoBoleto: {
+          prazoEfetivo: '2026-10-06',
+          origem: 'TITULO',
+          vencimentoTitulo: '2026-10-06',
+          perdido: false,
+        },
+      }),
+    ).toEqual(['2026-10-06'])
     expect(filtroTitulos.getCategoria?.(titulo({ formaPagamentoConexos: 6 })).chave).toBe(
       'boleto-sem-dda',
     )

@@ -10,7 +10,7 @@ import {
   type TituloAPagar,
 } from '@/lib/sispag'
 import { ROTULO_MOTIVO } from './rotulos'
-import { diaDoPrazo, diasAtePrazo, estaPerdido } from './prazoTitulo'
+import { diasAtePrazo, diasDoTitulo, estaPerdido } from './prazoTitulo'
 
 /**
  * Regras puras da aba de títulos com situação de pagamento (ADR-0075): filtro por coluna,
@@ -173,10 +173,11 @@ export const passaColunas = (t: TituloAPagar, f: FiltrosTitulos): boolean => {
     if (!faixa || !f.faixas.includes(faixa)) return false
   }
   if (f.vencDe || f.vencAte) {
-    const dia = diaDoPrazo(t)
-    if (!dia) return false
-    if (f.vencDe && dia < f.vencDe) return false
-    if (f.vencAte && dia > f.vencAte) return false
+    const dias = diasDoTitulo(t)
+    const naJanela = dias.some(
+      (dia) => (!f.vencDe || dia >= f.vencDe) && (!f.vencAte || dia <= f.vencAte),
+    )
+    if (!naJanela) return false
   }
   if (f.formas.length > 0 && !f.formas.includes(formaDePagamento(t).chave)) return false
   if (f.situacoes.length > 0 && !f.situacoes.includes(situacaoChave(t))) return false
