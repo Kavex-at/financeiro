@@ -448,3 +448,28 @@ Títulos 854/1 + 853/1 (aprovados no `fin103`, FBA 3), autorização `HML_AUTORI
 - **Resíduo:** lote nativo 65 finalizado com `PG271005.REM` e retorno 12 (`BI`); borderô 260 em cadastro com as baixas de 853/854;
   lote nativo 66 rascunho vazio; 853/854 em aberto, consumidos. Banco local: grupo `07f9fb2b…` retirado, lotes `4eeaad24…`
   (`RETORNADO`, flp 65) e `54196867…` (flp 66).
+
+## Task 22 — medição PRD somente leitura GT1/GT2 (2026-10-27, ~14:50 BRT)
+
+Go do maintainer em 2026-10-27. Job `jobs/validate-sispag-boleto-agrupado-v1.ts`, credencial do usuário do servidor (não CLONEX),
+banco PRD com `default_transaction_read_only = on`. Saída integral local em `/tmp/validate-sispag-boleto-agrupado-v1/resultado.json`.
+
+- **1ª tentativa:** abortou antes de qualquer chamada ao Conexos (0 logins): `relation "sispag_grupo_boleto" does not exist`.
+  A migration 0090 só existe em PRD depois do deploy da #131. Correção no job: tabela ausente (`42P01`) ⇒ zero grupos confirmados,
+  registrado na saída como `tabelaGruposAusente: true`; qualquer outro erro continua abortando.
+- **2ª tentativa:** `logins=1`, `chamadas=55` (só `POST fin064/list`), `recusadas=0`. Carteira 1.360 títulos ativos; pool DDA 27.067 boletos.
+
+| Medida | Valor |
+|---|---|
+| GT1 sugestões de grupo | **24** |
+| GT1 confirmáveis | **21** |
+| GT1 não confirmáveis | 3 (`TEM_BOLETO_ERP` 1, `FORMA_NAO_BOLETO` 2) |
+| GT1 intercambiáveis (I21f) / cruzados de filial / subconjunto de conjunto aberto (I21e) | 0 / 0 / 0 |
+| GT1 caso PEDRONI (38883–38885 × 332841) | ausente — `TITULOS_FORA_DA_CARTEIRA` |
+| GT2 grupos avaliados / títulos lidos ao vivo | 24 / 55 |
+| GT2 ilegíveis / divergentes / grupos que a confirmação recusaria | 0 / 0 / 0 |
+
+**Leitura:** no dia 1 a tela mostraria 24 grupos, 21 confirmáveis; o valor local bateu com o `fin064` em todos os 55 títulos, então
+nenhuma confirmação seria recusada por valor desatualizado (G1 sem evidência de problema). O PEDRONI saiu da carteira; pelo roteiro de
+rollout, o primeiro grupo real é o próximo confirmável da GT1. O job só grava contagens, não a lista de grupos: escolher o grupo exige
+abrir a aba "Boletos agrupados" depois do deploy (ou estender o job para listar chaves).
