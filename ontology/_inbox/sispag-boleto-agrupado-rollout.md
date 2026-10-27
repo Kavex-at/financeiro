@@ -8,7 +8,7 @@ Com `CONEXOS_DRY_RUN` ligado ou a escrita Conexos desligada, a etapa `preparar_b
 ## Antes do merge (portões, `sispag-boleto-agrupado-tasks.md`)
 
 - [ ] Task 21 — HML ponta a ponta: `canonico` **feito** (2026-10-26, borderô 253); faltam `falha` (V3), `retomada`, `v7`.
-- [ ] Task 22 — medição PRD só leitura GT1/GT2 (`jobs/validate-sispag-boleto-agrupado-v1.ts`), com o go do maintainer, fora do horário de remessa.
+- [x] Task 22 — medição PRD só leitura GT1/GT2 (feita 2026-10-27: 24 sugestões, 21 confirmáveis, GT2 0 divergências; ver `sispag-boleto-agrupado-hml-achados.md`) (`jobs/validate-sispag-boleto-agrupado-v1.ts`), com o go do maintainer, fora do horário de remessa.
 - [ ] Task 25 — gates finais (PatternGuardian, Regis-Review, rebase, versão, PR).
 
 ## Primeiro grupo real (com o maintainer, em tela, não pelo cron)
