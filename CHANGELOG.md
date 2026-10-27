@@ -1,5 +1,22 @@
 # Columbia Financeiro — Changelog
 
+## v0.76.0 (2026-10-27) — SISPAG: boleto com data diferente do título pede confirmação e não se perde
+
+- **Boleto com data diferente do título.** Quando o valor é igual mas o boleto vence de 6 a 10 dias
+  depois do título, ou até 10 dias antes dele, a confirmação passa a pedir um aviso de ciência: marcar
+  que conferiu o vencimento no portal do banco e escrever o motivo. O aviso fica preso à diferença e ao
+  valor que você viu; se qualquer um mudar, a confirmação volta como pendente.
+- **O prazo é o do boleto, não o do título.** Nos bloqueados, o prazo passa a ser o menor entre o
+  vencimento do título e o do boleto sugerido (já levando em conta fim de semana). A faixa "bloqueados
+  vencem hoje", o filtro "Vencidos" e o filtro de/até usam esse prazo, e a linha diz a causa: "Boleto
+  sugerido vence hoje · título vence dd/mm". Com mais de um candidato seguro, vale o mais cedo.
+- **Boleto perdido fica à vista.** Se o boleto sugerido já venceu, o título aparece numa região própria
+  da faixa ("resolver no portal do banco") e no filtro "Vencidos", sem entrar na conta de "vencem hoje".
+- **Mais uma conferência no código de barras.** O vencimento embutido no código é comparado com o do DDA;
+  se divergirem, o item sai do lote com o motivo explicado.
+- **Ainda não paga.** Pagar com o código de barras nesses casos (e a data de débito do lote) ficam para a
+  próxima etapa, depois de medirmos no ambiente de homologação como o Conexos grava o arquivo de remessa.
+
 ## v0.75.0 (2026-10-26) — SISPAG: um boleto paga vários títulos (boleto agrupado)
 
 - **Boletos agrupados.** Quando um boleto do DDA cobre a soma de vários títulos do mesmo fornecedor,
