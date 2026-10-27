@@ -33,7 +33,7 @@ export const ChaveSugestaoBodySchema = z
 export const AVISOS_RECONHECIVEIS = [SINAL_SUGESTAO.VENCE_ANTES_DO_TITULO] as const;
 
 /**
- * Reconhecimento TIPADO da divergência de data (I15q, ADR-0078). `.strict()`: qualquer campo extra —
+ * Reconhecimento TIPADO da divergência de data (I15r, ADR-0078). `.strict()`: qualquer campo extra —
  * inclusive `reconhecidoPor`/`reconhecidoEm` — é 400 (o autor vem do JWT, nunca do corpo).
  * `deltaDiasVisto` e `valorBoletoVisto` (centavos) são conferidos no servidor contra a avaliação ao
  * vivo (anti-TOCTOU); o checkbox `aceito` só existe como `true`.
@@ -58,7 +58,7 @@ export const ConfirmarSugestaoBodySchema = ChaveSugestaoBodySchema.extend({
         .array(z.enum(AVISOS_RECONHECIVEIS))
         .max(AVISOS_RECONHECIVEIS.length)
         .default([]),
-    /** Obrigatório quando o candidato tem `exigeReconhecimento = DATA_DIVERGENTE` (I15q). */
+    /** Obrigatório quando o candidato tem `exigeReconhecimento = DATA_DIVERGENTE` (I15r). */
     reconhecimento: ReconhecimentoDivergenciaSchema.optional(),
 }).strict();
 

@@ -7,14 +7,16 @@
 
 Feature: `sispag-vinculo-data-divergente` (`/feature-tweak`). `entity_changed = true`. **Ontologia à frente do
 código** (tudo `planned`). Numeração 0.49.0/ADR-0078/migration ≥ 0091 por colisão com `feat/sispag-boleto-agrupado`
-(0.48.0, ADR-0077, migration 0090): reconferir no rebase.
+(0.48.0, ADR-0077, migration 0090), **confirmada no rebase sobre o #131 já mergeado** (2026-10-27). Neste rebase as regras
+novas foram renumeradas por colisão com o ADR-0077: reconhecimento tipado **I15q → I15r**, caminho `DATA_DIVERGENTE` **I17o → I17p**,
+guarda de data do `.REM` **I17p → I17q** (I15q e I17o ficam com o boleto agrupado; I15s está reservada a outra branch).
 
-- **Caminho `DATA_DIVERGENTE` (I17o):** valor igual em centavos (I17b intacta), Δdias ∈ [-10,-1] ∪ [6,10], com
+- **Caminho `DATA_DIVERGENTE` (I17p):** valor igual em centavos (I17b intacta), Δdias ∈ [-10,-1] ∪ [6,10], com
   reconhecimento tipado válido. Emendas I17a, I17c (passo 2 passa a ler o reconhecimento), I17d (**7º check:**
   fator de vencimento × DDA), I17k (modo próprio, default `off`, `shadow` registra Δ), I17l (ack inválido retira).
-- **I17p** (guarda de data do `.REM`, fail-closed) e medições HML V10–V12 **a fazer** antes de qualquer código;
+- **I17q** (guarda de data do `.REM`, fail-closed) e medições HML V10–V12 **a fazer** antes de qualquer código;
   Δ>0 em aberto até a medição do J.
-- **I15q** reconhecimento tipado (propriedade `DecisaoSugestaoBoleto.reconhecimento` + derivados
+- **I15r** reconhecimento tipado (propriedade `DecisaoSugestaoBoleto.reconhecimento` + derivados
   `reconhecimentoValido`/`exigeReconhecimento`; sem estado novo): substitui o `reconheceAvisos` simples em Δ<0
   com valor igual; Δ>5 com valor igual também pede ack. Emendas I15c/d (notas), I15h (barra rolada ao próximo dia
   útil), I15m, I15o.
@@ -27,8 +29,8 @@ código** (tudo `planned`). Numeração 0.49.0/ADR-0078/migration ≥ 0091 por c
   envelope > ±10, fase 2, juros/multa.
 - Coverage: contagens inalteradas (regras 32; entidades e ações sem mudança); `open_gap` nas 4 regras.
 - **Fase 1 fechada (T1.13, 2026-10-26): `planned` → `implemented`** em I17d(7), I15h (rolagem), I15m/I15o
-  (`exigeReconhecimento`), I15q, I8c (função pura e janela por lote), I19i e I19t (`prazoBoleto`, backend e frontend, com o
-  "perdido" do G1). **Seguem `planned` (Fase 2, aguardam V10–V12):** I17o/I17p, I17k (modo novo), I17l (ack), emendas
+  (`exigeReconhecimento`), I15r, I8c (função pura e janela por lote), I19i e I19t (`prazoBoleto`, backend e frontend, com o
+  "perdido" do G1). **Seguem `planned` (Fase 2, aguardam V10–V12):** I17p/I17q, I17k (modo novo), I17l (ack), emendas
   de I17a/I17c, I19j (modo do caminho), uso de I8c na formação e Δ>0.
 
 ## v0.48.0 — implementação (2026-10-26)

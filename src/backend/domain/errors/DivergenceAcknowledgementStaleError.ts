@@ -3,7 +3,7 @@ import Format from './DivergenceAcknowledgementFormat.js';
 
 /**
  * O reconhecimento enviado não bate com o que existe agora: o Δdias ou o valor do boleto que a
- * analista viu mudaram desde a leitura (I15q, ADR-0078). Conferido contra a avaliação recalculada
+ * analista viu mudaram desde a leitura (I15r, ADR-0078). Conferido contra a avaliação recalculada
  * ao vivo, nunca contra o cache. HTTP 422 — a tela reabre o diálogo com os valores novos.
  */
 export default class DivergenceAcknowledgementStaleError extends Error implements HandlerError {

@@ -19,12 +19,12 @@ import { Textarea } from '@/components/ui/textarea'
 import { MOTIVO_RECONHECIMENTO_MAX, MOTIVO_RECONHECIMENTO_MIN } from '@/lib/sispag'
 import { motivoReconhecimentoValido } from './sugestaoBoleto'
 
-/** Texto do reconhecimento tipado (I15q): o botão só habilita com o checkbox E o motivo válido. */
+/** Texto do reconhecimento tipado (I15r): o botão só habilita com o checkbox E o motivo válido. */
 export const TEXTO_RECONHECIMENTO_DATA_DIVERGENTE =
   'Entendo que a data deste boleto é diferente da do título e que o pagamento em data divergente pode gerar atraso, juros e multa.'
 
 /**
- * Confirmar um candidato de valor igual com data divergente (I15q, ADR-0078; Δ<0 ou Δ>5) exige o
+ * Confirmar um candidato de valor igual com data divergente (I15r, ADR-0078; Δ<0 ou Δ>5) exige o
  * reconhecimento TIPADO: checkbox + motivo (10 a 500 caracteres). Mostra o Δ de dias e o valor que
  * a analista está vendo — são eles que seguem no corpo e que o servidor confere contra a avaliação
  * ao vivo (422 "desatualizado" se mudaram). O servidor é a trava; este diálogo é o consentimento

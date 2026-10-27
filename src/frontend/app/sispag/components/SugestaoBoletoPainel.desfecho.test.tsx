@@ -280,7 +280,7 @@ describe('SugestaoBoletoPainel — desfecho do título (ADR-0072)', () => {
     })
   })
 
-  describe('caso C: valor igual com data divergente exige o reconhecimento TIPADO (I15q)', () => {
+  describe('caso C: valor igual com data divergente exige o reconhecimento TIPADO (I15r)', () => {
     const casoC = (deltaDias: number, vencimentoBoleto: string) =>
       desfecho({
         situacao: 'SO_ATENCAO',

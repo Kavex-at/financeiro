@@ -99,5 +99,5 @@ ratear → aplicar regras → baixar/emitir NDe → observar. Ver [ADR-0022](dec
 | **Multi-filial** | As soluções operam sobre todas as filiais, não apenas uma. |
 | **Diagnóstico / baseline** | Primeira semana de cada frente: confirma escopo e levanta métricas para apurar ROI. |
 | **Data divergente** | Boleto com valor igual ao título em centavos, mas vencimento fora de 0..5 dias do título (Δ ∈ [-10,-1] ∪ [6,10]); só vincula com reconhecimento tipado (ADR-0078, `planned`). |
-| **Reconhecimento de divergência** | Ack tipado e separado da confirmação (checkbox + motivo), que grava o Δ e o valor vistos e deixa de valer se qualquer um mudar (I15q). Propriedade da decisão, não estado. |
+| **Reconhecimento de divergência** | Ack tipado e separado da confirmação (checkbox + motivo), que grava o Δ e o valor vistos e deixa de valer se qualquer um mudar (I15r). Propriedade da decisão, não estado. |
 | **Prazo do boleto** | Prazo efetivo derivado do título bloqueado = min(vencimento do título, prazo final do boleto acionável); nunca persistido nem motivo `VENCIDO` (I19t). |

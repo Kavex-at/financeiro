@@ -1,9 +1,9 @@
 # Tasks — sispag-vinculo-data-divergente (ADR-0078)
 
 Branch `feat/sispag-vinculo-data-divergente` · `/feature-tweak`, `entity_changed = true` (ontologia 0.49.0, já aplicada).
-Escopo: caminho `DATA_DIVERGENTE` do vínculo de código de barras (I17o), reconhecimento tipado (I15q), 7º check do
+Escopo: caminho `DATA_DIVERGENTE` do vínculo de código de barras (I17p), reconhecimento tipado (I15r), 7º check do
 fator de vencimento (I17d(7)), data candidata do lote (I8c), prazo efetivo `prazoBoleto` (I19t) e guarda de data do
-`.REM` (I17p). **Fase 2 do produto** (ajustar a data do título no ERP) fica fora (REJECT-PREMATURE).
+`.REM` (I17q). **Fase 2 do produto** (ajustar a data do título no ERP) fica fora (REJECT-PREMATURE).
 
 ## Convenções (valem para toda tarefa)
 
@@ -170,7 +170,7 @@ escrever nada novo no ERP.
   só pós-commit; (f) idempotência (201/200) e corrida (`inserirDecisao`) inalteradas; (g) mesma analista, sem segunda pessoa.
 - Deps: T1.3, T1.5, T1.6. Gate: G + PatternGuardian.
 
-## T1.8 — Validade, órfã e anulação (I15q/I15l/I19i)
+## T1.8 — Validade, órfã e anulação (I15r/I15l/I19i)
 - Arquivos: `BoletoSuggestionService` (derivar `orfa` + `motivoOrfa` pt-BR "reconhecimento de data divergente invalidado"
   quando `valido()` é falso), transferência da I18j (herda o ack só se Δ e valor recomputados ainda baterem; senão a
   decisão nova nasce com ack inválido), `SituacaoPagamentoService`/`SituacaoPagamentoResolver` (I19i: órfã por ack inválido).
@@ -228,8 +228,8 @@ escrever nada novo no ERP.
 ## T1.13 — Fechamento da Fase 1 (cobertura da ontologia)
 - Arquivos: `ontology/_index.json` (`impl_files` das regras/entidades tocadas), `ontology/_coverage.json`
   (`open_gap` reduzido ao que é Fase 2), `ontology/CHANGELOG.md` — pelo OntologyCurator, com aprovação do Yuri.
-- Aceite: I17a(parcial)/I17d(7)/I15h/I15m/I15o/I15q/I8c/I19i/I19t passam de `planned` a `implemented` apenas se a tarefa
-  correspondente estiver verde; I17o/I17p/I17k(modo novo)/I17l(ack) continuam `planned`.
+- Aceite: I17a(parcial)/I17d(7)/I15h/I15m/I15o/I15r/I8c/I19i/I19t passam de `planned` a `implemented` apenas se a tarefa
+  correspondente estiver verde; I17p/I17q/I17k(modo novo)/I17l(ack) continuam `planned`.
 - Deps: T1.1–T1.12. Gate: aprovação humana do diff da ontologia.
 
 ---
@@ -267,7 +267,7 @@ escrever nada novo no ERP.
   decisão; log sem barras completas.
 - Deps: T1.5, T1.7, T1.8, T2.2. Gate: G + PatternGuardian + QA-fault-tolerance (retomada com caminho novo).
 
-## T2.4 — Guarda de data do `.REM` (I17p), fail-closed
+## T2.4 — Guarda de data do `.REM` (I17q), fail-closed
 - Arquivos: `RemessaService.ts` e o gerador do segmento J (+ tests; achar o ponto do gate pós-geração da I16b(2) e o
   espelho da I17m de valor), erro nomeado 409 em `domain/errors/`, rota de remessa.
 - Aceite: em todo J com barra de vencimento ≠ `0000`, `J.dataPagamento == itsDtaPgto` do item; divergência ⇒ erro 409 nomeado,
@@ -297,7 +297,7 @@ escrever nada novo no ERP.
 - Deps: T2.1–T2.6. Gate: pausa humana (QaCoach).
 
 ## T2.8 — Fechamento da Fase 2
-- OntologyCurator: I17o/I17p/I17k/I17l → `implemented` ou mantidos conforme o resultado; ADR-0078 `accepted` → `partial`/final
+- OntologyCurator: I17p/I17q/I17k/I17l → `implemented` ou mantidos conforme o resultado; ADR-0078 `accepted` → `partial`/final
   só no ship. Deps: T2.7. Gate: aprovação humana.
 
 ---

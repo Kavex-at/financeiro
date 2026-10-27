@@ -1,5 +1,5 @@
 -- 0091_sispag_reconhecimento_divergencia.sql
--- ADR-0078 (I15q, I17o, I8c) — reconhecimento TIPADO da divergência de data e o caminho do vínculo
+-- ADR-0078 (I15r, I17p, I8c) — reconhecimento TIPADO da divergência de data e o caminho do vínculo
 -- do código de barras. Dois blocos, ADITIVOS e idempotentes (colunas nuláveis, CHECKs novos):
 --
 --   1. `sispag_decisao_sugestao_boleto` ganha o RECONHECIMENTO como propriedade da decisão
@@ -145,6 +145,6 @@ END
 $$;
 
 COMMENT ON COLUMN sispag_decisao_sugestao_boleto.reconhecimento_tipo IS
-    'ADR-0078 I15q — reconhecimento tipado da divergencia de data (propriedade da decisao, nao estado). Validade e derivada (delta e valor ainda batem), nunca coluna.';
+    'ADR-0078 I15r — reconhecimento tipado da divergencia de data (propriedade da decisao, nao estado). Validade e derivada (delta e valor ainda batem), nunca coluna.';
 COMMENT ON COLUMN lote_pagamento_item.vinculo_caminho IS
-    'ADR-0078 I17o — JANELA_PADRAO | DATA_DIVERGENTE. Nulo = vinculo anterior a 0091 (equivale a JANELA_PADRAO).';
+    'ADR-0078 I17p — JANELA_PADRAO | DATA_DIVERGENTE. Nulo = vinculo anterior a 0091 (equivale a JANELA_PADRAO).';

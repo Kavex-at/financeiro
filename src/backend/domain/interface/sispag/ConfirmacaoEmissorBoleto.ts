@@ -93,14 +93,14 @@ export type ConfirmacaoEmissorView = Omit<ConfirmacaoEmissor, 'emissorChave'> & 
     elegivelAutomatico: boolean;
 };
 
-/** Tipos de reconhecimento tipado da divergência (I15q, ADR-0078; paridade com o CHECK da 0091). */
+/** Tipos de reconhecimento tipado da divergência (I15r, ADR-0078; paridade com o CHECK da 0091). */
 export const RECONHECIMENTO_TIPO = {
     DATA_DIVERGENTE: 'DATA_DIVERGENTE',
 } as const;
 export type ReconhecimentoTipo = (typeof RECONHECIMENTO_TIPO)[keyof typeof RECONHECIMENTO_TIPO];
 
 /**
- * Reconhecimento da divergência de data, PROPRIEDADE da decisão (I15q): o que a analista viu
+ * Reconhecimento da divergência de data, PROPRIEDADE da decisão (I15r): o que a analista viu
  * (Δdias e valor do boleto, em centavos), por quê e quem. A validade é derivada, nunca persistida.
  */
 export interface ReconhecimentoDecisao {
@@ -152,7 +152,7 @@ export interface DecisaoSugestao {
     origemDecisaoId?: string;
     /** ADR-0074 (M1): `sistema` quando transferida; o autor humano fica em `decididoPor`. */
     transferidaPor?: string;
-    /** ADR-0078 (I15q): ausente nas decisões anteriores à 0091 e nas que não o exigiram. */
+    /** ADR-0078 (I15r): ausente nas decisões anteriores à 0091 e nas que não o exigiram. */
     reconhecimento?: ReconhecimentoDecisao;
 }
 

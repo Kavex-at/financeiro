@@ -78,7 +78,7 @@ describe('erros da sugestão de boleto (ADR-0068) — HTTP e mensagem', () => {
     });
 });
 
-describe('erros do reconhecimento de divergência (I15q, ADR-0078)', () => {
+describe('erros do reconhecimento de divergência (I15r, ADR-0078)', () => {
     const exigido = new DivergenceAcknowledgementRequiredError({
         ...chave,
         deltaDias: 7,

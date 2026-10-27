@@ -291,6 +291,6 @@
 - **Boleto vencido na data de débito (juros/multa)** — REJECT-PREMATURE (P0-3): segue `VENCIDO_INFORMATIVO`.
 - **`|Δdias| > 10`** — REJECT-VOLATILE (P0-2).
 - **Segunda pessoa para o ack da divergência** — REJECT-PREMATURE; reservada ao passo 3 (I15g).
-- **Δ > 0: débito na data do título ou da barra** — em aberto, depende de V12 (I17p).
+- **Δ > 0: débito na data do título ou da barra** — em aberto, depende de V12 (I17q).
 - **Desempate da I16d.1** — pendência registrada na entrevista, fora desta fatia.
 - **Universalidade** — 1 cliente; revisar com o Francinei (fator de vencimento é norma FEBRABAN).

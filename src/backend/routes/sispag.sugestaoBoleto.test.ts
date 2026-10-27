@@ -341,7 +341,7 @@ describe('POST /sispag/sugestoes-boleto/confirmar — reconheceAvisos (I15o)', (
     });
 });
 
-describe('POST /sispag/sugestoes-boleto/confirmar — reconhecimento tipado (I15q, ADR-0078)', () => {
+describe('POST /sispag/sugestoes-boleto/confirmar — reconhecimento tipado (I15r, ADR-0078)', () => {
     const ACK = {
         tipo: 'DATA_DIVERGENTE',
         aceito: true,

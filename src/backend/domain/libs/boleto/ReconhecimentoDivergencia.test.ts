@@ -2,7 +2,7 @@ import ReconhecimentoDivergencia from './ReconhecimentoDivergencia.js';
 
 const visto = { deltaDiasVisto: -3, valorBoletoVisto: 102_880 };
 
-describe('ReconhecimentoDivergencia.valido (I15q)', () => {
+describe('ReconhecimentoDivergencia.valido (I15r)', () => {
     it('válido quando Δ e valor atuais são exatamente os vistos', () => {
         expect(
             ReconhecimentoDivergencia.valido(visto, {

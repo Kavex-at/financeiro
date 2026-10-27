@@ -16,12 +16,12 @@ preconditions:
   - "Item BOLETO no rascunho nativo aberto, sem DDA associado pelo ERP (I17a, I17i)."
   - "DecisaoSugestaoBoleto CONFIRMADA nao orfa, par VIGENTE, relidos ao vivo; tier recalculado CONHECIDO|FORTE (I17a)."
   - "Valor igual em centavos; 0 <= deltaDias <= 5; vencimento da barra >= dataDebito (I17b, I17c)."
-  - "(ADR-0078, planned) OU caminho DATA_DIVERGENTE: deltaDias em [-10,-1] U [6,10], reconhecimento valido (I15q), vencimento efetivo da barra (rolado ao proximo dia util) >= dataDebito, data candidata possivel (I8c), modo do caminho = on (I17k, I17o)."
+  - "(ADR-0078, planned) OU caminho DATA_DIVERGENTE: deltaDias em [-10,-1] U [6,10], reconhecimento valido (I15r), vencimento efetivo da barra (rolado ao proximo dia util) >= dataDebito, data candidata possivel (I8c), modo do caminho = on (I17k, I17p)."
   - "DV, banco, valor, data e juros/desconto = 0 conferidos por nos (I17d, incluindo o 7o check: fator de vencimento x DDA, ADR-0078 implemented Fase 1); codigo nao repetido no rascunho (I17h)."
 postconditions:
   - "Item com itsNumCodbar (47), itsNumBanco, bncDesNome, valor e data da barra, observados na releitura (I17e)."
   - "ItemLote.vinculoCodigoBarras preenchido com origem DECISAO_HUMANA, decisaoId, codigo mascarado, aplicadoEm, flpCod."
-  - "(ADR-0078, planned) vinculoCodigoBarras tambem registra caminho, deltaDias e reconhecimentoId; guarda de data do .REM (I17p) fail-closed."
+  - "(ADR-0078, planned) vinculoCodigoBarras tambem registra caminho, deltaDias e reconhecimentoId; guarda de data do .REM (I17q) fail-closed."
   - "Evento VINCULO_APLICADO na trilha (mascarado), unico por (lote, titulo, decisaoId)."
   - "Guarda I16 reavaliada sobre o conjunto final do rascunho (I17h)."
 side_effects:

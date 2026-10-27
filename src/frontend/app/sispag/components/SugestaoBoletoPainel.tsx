@@ -459,7 +459,7 @@ export function SugestaoBoletoPainel({
                     onClick={() =>
                       pedeReconhecimento
                         ? setDialogo({
-                            // Valor igual + data divergente (I15q): ack tipado; senão o aviso simples.
+                            // Valor igual + data divergente (I15r): ack tipado; senão o aviso simples.
                             tipo: exigeReconhecimentoTipado({ avaliacao: a })
                               ? 'reconhecer-divergencia'
                               : 'reconhecer',

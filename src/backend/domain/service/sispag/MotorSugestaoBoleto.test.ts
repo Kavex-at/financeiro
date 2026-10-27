@@ -540,7 +540,7 @@ describe('MotorSugestaoBoleto — confirmação órfã (I15l)', () => {
     });
 });
 
-describe('MotorSugestaoBoleto — validade do reconhecimento tipado (I15q, I15l, ADR-0078)', () => {
+describe('MotorSugestaoBoleto — validade do reconhecimento tipado (I15r, I15l, ADR-0078)', () => {
     // Título vence 20/10 (terça); boleto 17/10 (sábado ⇒ prazo final 19/10); Δ = -3, valor igual.
     const decisaoComAck = (over: Record<string, unknown> = {}) => ({
         filCod: 1,

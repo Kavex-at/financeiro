@@ -93,7 +93,7 @@ export interface ResultadoDecisao {
     criada: boolean;
     decisao: DecisaoSugestao;
     /**
-     * Só quando a decisão tem reconhecimento tipado (I15q): ele ainda vale (Δ e valor de agora iguais
+     * Só quando a decisão tem reconhecimento tipado (I15r): ele ainda vale (Δ e valor de agora iguais
      * aos vistos)? Derivado, nunca persistido; ausente = não se sabe (fail-closed na tela).
      */
     reconhecimentoValido?: boolean;
@@ -249,7 +249,7 @@ export default class BoletoSuggestionService {
         input: ChaveSugestao & {
             ator: string;
             reconheceAvisos?: SinalSugestao[];
-            /** Reconhecimento tipado da divergência de data (I15q, ADR-0078). */
+            /** Reconhecimento tipado da divergência de data (I15r, ADR-0078). */
             reconhecimento?: ReconhecimentoDivergenciaBody;
         },
     ): Promise<ResultadoDecisao> => {
@@ -319,7 +319,7 @@ export default class BoletoSuggestionService {
         const tier = sugestao.avaliacao.resultado;
         if (!TIERS.has(tier)) throw new OverdueBoletoNotConfirmableError(chave);
         // Aviso (I15o): conferido contra a avaliação RECALCULADA acima, nunca contra o cache.
-        // Divergência de data com valor igual (I15q, ADR-0078): reconhecimento TIPADO, que substitui
+        // Divergência de data com valor igual (I15r, ADR-0078): reconhecimento TIPADO, que substitui
         // o aviso simples e o implica. Sem a exigência, vale o aviso simples de hoje.
         const codbarMascarado = this.codigoBarras.mascarar(boleto.codbar);
         const tipado = ConferenciaReconhecimento.conferir({
@@ -490,7 +490,7 @@ export default class BoletoSuggestionService {
     };
 
     /**
-     * I15q: o reconhecimento de uma decisão já existente ainda vale? Lê o cenário (cache) e vê se o
+     * I15r: o reconhecimento de uma decisão já existente ainda vale? Lê o cenário (cache) e vê se o
      * desfecho do título virou órfão por reconhecimento invalidado. Nunca lança.
      */
     private validadeDoReconhecimento = async (

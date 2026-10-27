@@ -270,7 +270,7 @@ describe('adaptações', () => {
   })
 })
 
-describe('reconhecimento tipado de data divergente (I15q, ADR-0078)', () => {
+describe('reconhecimento tipado de data divergente (I15r, ADR-0078)', () => {
   const divergente = (deltaDias: number) => ({
     valorBoleto: 1234.56,
     vencimentoBoleto: '2026-10-17',

@@ -1552,7 +1552,7 @@ describe('BoletoSuggestionService — desfecho por título e aviso (I15m–I15o,
         });
     });
 
-    describe('confirmar: reconhecimento TIPADO da divergência de data (I15q, ADR-0078)', () => {
+    describe('confirmar: reconhecimento TIPADO da divergência de data (I15r, ADR-0078)', () => {
         // Valor igual e âncora (par vigente): Δ=-2 (lote antecipa o débito) e Δ=+7 são "data divergente".
         const antes = () => {
             const m = montar({ boletos: [BOLETO_ANTES], pares: [PAR] });
@@ -1634,7 +1634,7 @@ describe('BoletoSuggestionService — desfecho por título e aviso (I15m–I15o,
                 reconheceu: ['VENCE_ANTES_DO_TITULO'],
                 reconhecimento: { tipo: 'DATA_DIVERGENTE', deltaDiasVisto: -2 },
             });
-            // mesma transação da decisão (I15q)
+            // mesma transação da decisão (I15r)
             expect(m.db.withTransaction).toHaveBeenCalledTimes(1);
         });
 

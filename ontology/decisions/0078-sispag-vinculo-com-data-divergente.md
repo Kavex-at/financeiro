@@ -27,8 +27,8 @@ analista já ter reconhecido o par. Além disso o vencimento da barra pode puxar
 antes do vencimento do título, e a tela não mostra isso.
 
 ## Decisão
-1. Novo caminho `DATA_DIVERGENTE` (I17o): valor igual em centavos (I17b intacta, sem tolerância),
-   Δ ∈ [-10,-1] ∪ [6,10], exige **reconhecimento tipado** válido (I15q).
+1. Novo caminho `DATA_DIVERGENTE` (I17p): valor igual em centavos (I17b intacta, sem tolerância),
+   Δ ∈ [-10,-1] ∪ [6,10], exige **reconhecimento tipado** válido (I15r).
 2. Reconhecimento = **propriedade** de `DecisaoSugestaoBoleto` (checkbox + motivo 10–500 + Δ e valor vistos);
    inválido se Δ ou valor mudarem; mesma analista; sem segunda pessoa; sem estado novo. **Substitui** o
    `reconheceAvisos` simples em Δ<0 com valor igual (implica `RECONHECEU_VENCE_ANTES`). **Δ>5 com valor igual
@@ -46,7 +46,7 @@ antes do vencimento do título, e a tela não mostra isso.
    *Nota (2026-10-26, gap G1, decisão do maintainer):* "perdido" cobre também o par de valor igual + âncora
    `VENCIDO_INFORMATIVO` com barra `< hoje` e título a vencer, **sem** puxar o `prazoEfetivo` (emenda à I19t(3)/(5)).
 7. `[DEFAULT P1-5]` modo próprio `off` por default, `shadow` registra Δ; `[DEFAULT P1-6]` guarda de data do
-   `.REM` (I17p), fail-closed, e medição do J (V10–V12) em HML antes de qualquer código. Se o J ≠ `itsDtaPgto`
+   `.REM` (I17q), fail-closed, e medição do J (V10–V12) em HML antes de qualquer código. Se o J ≠ `itsDtaPgto`
    da barra, o caminho fica `off` e a fase 2 vira pré-requisito.
 
 ## Numeração
@@ -87,7 +87,7 @@ Evidência: `_inbox/sispag-vinculo-data-divergente-medicao.md` (HML, barras sint
 - **V11 (R2):** `finalizar` aceita `dataDebito ≤ min(itsDtaPgto)` e recusa acima ("EXISTEM TÍTULOS QUE IRÃO
   VENCER ANTES DA DATA DE PAGAMENTO DESTE LOTE"). A janela do lote é a data da barra.
 - **V12:** no segmento J, o *vencimento* leva a data do **título** e a *data de pagamento* a da **barra**; a guarda
-  I17p (data do J = `itsDtaPgto`) é satisfeita. O número da remessa deve vir de `sugerirRemessa`.
+  I17q (data do J = `itsDtaPgto`) é satisfeita. O número da remessa deve vir de `sugerirRemessa`.
 
 **Inconclusivo:** rolagem de sábado. O caso medido caiu em feriado (Finados) e não distingue "o ERP não rola" de
 "rola só até a segunda". Vale o fail-closed: débito em ou antes da data da barra, sem rolar.

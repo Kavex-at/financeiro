@@ -75,7 +75,7 @@ export const SINAL_SUGESTAO = {
     RECONHECEU_VENCE_ANTES: 'RECONHECEU_VENCE_ANTES',
     /**
      * Gravado no snapshot da decisão quando a analista deu o reconhecimento TIPADO da divergência
-     * de data (I15q, ADR-0078). Informativo: a prova é a propriedade `reconhecimento` da decisão.
+     * de data (I15r, ADR-0078). Informativo: a prova é a propriedade `reconhecimento` da decisão.
      */
     DATA_DIVERGENTE_RECONHECIDA: 'DATA_DIVERGENTE_RECONHECIDA',
     /**
@@ -120,7 +120,7 @@ export interface AvaliacaoSugestaoEntrada {
 }
 
 /**
- * Reconhecimento exigido para confirmar (I15m/I15q, ADR-0078): derivado por candidato, nunca estado
+ * Reconhecimento exigido para confirmar (I15m/I15r, ADR-0078): derivado por candidato, nunca estado
  * nem persistido. `DATA_DIVERGENTE` = valor igual em centavos com Δdias ∈ [-10,-1] ∪ [6,10] e boleto
  * ainda vigente na data de débito.
  */
@@ -148,7 +148,7 @@ export interface AvaliacaoSugestao {
     diasVencidoNoDebito: number;
     /** Vencimento da barra rolado ao próximo dia útil bancário (I15h, ADR-0078). Ausente se a data é inválida. */
     prazoFinalBoleto?: string;
-    /** Reconhecimento que a confirmação deste par exige (I15q). Derivado, nunca persistido. */
+    /** Reconhecimento que a confirmação deste par exige (I15r). Derivado, nunca persistido. */
     exigeReconhecimento: ExigeReconhecimento;
 }
 
@@ -186,7 +186,7 @@ export interface DecisaoConfirmadaChaveada extends DecisaoChaveada {
     /** `sistema` quando a decisão foi transferida ao título renegociado (ADR-0074 M1). */
     transferidaPor?: string;
     /**
-     * O que a analista viu ao reconhecer a divergência de data (I15q, ADR-0078): o motor o confere
+     * O que a analista viu ao reconhecer a divergência de data (I15r, ADR-0078): o motor o confere
      * com o Δdias e o valor de AGORA e, se mudaram, mostra a decisão como órfã. Valor em centavos.
      */
     reconhecimento?: { deltaDiasVisto: number; valorBoletoVisto: number };
@@ -212,7 +212,7 @@ export interface DpsConhecido {
     dps: string;
 }
 
-/** `motivoOrfa` quando o reconhecimento tipado deixa de valer (I15q/I19i, ADR-0078). */
+/** `motivoOrfa` quando o reconhecimento tipado deixa de valer (I15r/I19i, ADR-0078). */
 export const MOTIVO_ORFA_RECONHECIMENTO_INVALIDADO =
     'Reconhecimento de data divergente invalidado: o vencimento do título ou o valor do boleto mudaram depois da confirmação. Anule a confirmação e confirme de novo com um novo reconhecimento.';
 

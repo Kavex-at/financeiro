@@ -29,7 +29,7 @@ export interface ReconhecimentoConferido {
 }
 
 /**
- * Confere o reconhecimento tipado da divergência de data (I15q, ADR-0078) contra a avaliação
+ * Confere o reconhecimento tipado da divergência de data (I15r, ADR-0078) contra a avaliação
  * RECALCULADA ao vivo — nunca contra o cache nem contra o que a tela mostrou (anti-TOCTOU, I15a).
  * Só age quando o candidato `exigeReconhecimento = DATA_DIVERGENTE`; senão devolve `undefined` e
  * quem chama segue pelo aviso simples (I15o).
