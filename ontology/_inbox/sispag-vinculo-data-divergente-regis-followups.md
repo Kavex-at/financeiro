@@ -27,6 +27,10 @@ Não implementados neste PR.
 - [ ] **contraste-badges** (fora do QA) — `VencimentoCelula.tsx:27,31,35` usam `text-danger`/`text-warning` em badge outline
   (contraste abaixo de WCAG AA). Linhas pré-existentes em `main`, mesmo padrão em 13 lugares do app: dívida transversal,
   reclassificada de P0 (DesignSystemReviewer) para P2 pelo orquestrador.
+- [ ] **qa-painel-desatualizado** (QA 2026-10-27, caso 3) — depois de um 422 `RECONHECIMENTO_DE_DIVERGENCIA_DESATUALIZADO`, o painel
+  aberto e a linha mantêm o Δ/a data antigos até recarregar a página inteira, e reabrir o reconhecimento no mesmo painel repete o 422.
+  Correção proposta: reidratar o painel a partir da lista recarregada, ou fechá-lo no 422. Acrescentar o subcaso "N candidatos"
+  do caso 4 do roteiro, hoje sem cobertura (título com 2+ candidatos seguros).
 
 ## P3
 - [ ] **fault-tolerance-2** — aceitar `Idempotency-Key` em `confirmar`.
