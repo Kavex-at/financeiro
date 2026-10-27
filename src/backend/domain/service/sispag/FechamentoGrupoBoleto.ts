@@ -10,6 +10,7 @@ import {
     type LotePagamento,
     SISPAG_SYSTEM_ACTOR,
 } from '../../interface/sispag/SispagInterface.js';
+import EtapaBorderoGrupo from '../../libs/boleto/EtapaBorderoGrupo.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
 import GrupoBoletoExecucaoRepository from '../../repository/sispag/GrupoBoletoExecucaoRepository.js';
@@ -131,6 +132,8 @@ export default class FechamentoGrupoBoleto {
                 tx,
             );
         });
+        // Mesma causa do rejeitado: a execução do lote pago não pode ficar `importado`.
+        if (exec?.loteId === lote.id) await this.concluirExecucao(exec.id, exec.etapa);
     };
 
     private fecharRejeitado = async (
@@ -139,10 +142,18 @@ export default class FechamentoGrupoBoleto {
         itens: ItemLote[],
         agora: Date,
     ): Promise<void> => {
-        const exec = await this.execucoes.ultimaPorGrupo(grupoId);
-        if (exec) await this.execucoes.marcarJRejeitado(exec.id, agora);
+        const ultima = await this.execucoes.ultimaPorGrupo(grupoId);
+        // Só a execução DESTE lote: uma passada tardia sobre o lote antigo não pode marcar nem
+        // concluir a execução de uma remessa posterior do mesmo grupo.
+        const exec = ultima?.loteId === lote.id ? ultima : undefined;
+        if (exec) {
+            await this.execucoes.marcarJRejeitado(exec.id, agora);
+            await this.concluirExecucao(exec.id, exec.etapa);
+        }
         const grupo = await this.grupoRepo.buscarPorId(grupoId);
         const bordero = exec?.borCod !== undefined ? ` ${exec.borCod}` : '';
+        const nativeBatch = exec?.flpCod ?? lote.nativeFlpCod;
+        const nativeBatchLabel = nativeBatch !== undefined ? ` ${nativeBatch}` : '';
         try {
             await this.notificacao.emitir({
                 tipo: ALERTA_TIPO.SISPAG_BORDERO_GRUPO_PENDENTE,
@@ -160,8 +171,9 @@ export default class FechamentoGrupoBoleto {
                         : {}),
                     titulos: itens.map((i) => `${i.docCod}/${i.titCod}`),
                     acao:
-                        `O banco rejeitou o pagamento do boleto agrupado. O borderô${bordero} segue em ` +
-                        'cadastro no Conexos: resolva-o lá (cancele ou exclua) antes de pôr o grupo ' +
+                        `O banco rejeitou o pagamento do boleto agrupado. Confira o lote nativo${nativeBatchLabel} ` +
+                        `no Conexos (fin015), o vínculo do item e o borderô${bordero} (fin010). ` +
+                        'Regularize a situação com a analista ou responsável pelo ERP antes de pôr o grupo ' +
                         'num lote novo. O grupo não volta sozinho a uma remessa.',
                 },
             });
@@ -174,6 +186,19 @@ export default class FechamentoGrupoBoleto {
                     motivo: erro instanceof Error ? erro.message : String(erro),
                 },
             });
+        }
+    };
+
+    /**
+     * A remessa já foi gerada: a preparação do borderô acabou. Sem isto a execução ficava
+     * `importado` (não terminal) e a remessa seguinte do grupo rejeitado batia no índice de uma
+     * execução não terminal por grupo e virava `indeterminado` (HML v7, 2026-10-27).
+     */
+    private concluirExecucao = async (id: string, etapa: string): Promise<void> => {
+        let atual = etapa as Parameters<typeof EtapaBorderoGrupo.caminhoAteConcluido>[0];
+        for (const proxima of EtapaBorderoGrupo.caminhoAteConcluido(atual)) {
+            if (!(await this.execucoes.registrarEtapa(id, atual, proxima))) return;
+            atual = proxima;
         }
     };
 

@@ -1273,14 +1273,15 @@ export default class RemessaService {
                 apenas: faltando,
             };
         }
-        if (faltando.size === 0 && grupos.length > 0) {
-            // Rascunho completo com boleto agrupado: revincula a barra do item de borderô
-            // (idempotente: item já vinculado é reconhecido) antes da guarda e do finalizar.
+        if (grupos.length > 0) {
+            // Mesmo com o item presente, preparar confere o vínculo do lote anterior ao vivo.
+            // Pular esta etapa permitiria reaproveitar um borderô ainda preso ao lote rejeitado.
             return {
                 ...reusar,
                 ...comResiduos,
-                etapa: 'vincular_codbar',
-                motivo: `lote ${flpCod} tem os ${nossas.size} item(ns) do lote e ${grupos.length} boleto(s) agrupado(s) com a barra a conferir`,
+                etapa: 'preparar_bordero',
+                motivo: `lote ${flpCod}: conferir o vínculo anterior dos ${grupos.length} boleto(s) agrupado(s) antes da barra`,
+                apenas: faltando,
             };
         }
         if (faltando.size === 0) {
@@ -1426,8 +1427,12 @@ export default class RemessaService {
                 statusAtual: p.lote.status,
                 acao: 'preparar o borderô do boleto agrupado',
                 motivo:
-                    r.detalhe ??
-                    `O borderô do boleto agrupado ${grupo.codbarMascarado} não ficou pronto (${r.desfecho}). Nada foi finalizado.`,
+                    `O borderô do boleto agrupado ${grupo.codbarMascarado} não ficou pronto ` +
+                    `(${r.desfecho}) e a remessa foi interrompida antes de importar e finalizar: ` +
+                    'nenhum borderô novo foi criado e nada foi pago. ' +
+                    (r.detalhe ? `Motivo: ${r.detalhe}. ` : '') +
+                    'Confira o Alerta "borderô do grupo pendente" e o borderô no Conexos; ' +
+                    'depois de resolvido, gere a remessa de novo.',
             });
         }
     };

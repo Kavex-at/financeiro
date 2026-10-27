@@ -79,9 +79,12 @@ const make = () => {
             loteId: 'L1',
             filCod: 2,
             borCod: 252,
+            flpCod: 48,
+            bncCod: 341,
             etapa: 'importado',
         }),
         marcarJRejeitado: jest.fn().mockResolvedValue(undefined),
+        registrarEtapa: jest.fn().mockResolvedValue(true),
     };
     const bloqueios = { encerrarDoGrupo: jest.fn().mockResolvedValue(0) };
     const db = { withTransaction: jest.fn(async (fn: (t: unknown) => unknown) => fn(tx)) };
@@ -191,6 +194,10 @@ describe('FechamentoGrupoBoleto (I21r)', () => {
         });
         expect(JSON.stringify(alerta.detalhe)).toContain('901/1');
         expect(typeof alerta.detalhe.acao).toBe('string');
+        expect(alerta.detalhe.acao).toContain('fin015');
+        expect(alerta.detalhe.acao).toContain('48');
+        expect(alerta.detalhe.acao).toContain('fin010');
+        expect(alerta.detalhe.acao).not.toMatch(/cancele|exclua/);
         expect(JSON.stringify(alerta)).not.toMatch(/\d{44}|\d{47}/);
         // Nenhuma escrita no ERP: só repositórios locais.
         expect(h.grupoRepo.marcarPago).not.toHaveBeenCalled();
@@ -226,5 +233,66 @@ describe('FechamentoGrupoBoleto (I21r)', () => {
         expect(h.grupoRepo.marcarPago).not.toHaveBeenCalled();
         expect(h.execRepo.ultimaPorGrupo).not.toHaveBeenCalled();
         expect(h.db.withTransaction).not.toHaveBeenCalled();
+    });
+
+    describe('a execução não fica `importado` para sempre (HML v7, 2026-10-27)', () => {
+        it('J rejeitado ⇒ marca o J e conclui a execução (importado → codbar_vinculado → concluido), liberando a próxima preparação', async () => {
+            const h = make();
+            await h.service.fechar({
+                lote: lote(),
+                itens: todos('REJEITADO', 'REJEITADO', 'REJEITADO'),
+                agora: AGORA,
+            });
+            expect(h.execRepo.marcarJRejeitado).toHaveBeenCalledWith('E1', AGORA);
+            expect(h.execRepo.registrarEtapa.mock.calls).toEqual([
+                ['E1', 'importado', 'codbar_vinculado'],
+                ['E1', 'codbar_vinculado', 'concluido'],
+            ]);
+        });
+
+        it('pago ⇒ conclui a execução também', async () => {
+            const h = make();
+            await h.service.fechar({
+                lote: lote(),
+                itens: todos('PAGO', 'PAGO', 'PAGO'),
+                agora: AGORA,
+            });
+            expect(h.execRepo.registrarEtapa).toHaveBeenCalledTimes(2);
+        });
+
+        it('execução de OUTRO lote (remessa posterior) não é marcada nem concluída por passada tardia', async () => {
+            const h = make();
+            h.execRepo.ultimaPorGrupo.mockResolvedValue({
+                id: 'E2',
+                grupoId: 'G1',
+                loteId: 'L9',
+                filCod: 2,
+                etapa: 'importado',
+            });
+            await h.service.fechar({
+                lote: lote(),
+                itens: todos('REJEITADO', 'REJEITADO', 'REJEITADO'),
+                agora: AGORA,
+            });
+            expect(h.execRepo.marcarJRejeitado).not.toHaveBeenCalled();
+            expect(h.execRepo.registrarEtapa).not.toHaveBeenCalled();
+        });
+
+        it('execução já terminal não é tocada', async () => {
+            const h = make();
+            h.execRepo.ultimaPorGrupo.mockResolvedValue({
+                id: 'E1',
+                grupoId: 'G1',
+                loteId: 'L1',
+                filCod: 2,
+                etapa: 'concluido',
+            });
+            await h.service.fechar({
+                lote: lote(),
+                itens: todos('REJEITADO', 'REJEITADO', 'REJEITADO'),
+                agora: AGORA,
+            });
+            expect(h.execRepo.registrarEtapa).not.toHaveBeenCalled();
+        });
     });
 });
