@@ -327,7 +327,7 @@ verificado pelo `contrato.test.ts` — inclusive a propriedade de que `answers` 
 | Chave | Auto-respondida? | Por quê |
 |---|---|---|
 | `FIN_041.EXISTE_CODIGO_BARRAS_ASSOCIADO_TITULO` | **sim, `YES`** | só confirma o uso do boleto que o próprio ERP casou. Não escolhe favorecido, valor nem forma. |
-| `FIN_041.PESSOA_FAVORECIDA_SEM_CONTA_ATIVA_NO_BANCO_MODALIDADE_ALTERADA_TITULO_PROPRIO` | **não** → `ErpPerguntaError` (409) | responder `YES` **altera a forma de pagamento** do título. Decisão de quem opera. |
+| `FIN_041.PESSOA_FAVORECIDA_SEM_CONTA_ATIVA_NO_BANCO_MODALIDADE_ALTERADA_TITULO_PROPRIO` | **não** → `ErpPerguntaError` (409); **sim, `YES`, só no `importar` dos itens do vínculo confirmado** (ADR-0040, emenda 2026-10-28) | responder `YES` **altera a forma de pagamento** do título. Decisão de quem opera, exceto no item do vínculo confirmado (ADR-0071), que já é boleto pago pela barra. |
 | qualquer outra | **não** → `ErpPerguntaError` (409) | allowlist por chave exata; pergunta nova nunca entra de carona. |
 
 Envelope com **2+ perguntas** também não é auto-respondível, mesmo contendo a allowlistada.

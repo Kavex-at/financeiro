@@ -125,6 +125,14 @@ export interface ImportarTitulosParams {
      * histórico (manda `0`, nenhum boleto é associado).
      */
     associarDda?: boolean;
+    /**
+     * Autoriza o YES à pergunta `FIN_041.PESSOA_FAVORECIDA_SEM_CONTA_ATIVA_NO_BANCO_MODALIDADE_
+     * ALTERADA_TITULO_PROPRIO` (o ERP troca o item para a forma "título"). Só para itens do
+     * vínculo do código de barras confirmado (ADR-0071): vão sem destino e são pagos pela barra,
+     * então a forma "título" é a que precisam (ADR-0040, emenda 2026-10-28). Default `false` =
+     * a pergunta sobe como `ErpPerguntaError`.
+     */
+    aceitarFormaTitulo?: boolean;
 }
 
 /** Parâmetros para gerar a remessa `.REM` de um lote FINALIZADO (`gerArquivosBancos/gerarRemessa`). */

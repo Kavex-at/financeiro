@@ -3307,6 +3307,35 @@ describe('RemessaService — vínculo do código de barras (ADR-0071, I17)', () 
             expect(itens[0]).not.toHaveProperty('itsNumBanco');
         });
 
+        it('modo on + elegível: autoriza o YES à troca para forma "título" SÓ neste import (favorecido sem conta no banco do lote)', async () => {
+            // PRD 2026-10-28 (NELSON HEUSI): o ERP pergunta FIN_041.PESSOA_FAVORECIDA_SEM_CONTA…
+            // porque o item vai sem destino; o boleto confirmado é pago pela barra, então a
+            // forma "título" é exatamente a que o item precisa.
+            const write = buildWrite();
+            write.listarTitulosPendentes.mockResolvedValue([pendente({}, false)]);
+            const vinculo = buildVinculo({
+                avaliarParaImport: jest.fn().mockResolvedValue(elegivel()),
+            });
+            await make({
+                write,
+                lote: boletoSemDda(),
+                env: envModo('2:on'),
+                vinculo,
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+            expect(write.importarTitulos).toHaveBeenCalledWith(
+                expect.objectContaining({ associarDda: false, aceitarFormaTitulo: true }),
+            );
+        });
+
+        it('item que NÃO é do vínculo (TED do lote padrão) nunca autoriza a troca de forma', async () => {
+            const write = buildWrite();
+            await make({ write, env: envModo('2:on') }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+            expect(write.importarTitulos).toHaveBeenCalled();
+            for (const [p] of write.importarTitulos.mock.calls) {
+                expect(p.aceitarFormaTitulo).not.toBe(true);
+            }
+        });
+
         it('modo on + INELEGÍVEL: BoletoSemCodigoBarrasError antes de qualquer escrita', async () => {
             const write = buildWrite();
             write.listarTitulosPendentes.mockResolvedValue([pendente({}, false)]);

@@ -365,6 +365,83 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
             expect(base.postGenericOnce).toHaveBeenCalledTimes(1);
         });
 
+        describe('aceitarFormaTitulo (boleto confirmado sem DDA, ADR-0040 emenda 2026-10-28)', () => {
+            const CHAVE =
+                'FIN_041.PESSOA_FAVORECIDA_SEM_CONTA_ATIVA_NO_BANCO_MODALIDADE_ALTERADA_TITULO_PROPRIO';
+            const perguntaFormaTitulo = validationError({
+                type: 'QUESTION',
+                questions: [
+                    {
+                        id: '7',
+                        key: CHAVE,
+                        parameterValueList: { bncDesNome: 'ITAÚ', pesCod: '14' },
+                        answerList: [
+                            { id: 'YES', type: 'SIMPLE' },
+                            { id: 'ABORT', key: 'NO', type: 'ABORT' },
+                        ],
+                    },
+                ],
+            });
+
+            it('com a autorização, responde YES à troca para forma "título" e loga a decisão', async () => {
+                const base = buildBase();
+                const log = buildLog();
+                base.postGenericOnce
+                    .mockRejectedValueOnce(perguntaFormaTitulo)
+                    .mockResolvedValueOnce({});
+                await make(base, log).importarTitulos({
+                    filCod: 2,
+                    bncCod: 4,
+                    flpCod: 18,
+                    itens: [item],
+                    aceitarFormaTitulo: true,
+                });
+                expect(base.postGenericOnce).toHaveBeenCalledTimes(2);
+                const [, segundo] = base.postGenericOnce.mock.calls[1];
+                expect(segundo).toMatchObject({ answers: { '7': 'YES' } });
+                expect(log.info).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        message: expect.stringContaining('boleto confirmado'),
+                        data: expect.objectContaining({ pergunta: CHAVE, questionId: '7' }),
+                    }),
+                );
+            });
+
+            it('a autorização não abre a allowlist para outra pergunta', async () => {
+                const base = buildBase();
+                base.postGenericOnce.mockRejectedValue(
+                    validationError({
+                        type: 'QUESTION',
+                        questions: [{ id: '1', key: 'FIN_041.OUTRA_COISA_QUALQUER' }],
+                    }),
+                );
+                await expect(
+                    make(base).importarTitulos({
+                        filCod: 2,
+                        bncCod: 4,
+                        flpCod: 18,
+                        itens: [item],
+                        aceitarFormaTitulo: true,
+                    }),
+                ).rejects.toBeInstanceOf(ErpPerguntaError);
+                expect(base.postGenericOnce).toHaveBeenCalledTimes(1);
+            });
+
+            it('sem a autorização a mesma pergunta continua humana', async () => {
+                const base = buildBase();
+                base.postGenericOnce.mockRejectedValue(perguntaFormaTitulo);
+                await expect(
+                    make(base).importarTitulos({
+                        filCod: 2,
+                        bncCod: 4,
+                        flpCod: 18,
+                        itens: [item],
+                    }),
+                ).rejects.toBeInstanceOf(ErpPerguntaError);
+                expect(base.postGenericOnce).toHaveBeenCalledTimes(1);
+            });
+        });
+
         it('envelope com 2 perguntas não é auto-respondível, mesmo contendo a allowlistada', async () => {
             const base = buildBase();
             base.postGenericOnce.mockRejectedValue(

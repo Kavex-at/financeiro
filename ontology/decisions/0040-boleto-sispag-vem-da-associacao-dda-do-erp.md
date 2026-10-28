@@ -192,3 +192,26 @@ como "a fonte está errada", não como "ninguém se qualifica".
   (a conta não tem sequência configurada — em produção esse número é controle bancário e não
   pode ser inventado), e `ccoCod = 1` na filial 2 é conta **Banestes**, não Itaú — a armadilha
   que a migration 0049 descreve.
+
+## Emenda 2026-10-28 — forma "título" no item do vínculo confirmado
+
+**Contexto.** Em PRD (filial 2, NELSON HEUSI 41027/2 e 41032/2), o primeiro lote com boleto confirmado
+na tela e **sem** DDA no ERP (caminho da ADR-0071) parou no `importar` com a pergunta
+`FIN_041.PESSOA_FAVORECIDA_SEM_CONTA_ATIVA_NO_BANCO_MODALIDADE_ALTERADA_TITULO_PROPRIO`: o item vai sem
+destino (a barra é o destino) e o favorecido não tem conta ativa no banco do lote. Pela doutrina acima a
+pergunta subia como `ErpPerguntaError`, e o caminho da ADR-0071 ficava impossível para todo favorecido
+sem conta no banco pagador, que é o caso comum de quem recebe por boleto.
+
+**Decisão.** A allowlist ganha uma **segunda chave, condicionada**: `PESSOA_FAVORECIDA_SEM_CONTA…` é
+respondida `YES` **somente** no `importar` dos itens que o vínculo do código de barras declarou elegíveis
+no modo `on` (I17a–d), que o `RemessaService` importa em chamada própria com `aceitarFormaTitulo`. Para
+qualquer outro item (TED, PIX, boleto sem decisão confirmada) a pergunta continua humana: lá ela trocaria
+a forma que a analista escolheu.
+
+**Por que é seguro.** O item já é BOLETO e é pago pela barra; a forma "título" é exatamente a que ele
+precisa. O YES não escolhe conta, valor nem favorecido. Depois do `importar`, o vínculo segue a sequência
+da I17e (`validacao → confirma → PUT → releitura`), que confere banco, valor e data e ajusta a modalidade
+6/7 pelo banco da barra. Todos os probes de HML do vínculo e do ajuste de centavos já respondiam `YES` a
+esta pergunta e geraram `.REM` com segmento J correto (`_inbox/sispag-centavos-hml-achados.md`). Envelope
+com 2+ perguntas e pergunta repetida depois da resposta continuam humanos; toda auto-resposta é logada.
+

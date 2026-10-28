@@ -757,12 +757,26 @@ export default class RemessaService {
                     key,
                     comDestinos({ itens: montados.length, flpCod }),
                 );
-                // Duas chamadas, não uma: `titVldReflexoDdaAssoc` é campo da SELEÇÃO (vale para
-                // a requisição inteira), e só os títulos que o ERP casou com um boleto DDA
-                // podem pedir a associação. O client já quebra cada grupo em um POST por item.
-                for (const associarDda of [false, true]) {
+                // Grupos separados, não uma chamada: `titVldReflexoDdaAssoc` é campo da SELEÇÃO
+                // (vale para a requisição inteira), e só os títulos que o ERP casou com um boleto
+                // DDA podem pedir a associação. O client já quebra cada grupo em um POST por item.
+                //
+                // Os itens do vínculo confirmado (ADR-0071) vão em grupo próprio: só eles
+                // autorizam o YES à troca para a forma "título" (ADR-0040, emenda 2026-10-28).
+                // Vão sem destino e são pagos pela barra; sem o YES, todo favorecido sem conta no
+                // banco do lote parava na pergunta do ERP.
+                const chamadas = [
+                    { associarDda: false, vinculavel: false },
+                    { associarDda: false, vinculavel: true },
+                    { associarDda: true, vinculavel: false },
+                ];
+                for (const grupo of chamadas) {
                     const itens = montados
-                        .filter((m) => m.associarDda === associarDda)
+                        .filter(
+                            (m) =>
+                                m.associarDda === grupo.associarDda &&
+                                m.vinculavel === grupo.vinculavel,
+                        )
                         .map((m) => m.payload);
                     if (itens.length === 0) continue;
                     await this.write.importarTitulos({
@@ -770,7 +784,8 @@ export default class RemessaService {
                         bncCod,
                         flpCod,
                         itens,
-                        associarDda,
+                        associarDda: grupo.associarDda,
+                        ...(grupo.vinculavel ? { aceitarFormaTitulo: true } : {}),
                     });
                 }
             }
@@ -1691,7 +1706,9 @@ export default class RemessaService {
          * modo `on`; ausente = o BOLETO sem DDA barra como sempre (I15b).
          */
         vinculaveis?: ReadonlyMap<string, { elegivel: boolean }>,
-    ): Promise<Array<{ payload: Record<string, unknown>; associarDda: boolean }>> => {
+    ): Promise<
+        Array<{ payload: Record<string, unknown>; associarDda: boolean; vinculavel: boolean }>
+    > => {
         // A chave inclui a FILIAL. O grid de pendentes cruza filiais e `docCod` NÃO é único
         // entre elas: medido em HML, o doc 285 existe na filial 2 E na 4. Com a chave só
         // `docCod:titCod`, o Map colide e o título de OUTRA filial sobrescreve o nosso —
@@ -1716,7 +1733,11 @@ export default class RemessaService {
             pendentes.map((p) => [`${Number(p.raw.filCod)}:${p.docCod}:${p.titCod}`, p]),
         );
         const febraban = this.febrabanDe(bncCod, lote);
-        const itens: Array<{ payload: Record<string, unknown>; associarDda: boolean }> = [];
+        const itens: Array<{
+            payload: Record<string, unknown>;
+            associarDda: boolean;
+            vinculavel: boolean;
+        }> = [];
 
         for (const item of alvo) {
             const pendente = porChave.get(chaveDe(item));
@@ -1828,6 +1849,7 @@ export default class RemessaService {
             };
             itens.push({
                 associarDda,
+                vinculavel,
                 payload: {
                     ...raw,
                     filCodLote: lote.filCod,

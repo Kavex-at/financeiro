@@ -108,6 +108,18 @@ Boleto acima/abaixo do título **até R$ 0,05**, mesmo vencimento, número igual
 **Acima de R$ 0,05** segue fora (watchlist: 25 títulos > R$ 10 em PRD, outro problema). Vínculo de tier
 `ATENCAO` **fora** do caso de data divergente com valor igual (que vincula pelo I17p); vínculo automático sem decisão humana (passo 3); guarda entre lotes vivos / contra boleto pago. **ADR-0078:** fase 2 (ajustar a data do título via `fin026/alteraDataVencimento` ou `fin070`), boleto vencido na data de débito (juros/multa) e `|Δdias| > 10` seguem fora.
 
+> **Emenda à I17k (2026-10-28):** na previsão local (`shadow` e o endpoint `vinculos-previstos`), o valor em
+> aberto de um título renegociado pelo ajuste de centavos é o líquido do ledger (`valor_boleto_centavos`,
+> I18j(5)), não o `valor` da carteira, que é o `titMnyValor` base, um centavo abaixo do boleto. Sem isso a
+> tela avisava "valor do boleto diferente do valor em aberto (+R$ 0,01)" num título cujo líquido ao vivo
+> já bate com o boleto (PRD, NELSON HEUSI 41027/2 e 41032/2). Continua sem chamada ao ERP. O modo `on` não
+> muda: lê o líquido ao vivo no `fin064` (I17b).
+>
+> **Emenda à I17e (2026-10-28):** o `importar` do item elegível (modo `on`) vai em chamada própria e
+> responde `YES` à pergunta `FIN_041.PESSOA_FAVORECIDA_SEM_CONTA_ATIVA…` (troca para a forma "título"),
+> que o ERP faz quando o favorecido não tem conta no banco do lote. Sem isso o caminho parava em
+> `ErpPerguntaError` (PRD, NELSON HEUSI). Escopo e justificativa: ADR-0040, emenda 2026-10-28.
+
 ## Ver também
 
 `decisions/0071-*.md` · `actions/sispag/vincular-codigo-barras-ao-item.md` ·

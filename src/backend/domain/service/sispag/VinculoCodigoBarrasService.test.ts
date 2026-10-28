@@ -18,6 +18,7 @@ import ValorAbertoLiquido, {
 } from '../../libs/boleto/ValorAbertoLiquido.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
+import type AjusteCentavosExecucaoRepository from '../../repository/sispag/AjusteCentavosExecucaoRepository.js';
 import type BoletoDdaRepository from '../../repository/sispag/BoletoDdaRepository.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type SugestaoBoletoRepository from '../../repository/sispag/SugestaoBoletoRepository.js';
@@ -94,6 +95,10 @@ interface Cenario {
     boletoPool?: Record<string, Record<string, unknown> | null>;
     modo?: string;
     live?: boolean;
+    /** `valor` da carteira persistida (o `titMnyValor` da última ingestão); default 1028,80. */
+    valorCarteira?: number;
+    /** Líquido do ledger do ajuste de centavos (centavos) por `fil:doc:tit` do título novo. */
+    liquidos?: Record<string, number>;
 }
 
 const build = (c: Cenario) => {
@@ -225,7 +230,7 @@ const build = (c: Cenario) => {
             filCod: 2,
             docCod: '636',
             titCod: '1',
-            valor: 1028.8,
+            valor: c.valorCarteira ?? 1028.8,
             vencimento: VENC_EPOCH,
             pesCod: '7001',
             ativo: true,
@@ -235,6 +240,11 @@ const build = (c: Cenario) => {
     };
     const db = {
         withTransaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn({ tx: true })),
+    };
+    const ajustes = {
+        liquidosDeTitulosRenegociados: jest.fn(
+            async () => new Map(Object.entries(c.liquidos ?? {})),
+        ),
     };
     const env = {
         getEnvironmentVars: jest.fn(async () => ({
@@ -262,6 +272,7 @@ const build = (c: Cenario) => {
         env as unknown as EnvironmentProvider,
         log as unknown as LogService,
         db as unknown as PostgreeDatabaseClient,
+        ajustes as unknown as AjusteCentavosExecucaoRepository,
     );
     const lote = {
         id: LOTE_ID,
@@ -928,6 +939,26 @@ describe('VinculoCodigoBarrasService — modos', () => {
         await h.service.prever(h.lote);
         expect(h.sugestoes.registrarEventoVinculo).not.toHaveBeenCalled();
         expect(h.eventos).toHaveLength(0);
+    });
+
+    it('`prever` de título renegociado pelo ajuste de centavos compara com o LÍQUIDO do ledger, não com o valor base da carteira', async () => {
+        // PRD 2026-10-28 (NELSON HEUSI 41027/2): a carteira guarda o `titMnyValor` base, um
+        // centavo abaixo do boleto; a tela avisava "valor diferente (+R$ 0,01)" para um título cujo
+        // líquido ao vivo já é igual ao boleto.
+        const h = umItem({
+            modo: '2:shadow',
+            valorCarteira: 1028.79,
+            liquidos: { '2:636:1': 102880 },
+        });
+        const [p] = await h.service.prever(h.lote);
+        expect(p).toMatchObject({ elegivel: true, valorAbertoFonte: 'CARTEIRA_LOCAL' });
+        expect(h.sispag.lerValoresAberto).not.toHaveBeenCalled();
+    });
+
+    it('`prever` sem ajuste no ledger segue a carteira (diferença real continua avisada)', async () => {
+        const h = umItem({ modo: '2:shadow', valorCarteira: 1028.79 });
+        const [p] = await h.service.prever(h.lote);
+        expect(p).toMatchObject({ elegivel: false, motivo: 'VALOR_DIFERENTE', deltaCentavos: 1 });
     });
 
     it('`off`: nada é avaliado nem gravado', async () => {

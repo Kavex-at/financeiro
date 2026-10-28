@@ -17,6 +17,7 @@ import VinculoCodigoBarrasService from '../domain/service/sispag/VinculoCodigoBa
 import type PostgreeDatabaseClient from '../domain/client/database/PostgreeDatabaseClient.js';
 import type EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
 import type LogService from '../domain/service/LogService.js';
+import type AjusteCentavosExecucaoRepository from '../domain/repository/sispag/AjusteCentavosExecucaoRepository.js';
 import type BoletoDdaRepository from '../domain/repository/sispag/BoletoDdaRepository.js';
 import type LotePagamentoRepository from '../domain/repository/sispag/LotePagamentoRepository.js';
 import type SugestaoBoletoRepository from '../domain/repository/sispag/SugestaoBoletoRepository.js';
@@ -846,6 +847,9 @@ async function main(): Promise<void> {
             {
                 withTransaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({}),
             } as unknown as PostgreeDatabaseClient,
+            {
+                liquidosDeTitulosRenegociados: async () => new Map<string, number>(),
+            } as unknown as AjusteCentavosExecucaoRepository,
         );
 
         let exec: Row;
