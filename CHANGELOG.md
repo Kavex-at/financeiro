@@ -1,5 +1,21 @@
 # Columbia Financeiro — Changelog
 
+## v0.77.1 (2026-10-28) — SISPAG: boleto confirmado entra no lote como boleto e com o valor líquido
+
+- **Boleto confirmado já entra como boleto.** O título cujo boleto DDA você confirmou na tela passa a
+  entrar no lote com a forma de pagamento "Boleto", como já acontecia quando o próprio Conexos ligava o
+  DDA ao título. Antes ele entrava "a definir" e a finalização barrava com "Sem forma de pagamento".
+  Vale para a inclusão manual e para os lotes candidatos montados automaticamente, onde ele agora vai
+  para o lote de boletos.
+- **Título renegociado pelo ajuste de centavos entra com o valor líquido.** Depois que o ajuste troca o
+  título (por exemplo 41027/1 → 41027/2), o item novo no lote mostra o valor do boleto (R$ 647,57), não o
+  valor base do Conexos (R$ 647,56). O valor pago ao banco já era o líquido; muda a tela e os totais.
+- **Itens que já estavam no lote não mudam sozinhos.** Para corrigir um item incluído antes desta
+  versão, retire-o e inclua de novo.
+- **Para gerar a remessa** sem DDA no Conexos, o vínculo do código de barras confirmado precisa estar
+  ligado na filial; sem ele, a remessa recusa o boleto sem código de barras, e você pode trocar a forma
+  de pagamento.
+
 ## v0.77.0 (2026-10-27) — SISPAG: número do documento igual desempata a sugestão de boleto DDA
 
 - **O número do documento desempata.** Quando um título tem dois ou mais boletos igualmente prováveis
