@@ -673,6 +673,22 @@ describe('boletos DDA de um título', () => {
   })
 })
 
+describe('tituloDeItem — nº do documento', () => {
+  const item = {
+    loteId: 'L1',
+    filCod: 2,
+    docCod: '40919',
+    titCod: '1',
+    incluidoPor: 'u',
+  }
+  it('leva o nº do documento quando a carteira o conhece', () => {
+    expect(tituloDeItem(item, '25349')).toMatchObject({ docCod: '40919', numeroDocumento: '25349' })
+  })
+  it('sem nº do documento, o campo fica ausente', () => {
+    expect('numeroDocumento' in tituloDeItem(item)).toBe(false)
+  })
+})
+
 describe('FORMA_CONEXOS_ROTULO — paridade com o backend', () => {
   it('tem exatamente os códigos de PAGO_POR_CONEXOS (backend), com os mesmos rótulos', () => {
     // O frontend não importa o backend; lê o fonte e compara. Código novo de um lado só = vermelho.

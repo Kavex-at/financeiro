@@ -3,14 +3,7 @@
 import * as React from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Drawer } from '@/components/ui/drawer'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Spinner } from '@/components/ui/spinner'
 import {
@@ -98,6 +91,10 @@ function TabelaBoletos({ linhas, mostrarLigacao }: { linhas: BoletoDdaDoTitulo[]
  * filtrado pelo título: o que o Conexos lista como candidato dele e os boletos de mesmo valor com
  * outra data — onde costuma estar o problema (o Conexos associa por valor, fornecedor e data, e
  * uma diferença de dias basta para não casar).
+ *
+ * Gaveta lateral NÃO modal: a tabela de títulos fica visível e clicável ao lado; abrir outro
+ * título com a gaveta aberta troca o conteúdo. O cabeçalho traz o nº do documento do fornecedor
+ * (`doc_esp_numero`), que é o que a âncora "número do boleto igual ao do documento" compara.
  */
 export function BoletosDoTituloDialog({
   titulo,
@@ -190,96 +187,126 @@ export function BoletosDoTituloDialog({
   const erro = atual?.erro ?? null
 
   const vazio = dados !== null && dados.doTitulo.length === 0 && dados.mesmoValor.length === 0
+  const numeroDocumento =
+    titulo?.numeroDocumento ??
+    desfecho?.numeroDocumento ??
+    sugestoes.find((x) => x.numeroDocumento !== undefined)?.numeroDocumento
   return (
-    <Dialog open={titulo !== null} onOpenChange={(open) => (!open ? onClose() : undefined)}>
-      <DialogContent size="lg">
-        {titulo ? (
-          <>
-            <DialogHeader>
-              <DialogTitle>
+    <Drawer.Root
+      open={titulo !== null}
+      onOpenChange={(open) => (!open ? onClose() : undefined)}
+      modal={false}
+      size="md"
+      focusKey={chave ?? undefined}
+      // Abaixo do cabeçalho do app (`AppShellHeader`, h-14, sticky z-50): a gaveta não modal
+      // convive com a página, e o cabeçalho não pode cobrir o título dela.
+      // Entre xl e 2xl a gaveta estreita para `--drawer-detail-width` (480px) e a tabela atrás
+      // termina onde ela começa: Credor…Forma de pagamento (o gatilho da troca) ficam à vista.
+      className="top-14 h-auto xl:max-2xl:max-w-[var(--drawer-detail-width)]"
+    >
+      {titulo ? (
+        <>
+          <Drawer.Header>
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              <Drawer.Title>
                 Boletos DDA do título {titulo.docCod}/{titulo.titCod}
-                {titulo.credor ? ` · ${titulo.credor}` : ''}
-              </DialogTitle>
-              <DialogDescription>
-                {titulo.valor !== undefined ? formatBRL(titulo.valor) : 'valor desconhecido'}
-                {titulo.vencimento ? ` · vence ${fmtCivil(titulo.vencimento)}` : ''}
-                {titulo.filCod !== undefined ? ` · filial ${titulo.filCod}` : ''}. O Conexos liga
-                o boleto ao título sozinho, por valor, fornecedor e data. Uma diferença de dias
-                entre o vencimento do boleto e o do título costuma impedir a ligação.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogBody className="flex flex-col gap-4 overflow-y-auto">
-              {sugestoes.length > 0 || desfecho !== undefined ? (
-                <SugestaoBoletoPainel
-                  sugestoes={sugestoes}
-                  desfecho={desfecho}
-                  sincronizadoEm={sincronizadoEm}
-                  onAbrirBoletosDda={onAbrirBoletosDda}
-                  podeExecutar={podeExecutar}
-                  podeCopiar={podeCopiar}
-                  ddaDefasadoHoras={ddaDefasadoHoras}
-                  itemVinculadoEmLoteVivo={vinculadoEmLoteVivo}
-                  ajusteCentavos={ajusteAtual?.ajuste}
-                  modoAjusteCentavos={ajusteAtual?.modo}
-                  onDecidido={async () => {
-                    setVersaoAjuste((n) => n + 1)
-                    await onDecidido?.()
-                  }}
-                />
+              </Drawer.Title>
+              {titulo.credor ? (
+                <p className="truncate text-sm font-medium" title={titulo.credor}>
+                  {titulo.credor}
+                </p>
               ) : null}
-              {erro ? (
-                <div role="alert">
-                  <EmptyState
-                    title="Não foi possível consultar os boletos DDA"
-                    description={erro}
-                    action={
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          setResultado(null)
-                          setTentativa((n) => n + 1)
-                        }}
-                      >
-                        Tentar de novo
-                      </Button>
-                    }
-                  />
+              <Drawer.Description asChild>
+                <div className="flex flex-col gap-1">
+                  <p className="text-sm tabular-nums text-foreground">
+                    Título {titulo.docCod}/{titulo.titCod} ·{' '}
+                    <span className="font-semibold">nº documento {numeroDocumento ?? '—'}</span>
+                    {' · '}
+                    {titulo.valor !== undefined ? formatBRL(titulo.valor) : 'valor desconhecido'}
+                    {titulo.vencimento ? ` · vence ${fmtCivil(titulo.vencimento)}` : ''}
+                    {titulo.filCod !== undefined ? ` · filial ${titulo.filCod}` : ''}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    O Conexos liga o boleto ao título sozinho, por valor, fornecedor e data. Uma
+                    diferença de dias entre o vencimento do boleto e o do título costuma impedir a
+                    ligação.
+                  </p>
                 </div>
-              ) : dados === null ? (
-                // O Spinner já expõe role=status com o rótulo "Loading".
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Spinner /> Consultando os boletos DDA…
-                </div>
-              ) : vazio ? (
+              </Drawer.Description>
+            </div>
+            <Drawer.CloseButton />
+          </Drawer.Header>
+          <Drawer.Body className="flex flex-col gap-4">
+            {sugestoes.length > 0 || desfecho !== undefined ? (
+              <SugestaoBoletoPainel
+                sugestoes={sugestoes}
+                desfecho={desfecho}
+                sincronizadoEm={sincronizadoEm}
+                onAbrirBoletosDda={onAbrirBoletosDda}
+                podeExecutar={podeExecutar}
+                podeCopiar={podeCopiar}
+                ddaDefasadoHoras={ddaDefasadoHoras}
+                itemVinculadoEmLoteVivo={vinculadoEmLoteVivo}
+                ajusteCentavos={ajusteAtual?.ajuste}
+                modoAjusteCentavos={ajusteAtual?.modo}
+                onDecidido={async () => {
+                  setVersaoAjuste((n) => n + 1)
+                  await onDecidido?.()
+                }}
+              />
+            ) : null}
+            {erro ? (
+              <div role="alert">
                 <EmptyState
-                  title="Nenhum boleto DDA com este valor"
-                  description="Confira se o arquivo DDA deste boleto já foi importado (fin124) e se o valor do título bate com o do boleto."
+                  title="Não foi possível consultar os boletos DDA"
+                  description={erro}
+                  action={
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setResultado(null)
+                        setTentativa((n) => n + 1)
+                      }}
+                    >
+                      Tentar de novo
+                    </Button>
+                  }
                 />
-              ) : (
-                <>
-                  {dados.doTitulo.length > 0 ? (
-                    <section className="flex flex-col gap-2">
-                      <h3 className="text-sm font-medium">Candidatos deste título</h3>
-                      <TabelaBoletos linhas={dados.doTitulo} mostrarLigacao={false} />
-                    </section>
-                  ) : null}
-                  {dados.mesmoValor.length > 0 ? (
-                    <section className="flex flex-col gap-2">
-                      <h3 className="text-sm font-medium">Outros boletos com o mesmo valor</h3>
-                      <p className="text-xs text-muted-foreground">
-                        Não estão ligados a este título. Se o vencimento diferir por poucos dias,
-                        é provável que seja o boleto dele.
-                      </p>
-                      <TabelaBoletos linhas={dados.mesmoValor} mostrarLigacao />
-                    </section>
-                  ) : null}
-                </>
-              )}
-            </DialogBody>
-          </>
-        ) : null}
-      </DialogContent>
-    </Dialog>
+              </div>
+            ) : dados === null ? (
+              // O Spinner já expõe role=status com o rótulo "Loading".
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Spinner /> Consultando os boletos DDA…
+              </div>
+            ) : vazio ? (
+              <EmptyState
+                title="Nenhum boleto DDA com este valor"
+                description="Confira se o arquivo DDA deste boleto já foi importado (fin124) e se o valor do título bate com o do boleto."
+              />
+            ) : (
+              <>
+                {dados.doTitulo.length > 0 ? (
+                  <section className="flex flex-col gap-2">
+                    <h3 className="text-sm font-medium">Candidatos deste título</h3>
+                    <TabelaBoletos linhas={dados.doTitulo} mostrarLigacao={false} />
+                  </section>
+                ) : null}
+                {dados.mesmoValor.length > 0 ? (
+                  <section className="flex flex-col gap-2">
+                    <h3 className="text-sm font-medium">Outros boletos com o mesmo valor</h3>
+                    <p className="text-xs text-muted-foreground">
+                      Não estão ligados a este título. Se o vencimento diferir por poucos dias,
+                      é provável que seja o boleto dele.
+                    </p>
+                    <TabelaBoletos linhas={dados.mesmoValor} mostrarLigacao />
+                  </section>
+                ) : null}
+              </>
+            )}
+          </Drawer.Body>
+        </>
+      ) : null}
+    </Drawer.Root>
   )
 }

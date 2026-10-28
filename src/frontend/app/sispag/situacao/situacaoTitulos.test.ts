@@ -5,6 +5,11 @@ import {
 } from '@/lib/sispag'
 import { RESUMO_FIXTURE, TITULOS_FIXTURE } from '../__fixtures__/situacaoPagamento'
 import {
+  CLASSE_LINHA_ATIVA,
+  classeDaColunaComGaveta,
+  COLUNAS_OCULTAS_COM_GAVETA,
+  type ColunaTitulo,
+  layoutComGaveta,
   boletoSemDdaPorSugestao,
   aplicarFiltros,
   bloqueadosPerdidos,
@@ -78,6 +83,21 @@ describe('filtros por coluna', () => {
     expect(docs(aplicarFiltros(TITULOS_FIXTURE, com({ credor: 'armazens' })))).toEqual(['5541'])
     expect(docs(aplicarFiltros(TITULOS_FIXTURE, com({ credor: 'logistica' }))).sort()).toEqual([
       '5502',
+    ])
+  })
+
+  it('nº doc casa o número do documento do fornecedor (e ordena numericamente)', () => {
+    const [a, b, c] = TITULOS_FIXTURE
+    const lista = [
+      { ...a, numeroDocumento: '25349' },
+      { ...b, numeroDocumento: '9100' },
+      { ...c, numeroDocumento: undefined },
+    ]
+    expect(docs(aplicarFiltros(lista, com({ numeroDocumento: '253' })))).toEqual([a.docCod])
+    expect(contarFiltrosDeColuna(com({ numeroDocumento: '1' }))).toBe(1)
+    expect(docs(ordenarTitulos(lista, { coluna: 'numeroDocumento', direcao: 1 })).slice(-2)).toEqual([
+      b.docCod,
+      a.docCod,
     ])
   })
 
@@ -344,5 +364,47 @@ describe('prazo efetivo do boleto sugerido (I19t)', () => {
   it('sem prazoBoleto o comportamento é o do vencimento do título (regressão)', () => {
     expect(docs(bloqueadosQueVencemHoje(TITULOS_FIXTURE))).toEqual(['5502', '5544'])
     expect(faixaDoTitulo(base)).toBe('HOJE')
+  })
+})
+
+describe('layout da tabela com a gaveta de boletos aberta', () => {
+  const TODAS: ColunaTitulo[] = [
+    'credor',
+    'documento',
+    'numeroDocumento',
+    'valor',
+    'vencimento',
+    'forma',
+    'situacao',
+    'acao',
+    'filial',
+  ]
+
+  it('gaveta fechada: nenhuma coluna some e nada muda de layout', () => {
+    expect(layoutComGaveta(false)).toEqual({})
+    for (const c of TODAS) expect(classeDaColunaComGaveta(c, false)).toBeUndefined()
+  })
+
+  it('gaveta aberta: só Situação, Próxima ação e Filial somem, e só entre xl e 2xl', () => {
+    expect([...COLUNAS_OCULTAS_COM_GAVETA].sort()).toEqual(['acao', 'filial', 'situacao'])
+    for (const c of TODAS) {
+      const classe = classeDaColunaComGaveta(c, true)
+      if (COLUNAS_OCULTAS_COM_GAVETA.has(c)) expect(classe).toBe('xl:max-2xl:hidden')
+      else expect(classe).toBeUndefined()
+    }
+  })
+
+  it('gaveta aberta: tudo o que muda fica restrito à faixa xl–2xl', () => {
+    const layout = layoutComGaveta(true)
+    expect(layout.tabela).toContain('var(--drawer-detail-reserve)')
+    for (const classes of Object.values(layout)) {
+      for (const classe of classes.split(' ')) expect(classe).toMatch(/^xl:max-2xl:/)
+    }
+  })
+
+  it('linha ativa: filete por token, sem px no componente, e texto mudo escurecido', () => {
+    expect(CLASSE_LINHA_ATIVA).toContain('shadow-[var(--shadow-selection)]')
+    expect(CLASSE_LINHA_ATIVA).not.toMatch(/\dpx/)
+    expect(CLASSE_LINHA_ATIVA).toContain('[&_.text-muted-foreground]:text-foreground/70')
   })
 })

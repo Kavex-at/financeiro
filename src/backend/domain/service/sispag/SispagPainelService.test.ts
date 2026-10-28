@@ -256,6 +256,12 @@ describe('SispagPainelService.montarPainel', () => {
         expect(painel.ingestao.ultimaRunEm).toBe('2026-07-08T06:00:00.000Z');
     });
 
+    it('serializa o nº do documento (doc_esp_numero) de cada título', async () => {
+        const { service } = make({ titulosAtivos: [titulo({ numeroDocumento: '25349' })] });
+        const painel = await service.montarPainel();
+        expect(painel.titulos[0]?.numeroDocumento).toBe('25349');
+    });
+
     it('marca emLote nos títulos já num lote RASCUNHO', async () => {
         const { service } = make({
             titulosAtivos: [

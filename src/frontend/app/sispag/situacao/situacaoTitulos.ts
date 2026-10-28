@@ -35,6 +35,8 @@ export interface FiltrosTitulos {
   estado: EstadoFiltro
   credor: string
   documento: string
+  /** Nº do documento do fornecedor (`doc_esp_numero`), "contém". */
+  numeroDocumento: string
   valorMin: string
   valorMax: string
   faixas: FaixaVencimento[]
@@ -56,6 +58,7 @@ export const FILTROS_VAZIOS: FiltrosTitulos = {
   estado: 'todos',
   credor: '',
   documento: '',
+  numeroDocumento: '',
   valorMin: '',
   valorMax: '',
   faixas: [],
@@ -71,6 +74,7 @@ export const FILTROS_VAZIOS: FiltrosTitulos = {
 export type ColunaTitulo =
   | 'credor'
   | 'documento'
+  | 'numeroDocumento'
   | 'valor'
   | 'vencimento'
   | 'forma'
@@ -140,6 +144,7 @@ const valorNumerico = (s: string): number | undefined => {
 export const contarFiltrosDeColuna = (f: FiltrosTitulos): number =>
   (f.credor ? 1 : 0) +
   (f.documento ? 1 : 0) +
+  (f.numeroDocumento ? 1 : 0) +
   (f.valorMin !== '' || f.valorMax !== '' ? 1 : 0) +
   (f.faixas.length > 0 || f.vencDe !== '' || f.vencAte !== '' ? 1 : 0) +
   (f.formas.length > 0 ? 1 : 0) +
@@ -164,6 +169,9 @@ const passaSugestaoBoleto = (t: TituloAPagar, f: FiltrosTitulos): boolean => {
 export const passaColunas = (t: TituloAPagar, f: FiltrosTitulos): boolean => {
   if (f.credor && !norm(t.credor ?? '').includes(norm(f.credor))) return false
   if (f.documento && !norm(`${t.docCod}/${t.titCod}`).includes(norm(f.documento))) return false
+  if (f.numeroDocumento && !norm(t.numeroDocumento ?? '').includes(norm(f.numeroDocumento))) {
+    return false
+  }
   const min = valorNumerico(f.valorMin)
   const max = valorNumerico(f.valorMax)
   if (min !== undefined && t.valor < min) return false
@@ -198,6 +206,8 @@ const valorDaColuna = (t: TituloAPagar, c: ColunaTitulo): string | number => {
       return norm(t.credor ?? '')
     case 'documento':
       return `${t.docCod}/${t.titCod}`
+    case 'numeroDocumento':
+      return t.numeroDocumento ?? ''
     case 'valor':
       return t.valor
     case 'vencimento':
@@ -323,3 +333,56 @@ export const boletoSemDdaPorSugestao = (
     return ts ? [{ sugestao, ...somar(ts) }] : []
   })
 }
+
+/**
+ * Linha do título aberto na gaveta de boletos (não modal): fundo `primary/10` e filete à esquerda
+ * (`--shadow-selection`, largura `--selection-bar-width`). O texto `muted-foreground` não passa
+ * 4.5:1 sobre esse fundo (3.9:1), então dentro da linha ativa ele escurece para `foreground/70`
+ * (6.9:1). Contas em `tokens.md` §Seleção de linha.
+ */
+export const CLASSE_LINHA_ATIVA =
+  'bg-primary/10 shadow-[var(--shadow-selection)] hover:bg-primary/10 [&_.text-muted-foreground]:text-foreground/70'
+
+/**
+ * Com a gaveta de boletos aberta entre `xl` e `2xl` (1280–1535px) a gaveta cobre o lado direito
+ * da tabela. Estas colunas de menor prioridade saem nessa faixa para que Credor, Documento, Nº doc,
+ * Valor, Vencimento e Forma de pagamento (onde está o gatilho da gaveta) caibam. Fora da faixa, ou
+ * com a gaveta fechada, nenhuma coluna some.
+ */
+export const COLUNAS_OCULTAS_COM_GAVETA: ReadonlySet<ColunaTitulo> = new Set<ColunaTitulo>([
+  'situacao',
+  'acao',
+  'filial',
+])
+
+/** Classes de layout da tabela de títulos conforme a gaveta (`xl:max-2xl` só vale com ela aberta). */
+export interface LayoutComGaveta {
+  /**
+   * Contêiner (rolagem) da tabela: termina onde a gaveta começa. A reserva desconta o padding
+   * direito da área principal, que já fica sob a gaveta.
+   */
+  tabela?: string
+  /** Coluna de baixa prioridade: some na faixa. */
+  ocultar?: string
+  /** Cabeçalho com filtro: o rótulo quebra linha e o funil desce, em vez de alargar a coluna. */
+  cabecalho?: string
+  /** Credor: largura máxima menor (nome inteiro no `title`). */
+  credor?: string
+  /** Célula que pode quebrar linha (Forma de pagamento). */
+  quebra?: string
+}
+
+export const layoutComGaveta = (gavetaAberta: boolean): LayoutComGaveta =>
+  gavetaAberta
+    ? {
+        tabela: 'xl:max-2xl:mr-[var(--drawer-detail-reserve)]',
+        ocultar: 'xl:max-2xl:hidden',
+        cabecalho: 'xl:max-2xl:whitespace-normal xl:max-2xl:[&>div]:flex-wrap',
+        credor: 'xl:max-2xl:max-w-28',
+        quebra: 'xl:max-2xl:whitespace-normal',
+      }
+    : {}
+
+/** Classe da coluna `c` (só as de `COLUNAS_OCULTAS_COM_GAVETA` somem, e só com a gaveta aberta). */
+export const classeDaColunaComGaveta = (c: ColunaTitulo, gavetaAberta: boolean): string | undefined =>
+  COLUNAS_OCULTAS_COM_GAVETA.has(c) ? layoutComGaveta(gavetaAberta).ocultar : undefined

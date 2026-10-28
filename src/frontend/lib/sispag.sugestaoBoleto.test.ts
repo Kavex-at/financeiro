@@ -309,7 +309,18 @@ describe('contrato do desfecho por título (ADR-0072)', () => {
     expect(JSON.stringify(parsed)).not.toMatch(/\d{20,}/)
   })
 
-  it('situação desconhecida é recusada (enum fechado)', () => {
+  it('nº do documento (doc_esp_numero) passa e é preservado na sugestão e no desfecho', () => {
+    expect(sugestaoBoletoSchema.parse({ ...sugestao, numeroDocumento: '25349' }).numeroDocumento).toBe(
+      '25349',
+    )
+    expect(desfechoTituloSchema.parse({ ...desfecho, numeroDocumento: '25349' }).numeroDocumento).toBe(
+      '25349',
+    )
+    // Opcional: backend antigo, sem o campo, continua passando.
+    expect(desfechoTituloSchema.parse(desfecho).numeroDocumento).toBeUndefined()
+  })
+
+    it('situação desconhecida é recusada (enum fechado)', () => {
     expect(
       desfechoTituloSchema.safeParse({ ...desfecho, situacao: 'INVENTADA' }).success,
     ).toBe(false)

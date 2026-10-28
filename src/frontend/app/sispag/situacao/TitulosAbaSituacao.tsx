@@ -61,6 +61,8 @@ export function TitulosAbaSituacao({
   onLotesCriados,
   formando,
   onFormarAutomaticos,
+  tituloAtivo,
+  gavetaAberta = false,
 }: {
   /** Títulos da aba (já sem os comprometidos, conforme o botão da página). */
   titulos: TituloAPagar[]
@@ -86,6 +88,10 @@ export function TitulosAbaSituacao({
   onLotesCriados: () => Promise<void>
   formando: boolean
   onFormarAutomaticos: () => Promise<void>
+  /** Chave `fil:doc:tit` do título aberto na gaveta dos boletos (linha marcada na tabela). */
+  tituloAtivo?: string | null
+  /** Gaveta dos boletos aberta (a tabela compacta entre `xl` e `2xl`; ver `layoutComGaveta`). */
+  gavetaAberta?: boolean
 }) {
   const tabela = useTabelaTitulos(titulos)
   const [selecionados, setSelecionados] = React.useState<Set<string>>(new Set())
@@ -236,6 +242,8 @@ export function TitulosAbaSituacao({
           onIrParaLote={onIrParaLote}
           onRetirar={onRetirar}
           onResolvido={onResolvido}
+          tituloAtivo={tituloAtivo}
+          gavetaAberta={gavetaAberta}
         />
         {podeExecutar ? (
           <BarraSelecaoLotes

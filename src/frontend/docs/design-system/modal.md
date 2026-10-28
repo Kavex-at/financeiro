@@ -28,6 +28,9 @@ Organism. Internamente usa Radix Dialog (já parte do shadcn).
 
 ## Tamanhos
 
+Larguras do `Dialog` (`components/ui/dialog.tsx`). O `Drawer` tem escala própria (400 / 560 / 720 /
+960px), ver § Drawer.
+
 | Size | Width |
 |---|---|
 | `sm` | 400px |
@@ -250,15 +253,40 @@ Conteúdo lateral deslizante. Bom para detalhes (preview de nota, logs), filtros
 | Prop | Tipo | Default | Descrição |
 |---|---|---|---|
 | `side` | `'left' \| 'right' \| 'bottom'` | `'right'` | Lado de entrada |
-| `size` | `'sm' \| 'md' \| 'lg' \| 'xl'` | `'md'` | Largura (ou altura se bottom) |
-| `closeOnOverlayClick` | `boolean` | `true` | — |
+| `size` | `'sm' \| 'md' \| 'lg' \| 'xl'` | `'md'` | Largura: 400 / 560 / 720 / 960px (tela cheia abaixo de `sm`); altura 40/60/80/95vh se bottom |
+| `modal` | `boolean` | `true` | `false` = gaveta de detalhe ao lado do conteúdo (ver abaixo) |
+| `closeOnOverlayClick` | `boolean` | `true` | Só no modo modal |
+| `focusKey` | `string` | — | Identidade do conteúdo; trocar com a gaveta aberta re-foca a gaveta |
+
+Implementação: `components/ui/drawer.tsx` (Radix Dialog). Tokens: `--z-drawer`, `--shadow-drawer`,
+`--duration-slow`.
 
 ### Comportamento
 
-- Slide de duração `duration-slow` (300ms).
-- Backdrop com `bg-overlay`.
-- Focus trap.
+- Slide de duração `duration-slow` (300ms); sem animação com `prefers-reduced-motion`.
+- Backdrop com `bg-overlay` (modal).
+- Focus trap (modal).
 - ESC fecha.
+- O foco entra no painel ao abrir (no próprio painel, anunciado pelo título, não na primeira ação)
+  e volta ao elemento que abriu ao fechar.
+
+### Drawer não modal (`modal={false}`)
+
+Para detalhe de uma linha que o usuário compara com a tabela atrás (ex.: "Boletos DDA do título",
+SISPAG). Sem backdrop e sem focus trap: a página continua visível e clicável; clique fora **não**
+fecha (só ESC e o X). Abrir outra linha com a gaveta aberta troca o conteúdo (`focusKey`) e o foco
+passa a voltar para o último gatilho. A linha ativa na tabela fica marcada com
+`aria-current="true"` e fundo `primary/10` com filete à esquerda (`--shadow-selection`, ver
+`tokens.md` § Seleção de linha). `role="dialog"` sem `aria-modal`.
+
+Entre `xl` e `2xl` (1280–1535px) a gaveta não modal estreita para `--drawer-detail-width` (480px),
+o contêiner da tabela atrás termina onde ela começa (`--drawer-detail-reserve`) e a tabela compacta:
+cabeçalhos quebram linha, Credor fica truncado (nome no `title`) e as colunas de baixa prioridade
+saem, só enquanto a gaveta está aberta. Com a navegação lateral expandida (224px) a tabela não
+cabe nos 527px que sobram: Vencimento e Forma de pagamento ficam a uma rolagem horizontal, nunca
+sob a gaveta.
+No SISPAG (1280px) ficam à vista Credor, Documento, Nº doc, Valor, Vencimento e Forma de pagamento,
+onde está o gatilho que troca o título da gaveta; somem Situação, Próxima ação e Filial.
 
 ## MultiStepDialog (wizard)
 

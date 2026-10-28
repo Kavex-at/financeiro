@@ -328,6 +328,49 @@ Elevação em 5 níveis. Use o token correspondente ao contexto, não o valor.
 
 **Regra**: use os contextuais (`shadow-card`, `shadow-modal`) em vez dos genéricos em componentes. Isso permite recalibrar o sistema inteiro mudando um token sem tocar em cada componente.
 
+## Seleção de linha
+
+A linha "ativa" de uma tabela (ex.: o título aberto na gaveta de detalhe não modal, marcado com
+`aria-current="true"`) usa fundo `primary/10` e um filete à esquerda. A largura do filete é token;
+nunca escreva `3px` no componente.
+
+```css
+:root {
+    --selection-bar-width: 3px;
+    --shadow-selection: inset var(--selection-bar-width) 0 0 0 var(--primary);
+}
+```
+
+Uso: `bg-primary/10 shadow-[var(--shadow-selection)]` (em SISPAG, `CLASSE_LINHA_ATIVA` de
+`app/sispag/situacao/situacaoTitulos.ts`).
+
+**Contraste (WCAG AA), fundo da página `--background` oklch(0.98 0 0) + `primary/10`:**
+
+| Par | Razão | AA |
+|---|---|---|
+| `--foreground` sobre a linha ativa | 14.8:1 | passa |
+| `--muted-foreground` sobre a linha ativa | 3.9:1 | **falha** |
+| `foreground/70` sobre a linha ativa | 6.9:1 | passa |
+| filete `--primary` contra a linha (não texto, ≥ 3:1) | 4.9:1 | passa |
+
+Por isso, dentro da linha ativa o texto `text-muted-foreground` passa a `text-foreground/70`
+(`[&_.text-muted-foreground]:text-foreground/70`). Só tema claro: não há override `.dark` em
+`globals.css` hoje.
+
+## Gaveta de detalhe
+
+```css
+:root {
+    --drawer-detail-width: 30rem;                                       /* 480px */
+    --drawer-detail-reserve: calc(var(--drawer-detail-width) - 2rem);   /* desconta lg:px-8 do main */
+}
+```
+
+Gaveta não modal (`modal.md` § Drawer não modal) entre `xl` e `2xl`: a gaveta usa
+`--drawer-detail-width` e, enquanto ela está aberta, o contêiner da tabela ganha margem direita
+`--drawer-detail-reserve`, para a tabela não ficar sob a gaveta. 480px é a menor largura em que o cartão de boleto
+não quebra a linha de diferenças.
+
 ## Z-index tokens
 
 Evitar z-index ad-hoc. Toda sobreposição usa um dos níveis.

@@ -34,6 +34,13 @@ export const descreverFiltros = (f: FiltrosTitulos): FiltroAtivo[] => {
   if (f.documento) {
     out.push({ id: 'documento', texto: `Documento contém "${f.documento}"`, remover: { documento: '' } })
   }
+  if (f.numeroDocumento) {
+    out.push({
+      id: 'numeroDocumento',
+      texto: `Nº doc contém "${f.numeroDocumento}"`,
+      remover: { numeroDocumento: '' },
+    })
+  }
   if (f.valorMin !== '' || f.valorMax !== '') {
     const partes = [
       f.valorMin !== '' ? `de R$ ${reais(f.valorMin)}` : '',

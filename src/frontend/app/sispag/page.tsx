@@ -33,7 +33,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { EmptyState } from '@/components/ui/empty-state'
 import { isSispagEnabled } from '@/lib/features'
 import { isSessionExpiredError } from '@/lib/http'
-import { formatBRL } from '@/lib/utils'
+import { cn, formatBRL } from '@/lib/utils'
 import {
   type ArquivoRetorno,
   cancelarLote,
@@ -126,6 +126,7 @@ import {
   ROTULO_SITUACAO,
 } from './components/sugestaoBoleto'
 import { paginaDoLote, rotuloLote, textoBuscaLote } from './components/loteDoTitulo'
+import { CLASSE_LINHA_ATIVA, layoutComGaveta } from './situacao/situacaoTitulos'
 import { TitulosAbaSituacao } from './situacao/TitulosAbaSituacao'
 import { FiltroProntidaoLotes } from './lotes/FiltroProntidaoLotes'
 import { FinalizarProntos } from './lotes/FinalizarProntos'
@@ -261,6 +262,15 @@ function SispagPanel() {
   // Abas controladas: o link do lote na linha do título (ADR-0050) troca de aba.
   const [aba, setAba] = React.useState('titulos')
   const [tituloDda, setTituloDda] = React.useState<TituloSemBoleto | null>(null)
+  // Mesma chave de `keyOf`: marca a linha do título aberto na gaveta (filial ausente = nenhuma).
+  const chaveDda =
+    tituloDda && tituloDda.filCod !== undefined
+      ? `${tituloDda.filCod}:${tituloDda.docCod}:${tituloDda.titCod}`
+      : null
+  // Gaveta aberta entre `xl` e `2xl`: a tabela termina onde a gaveta começa e compacta (colunas de
+  // baixa prioridade saem), para Credor…Forma de pagamento não ficarem sob a gaveta.
+  const gavetaAberta = tituloDda !== null
+  const layoutGaveta = layoutComGaveta(gavetaAberta)
   // Sugestões de boleto DDA (ADR-0068). Evidência opcional: se a leitura falhar a aba de
   // títulos funciona igual, só sem o selo "sugestão disponível".
   const [sugestoes, setSugestoes] = React.useState<ListagemSugestoesBoleto | null>(null)
@@ -547,6 +557,28 @@ function SispagPanel() {
     (i: ItemLote) => pesCodPorTitulo.get(`${i.filCod}:${i.docCod}:${i.titCod}`),
     [pesCodPorTitulo],
   )
+  // Idem para o nº do documento (`doc_esp_numero`): o item do lote e o erro de "boleto sem DDA"
+  // não o carregam; a gaveta dos boletos o mostra para conferir a âncora de número (I15s).
+  const numeroDocumentoPorTitulo = React.useMemo(
+    () =>
+      new Map(
+        (painel?.titulos ?? []).flatMap((t) =>
+          t.numeroDocumento
+            ? [[`${t.filCod}:${t.docCod}:${t.titCod}`, t.numeroDocumento] as [string, string]]
+            : [],
+        ),
+      ),
+    [painel?.titulos],
+  )
+  const numeroDocumentoDoItem = React.useCallback(
+    (i: ItemLote) => numeroDocumentoPorTitulo.get(`${i.filCod}:${i.docCod}:${i.titCod}`),
+    [numeroDocumentoPorTitulo],
+  )
+  const comNumeroDocumento = (t: TituloSemBoleto): TituloSemBoleto => {
+    if (t.numeroDocumento || t.filCod === undefined) return t
+    const numero = numeroDocumentoPorTitulo.get(`${t.filCod}:${t.docCod}:${t.titCod}`)
+    return numero ? { ...t, numeroDocumento: numero } : t
+  }
   const ehVencido = (t: TituloAPagar): boolean => (t.diasAteVencimento ?? 0) < 0
   const totalComprometidos = React.useMemo(
     () => titulos.filter((t) => t.loteComprometido).length,
@@ -658,6 +690,7 @@ function SispagPanel() {
       ...(t.vencimento != null
         ? { vencimento: new Date(t.vencimento).toISOString().slice(0, 10) }
         : {}),
+      ...(t.numeroDocumento ? { numeroDocumento: t.numeroDocumento } : {}),
     })
 
   const chaveDe = (t: TituloAPagar) => ({ filCod: t.filCod, docCod: t.docCod, titCod: t.titCod })
@@ -823,7 +856,7 @@ function SispagPanel() {
           duration: 30000,
           action: {
             label: 'Ver boletos DDA',
-            onClick: () => setTituloDda(e.titulo),
+            onClick: () => setTituloDda(comNumeroDocumento(e.titulo)),
           },
         })
       } else if (e instanceof BoletoCodigoBarrasRetiradaIncompletaError) {
@@ -1158,6 +1191,8 @@ function SispagPanel() {
                   resumoDoDesfecho={(t) => resumoDoDesfecho(desfechosPorTitulo.get(chaveTitulo(t)))}
                   onAbrirSugestao={abrirSugestaoDoTitulo}
                   onVerBoleto={abrirSugestaoDoTitulo}
+                  tituloAtivo={chaveDda}
+                  gavetaAberta={gavetaAberta}
                   onIrParaLote={irParaLote}
                   onIrParaLotes={setAba}
                   onRetirar={setRetirando}
@@ -1350,7 +1385,7 @@ function SispagPanel() {
                   }
                 />
               ) : (
-                <div className="overflow-x-auto rounded-lg border">
+                <div className={cn('overflow-x-auto rounded-lg border', layoutGaveta.tabela)}>
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -1375,19 +1410,31 @@ function SispagPanel() {
                         ) : null}
                         <TableHead>Credor</TableHead>
                         <TableHead>Documento</TableHead>
+                        <TableHead title="Nº do documento do fornecedor (NF/fatura) no Conexos">
+                          Nº doc
+                        </TableHead>
                         <TableHead className="text-right">Valor</TableHead>
                         <TableHead>Vencimento</TableHead>
                         <TableHead>Forma de pagamento</TableHead>
-                        <TableHead>Situação</TableHead>
-                        <TableHead>Filial</TableHead>
-                        <TableHead>
+                        <TableHead className={layoutGaveta.ocultar}>Situação</TableHead>
+                        <TableHead className={layoutGaveta.ocultar}>Filial</TableHead>
+                        <TableHead className={layoutGaveta.ocultar}>
                           <span className="sr-only">Ações</span>
                         </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {abaTitulos.slice.map((t) => (
-                        <TableRow key={keyOf(t)}>
+                        <TableRow
+                          key={keyOf(t)}
+                          // A linha do título aberto na gaveta dos boletos (não modal) fica marcada.
+                          aria-current={chaveDda === keyOf(t) ? 'true' : undefined}
+                          className={
+                            chaveDda === keyOf(t)
+                              ? CLASSE_LINHA_ATIVA
+                              : undefined
+                          }
+                        >
                           {podeExecutar ? (
                             <TableCell>
                               <Checkbox
@@ -1404,7 +1451,10 @@ function SispagPanel() {
                               />
                             </TableCell>
                           ) : null}
-                          <TableCell className="max-w-[18rem] truncate font-medium">
+                          <TableCell
+                            className={cn('max-w-[18rem] truncate font-medium', layoutGaveta.credor)}
+                            title={t.credor}
+                          >
                             <span
                               className={t.emLote || t.loteComprometido ? 'text-muted-foreground' : undefined}
                             >
@@ -1458,6 +1508,9 @@ function SispagPanel() {
                           <TableCell className="text-muted-foreground">
                             {t.docCod}/{t.titCod}
                           </TableCell>
+                          <TableCell className="tabular-nums text-muted-foreground">
+                            {t.numeroDocumento ?? '—'}
+                          </TableCell>
                           <TableCell className="text-right tabular-nums">{formatBRL(t.valor)}</TableCell>
                           <TableCell>
                             <div className="flex flex-col gap-0.5">
@@ -1467,7 +1520,7 @@ function SispagPanel() {
                               <VencimentoBadge dias={t.diasAteVencimento} />
                             </div>
                           </TableCell>
-                          <TableCell>
+                          <TableCell className={layoutGaveta.quebra}>
                             {/* Forma do Conexos + boleto DDA: sem DDA, escolher BOLETO no lote é
                                 barrado na geração (não há código de barras). */}
                             <FormaPagamentoBadge
@@ -1475,25 +1528,10 @@ function SispagPanel() {
                               sugestao={resumoDoDesfecho(
                                 desfechosPorTitulo.get(chaveTitulo(t)),
                               )}
-                              onAbrirSugestao={() =>
-                                setTituloDda({
-                                  filCod: t.filCod,
-                                  docCod: t.docCod,
-                                  titCod: t.titCod,
-                                  ...(t.credor ? { credor: t.credor } : {}),
-                                  valor: t.valor,
-                                  ...(t.vencimento != null
-                                    ? {
-                                        vencimento: new Date(t.vencimento)
-                                          .toISOString()
-                                          .slice(0, 10),
-                                      }
-                                    : {}),
-                                })
-                              }
+                              onAbrirSugestao={() => abrirSugestaoDoTitulo(t)}
                             />
                           </TableCell>
-                          <TableCell>
+                          <TableCell className={layoutGaveta.ocultar}>
                             <div className="flex flex-col items-start gap-1">
                               {t.liberado ? (
                                 <Badge variant="outline" className="border-success/40 text-success">
@@ -1513,8 +1551,10 @@ function SispagPanel() {
                               ) : null}
                             </div>
                           </TableCell>
-                          <TableCell className="text-muted-foreground">{t.filCod}</TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className={cn('text-muted-foreground', layoutGaveta.ocultar)}>
+                            {t.filCod}
+                          </TableCell>
+                          <TableCell className={cn('text-right', layoutGaveta.ocultar)}>
                             {t.loteRascunho && podeExecutar ? (
                               <Button
                                 size="sm"
@@ -1625,6 +1665,7 @@ function SispagPanel() {
                       busy={busy}
                       acao={acaoLote}
                       pesCodDoItem={pesCodDoItem}
+                      numeroDocumentoDoItem={numeroDocumentoDoItem}
                       {...(podeExecutar ? { onAdicionar: setAdicionarLote } : {})}
                       destacado={loteEmFoco === l.id}
                       onVerBoleto={abrirSugestaoDoTitulo}
@@ -1692,6 +1733,7 @@ function SispagPanel() {
                       acao={acaoLote}
                       selecionado={selecaoRemessas.selecionados.has(l.id)}
                       onSelecionar={selecaoRemessas.alternar}
+                      numeroDocumentoDoItem={numeroDocumentoDoItem}
                     />
                   ))}
                 </div>
