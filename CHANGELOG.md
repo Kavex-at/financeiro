@@ -1,5 +1,19 @@
 # Columbia Financeiro — Changelog
 
+## v0.77.2 (2026-10-28) — SISPAG: boleto confirmado sem DDA chega à remessa
+
+- **Sem falso "valor diferente (+R$ 0,01)".** No lote, o aviso "não será vinculado: valor do boleto
+  diferente do valor em aberto" aparecia para títulos renegociados pelo ajuste de centavos (por exemplo
+  41027/2), porque a previsão comparava o boleto com o valor base guardado na carteira. Agora ela usa o
+  valor líquido do ajuste, o mesmo do boleto, e o aviso só aparece quando a diferença é real.
+- **Nada muda no envio.** Com o vínculo ligado, a geração da remessa já lia o valor em aberto ao vivo no
+  Conexos; isto corrige só o que a tela mostra antes.
+- **Boleto confirmado de fornecedor sem conta no Itaú gera a remessa.** Ao gerar a remessa, o Conexos
+  perguntava "favorecido sem conta ativa no banco — alterar para título?" e a geração parava com "O
+  Conexos pediu uma confirmação". Para boleto confirmado na tela (sem DDA no Conexos) a resposta certa é
+  sim, porque ele é pago pelo código de barras; o sistema agora responde sozinho só nesse caso. Para TED,
+  PIX e qualquer outro item a pergunta continua com você.
+
 ## v0.77.1 (2026-10-28) — SISPAG: boleto confirmado entra no lote como boleto e com o valor líquido
 
 - **Boleto confirmado já entra como boleto.** O título cujo boleto DDA você confirmou na tela passa a
