@@ -84,6 +84,7 @@ import type { TransactionClient } from '../../client/database/PostgreeDatabaseCl
 import LogService from '../LogService.js';
 import DisparoLimpezaBorderoGrupo from './DisparoLimpezaBorderoGrupo.js';
 import LeituraGrupoBoleto from './LeituraGrupoBoleto.js';
+import PreSelecaoItemLote from './PreSelecaoItemLote.js';
 import VerificacaoTedPixService, {
     type ItemRetirado,
     VERIFICATION_MODE,
@@ -154,6 +155,7 @@ export default class LotePagamentoService {
         @inject(LeituraGrupoBoleto) private readonly leituraGrupo: LeituraGrupoBoleto,
         @inject(DisparoLimpezaBorderoGrupo)
         private readonly disparoLimpeza: DisparoLimpezaBorderoGrupo,
+        @inject(PreSelecaoItemLote) private readonly preSelecao: PreSelecaoItemLote,
     ) {}
 
     public criarLote = async (input: CriarLoteInput): Promise<LotePagamento> => {
@@ -516,6 +518,19 @@ export default class LotePagamentoService {
             docCod: input.docCod,
             titCod: input.titCod,
         });
+        // A2 + I18j(5): a regra de entrada é a mesma da formação automática (boleto confirmado no
+        // app também vira BOLETO; título renegociado pelo ajuste entra com o líquido do ledger).
+        const preSelecao =
+            (
+                await this.preSelecao.resolver([
+                    {
+                        filCod: input.filCod,
+                        docCod: input.docCod,
+                        titCod: input.titCod,
+                        temBoleto,
+                    },
+                ])
+            ).get(`${input.filCod}:${input.docCod}:${input.titCod}`) ?? {};
 
         // I3 + inserção atômica, serializadas por título (lock só em torno do DB).
         const lockKey = this.lockKey(input.filCod, input.docCod, input.titCod);
@@ -555,11 +570,11 @@ export default class LotePagamentoService {
                             docCod: input.docCod,
                             titCod: input.titCod,
                             credor: titulo.credor,
-                            valor: titulo.valor,
+                            valor: preSelecao.valor ?? titulo.valor,
                             vencimento: titulo.vencimento,
                             // A2: boleto pré-selecionado quando o ERP tem um DDA casado com o
-                            // título; senão "a definir" e o analista escolhe.
-                            modalidade: temBoleto ? MODALIDADE.BOLETO : undefined,
+                            // título ou a analista confirmou o boleto no app; senão "a definir".
+                            modalidade: preSelecao.modalidade,
                             incluidoPor: input.ator,
                         },
                         tx,

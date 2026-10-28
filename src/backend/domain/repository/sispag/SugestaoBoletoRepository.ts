@@ -403,6 +403,33 @@ export default class SugestaoBoletoRepository {
     };
 
     /**
+     * Das chaves pedidas, as que têm boleto confirmado no app e ainda em vigor: decisão
+     * `CONFIRMADA` cujo par (credor, emissor) segue `VIGENTE` — o mesmo critério do vínculo do
+     * código de barras (I17a). Pré-seleciona BOLETO ao entrar no lote (A2). Devolve
+     * `filCod:docCod:titCod`; sem chaves não consulta.
+     */
+    public chavesComConfirmacaoVigente = async (
+        chaves: ReadonlyArray<{ filCod: number; docCod: string; titCod: string }>,
+    ): Promise<Set<string>> => {
+        if (chaves.length === 0) return new Set();
+        const rows = (await this.db.selectMany(
+            `SELECT DISTINCT d.fil_cod, d.doc_cod, d.tit_cod
+               FROM sispag_decisao_sugestao_boleto d
+               JOIN sispag_confirmacao_emissor_boleto p ON p.id = d.confirmacao_emissor_id
+               JOIN unnest($filCods::int[], $docCods::text[], $titCods::text[])
+                    AS k(fil_cod, doc_cod, tit_cod)
+                 ON k.fil_cod = d.fil_cod AND k.doc_cod = d.doc_cod AND k.tit_cod = d.tit_cod
+              WHERE d.decisao = 'CONFIRMADA' AND p.estado = 'VIGENTE'`,
+            {
+                filCods: chaves.map((c) => c.filCod),
+                docCods: chaves.map((c) => c.docCod),
+                titCods: chaves.map((c) => c.titCod),
+            },
+        )) as Array<{ fil_cod: number; doc_cod: string; tit_cod: string }>;
+        return new Set(rows.map((r) => `${r.fil_cod}:${r.doc_cod}:${r.tit_cod}`));
+    };
+
+    /**
      * As decisões `CONFIRMADA` de um par, TRAVADAS (`FOR UPDATE`) na transação da revogação: a
      * cascata (I15l) anula exatamente o que travou.
      */

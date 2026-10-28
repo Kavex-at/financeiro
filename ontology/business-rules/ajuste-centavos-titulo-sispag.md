@@ -85,6 +85,15 @@ o valor do título.
 > I18a(4) (mesmo vencimento), que segue inalterada aqui. Emenda proposta como follow-up P1 em
 > `_inbox/sispag-numdoc-desempate-regis-followups.md`. Só remissão; nenhuma regra muda.
 
+> **Emenda à I18j(5) (2026-10-28):** a I18j(5) só alcança o item que **já estava** no rascunho no
+> rechaveamento. O título renegociado que entra num lote **depois** dele (inclusão manual ou formação
+> automática) leva `valor` = líquido do ledger mais recente já rechaveado (`valor_boleto_centavos`, etapa
+> `rechaveada` ou terminal de sucesso), não o `titMnyValor` do `fin064`, que é o valor base, um centavo
+> abaixo do boleto. O `tit_cod_novo` só é gravado quando esse líquido bate com o boleto (I18d), então é o
+> líquido verificado. Regra única em `PreSelecaoItemLote`. Dinheiro não muda: o import da remessa já usa o
+> líquido ao vivo (I17n); o `valor` do item dirige tela, totais e ordenação. Caso de origem: PRD, NELSON
+> HEUSI 41027/2 e 41032/2 (R$ 647,57 líquido, item mostrava R$ 647,56).
+
 ## Privacidade e trilha
 
 Nenhuma linha digitável completa em ledger, log, evento ou obs do `fin070` (I17j/I15k): só o mascarado 5+4.

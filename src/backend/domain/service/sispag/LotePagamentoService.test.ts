@@ -38,7 +38,10 @@ import type ContaPagadoraResolver from './ContaPagadoraResolver.js';
 import type GrupoBoletoRepository from '../../repository/sispag/GrupoBoletoRepository.js';
 import type DisparoLimpezaBorderoGrupo from './DisparoLimpezaBorderoGrupo.js';
 import type LeituraGrupoBoleto from './LeituraGrupoBoleto.js';
+import type AjusteCentavosExecucaoRepository from '../../repository/sispag/AjusteCentavosExecucaoRepository.js';
+import type SugestaoBoletoRepository from '../../repository/sispag/SugestaoBoletoRepository.js';
 import LotePagamentoService from './LotePagamentoService.js';
+import PreSelecaoItemLote from './PreSelecaoItemLote.js';
 
 const lote = (over: Partial<LotePagamento> = {}): LotePagamento => ({
     id: 'L1',
@@ -182,6 +185,13 @@ const buildDestinoDeps = () => ({
             .fn()
             .mockResolvedValue({ execucoes: 0, limpas: 0, pendentes: 0, falhas: 0 }),
     },
+    // Pré-seleção do item (A2, I18j(5)): por padrão nenhum boleto confirmado no app nem ajuste.
+    sugestoes: {
+        chavesComConfirmacaoVigente: jest.fn().mockResolvedValue(new Set<string>()),
+    },
+    ajustes: {
+        liquidosDeTitulosRenegociados: jest.fn().mockResolvedValue(new Map<string, number>()),
+    },
     envVars: {
         sispagFavorecidoAutorizadoEnabled: true,
         sispagTedEnabled: true,
@@ -214,6 +224,10 @@ const novoService = (
         deps.grupoRepo as unknown as GrupoBoletoRepository,
         deps.leituraGrupo as unknown as LeituraGrupoBoleto,
         deps.disparoLimpeza as unknown as DisparoLimpezaBorderoGrupo,
+        new PreSelecaoItemLote(
+            deps.sugestoes as unknown as SugestaoBoletoRepository,
+            deps.ajustes as unknown as AjusteCentavosExecucaoRepository,
+        ),
     );
 
 /** Carteira persistida: é DAQUI que sai o "tem boleto?" — nunca do `fin064`. */
@@ -1075,6 +1089,53 @@ describe('LotePagamentoService — invariantes', () => {
             await service.incluirTitulo(incluir);
             expect(repo.adicionarItem).toHaveBeenCalledWith(
                 expect.objectContaining({ modalidade: undefined }),
+                expect.anything(),
+            );
+        });
+
+        it('boleto confirmado no app (CONFIRMADA + par VIGENTE) sem DDA no ERP → BOLETO', async () => {
+            // Produção 2026-10-28 (NELSON HEUSI): confirmado na tela, sem DDA casado no ERP, o
+            // item entrava "a definir" e a finalização barrava com "Sem forma de pagamento".
+            const repo = buildRepo();
+            const deps = buildDestinoDeps();
+            deps.sugestoes.chavesComConfirmacaoVigente.mockResolvedValue(new Set(['2:100:1']));
+            const { service } = make(repo, titulo(), buildTituloRepo(false), deps);
+            await service.incluirTitulo(incluir);
+            expect(deps.sugestoes.chavesComConfirmacaoVigente).toHaveBeenCalledWith([
+                { filCod: 2, docCod: '100', titCod: '1' },
+            ]);
+            expect(repo.adicionarItem).toHaveBeenCalledWith(
+                expect.objectContaining({ modalidade: 'BOLETO' }),
+                expect.anything(),
+            );
+        });
+
+        it('título renegociado pelo ajuste de centavos entra com o LÍQUIDO do ledger, não o titMnyValor', async () => {
+            const repo = buildRepo();
+            const deps = buildDestinoDeps();
+            deps.sugestoes.chavesComConfirmacaoVigente.mockResolvedValue(new Set(['2:41027:2']));
+            deps.ajustes.liquidosDeTitulosRenegociados.mockResolvedValue(
+                new Map([['2:41027:2', 64757]]),
+            );
+            const { service } = make(
+                repo,
+                titulo({ docCod: '41027', titCod: '2', valor: 647.56 }),
+                buildTituloRepo(false),
+                deps,
+            );
+            await service.incluirTitulo({ ...incluir, docCod: '41027', titCod: '2' });
+            expect(repo.adicionarItem).toHaveBeenCalledWith(
+                expect.objectContaining({ valor: 647.57, modalidade: 'BOLETO' }),
+                expect.anything(),
+            );
+        });
+
+        it('sem ajuste no ledger o valor segue o do fin064', async () => {
+            const repo = buildRepo();
+            const { service } = make(repo, titulo({ valor: 1234.5 }));
+            await service.incluirTitulo(incluir);
+            expect(repo.adicionarItem).toHaveBeenCalledWith(
+                expect.objectContaining({ valor: 1234.5 }),
                 expect.anything(),
             );
         });

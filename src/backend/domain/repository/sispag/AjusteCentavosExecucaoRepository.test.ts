@@ -60,6 +60,38 @@ describe('AjusteCentavosExecucaoRepository (unidade)', () => {
     });
 });
 
+describe('AjusteCentavosExecucaoRepository.liquidosDeTitulosRenegociados (I18j(5))', () => {
+    it('líquido do ledger por título NOVO, só de ajuste já rechaveado, o mais recente', async () => {
+        const d = db();
+        // BIGINT chega do pg como texto.
+        d.selectMany.mockResolvedValue([
+            { fil_cod: 2, doc_cod: '41027', tit_cod_novo: '2', valor_boleto_centavos: '64757' },
+        ] as never);
+        const r = await make(d).liquidosDeTitulosRenegociados([
+            { filCod: 2, docCod: '41027', titCod: '2' },
+        ]);
+        const [sql, params] = d.selectMany.mock.calls[0] as unknown as [
+            string,
+            Record<string, unknown>,
+        ];
+        expect(sql).toMatch(/DISTINCT ON \(e\.fil_cod, e\.doc_cod, e\.tit_cod_novo\)/);
+        expect(sql).toMatch(
+            /e\.etapa IN \('rechaveada', 'concluido', 'concluido_sem_decisao',\s+'aguardando_aprovacao_manual'\)/,
+        );
+        expect(sql).toMatch(/e\.valor_boleto_centavos IS NOT NULL/);
+        expect(sql).toMatch(/ORDER BY e\.fil_cod, e\.doc_cod, e\.tit_cod_novo, e\.criado_em DESC/);
+        expect(sql).not.toMatch(/41027/);
+        expect(params).toEqual({ filCods: [2], docCods: ['41027'], titCods: ['2'] });
+        expect(r.get('2:41027:2')).toBe(64757);
+    });
+
+    it('sem chaves não consulta', async () => {
+        const d = db();
+        expect((await make(d).liquidosDeTitulosRenegociados([])).size).toBe(0);
+        expect(d.selectMany).not.toHaveBeenCalled();
+    });
+});
+
 describe('SugestaoBoletoRepository.transferirDecisao (I18j, M1)', () => {
     const linha = {
         id: 'd-1',

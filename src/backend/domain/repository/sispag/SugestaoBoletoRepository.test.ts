@@ -392,6 +392,34 @@ describe('SugestaoBoletoRepository (ADR-0068, migration 0084)', () => {
         expect(r).toHaveLength(1);
     });
 
+    it('chavesComConfirmacaoVigente: CONFIRMADA com par VIGENTE, chaves em arrays parametrizados', async () => {
+        const db = buildDb();
+        db.selectMany.mockResolvedValue([{ fil_cod: 2, doc_cod: '41027', tit_cod: '2' }]);
+        const r = await make(db).chavesComConfirmacaoVigente([
+            { filCod: 2, docCod: '41027', titCod: '2' },
+            { filCod: 2, docCod: '41032', titCod: '2' },
+        ]);
+        const [sql, params] = db.selectMany.mock.calls[0];
+        expect(sql).toMatch(
+            /unnest\(\$filCods::int\[\], \$docCods::text\[\], \$titCods::text\[\]\)/,
+        );
+        expect(sql).toMatch(/d\.decisao = 'CONFIRMADA'/);
+        expect(sql).toMatch(/p\.estado = 'VIGENTE'/);
+        expect(sql).not.toMatch(/41027/);
+        expect(params).toEqual({
+            filCods: [2, 2],
+            docCods: ['41027', '41032'],
+            titCods: ['2', '2'],
+        });
+        expect([...r]).toEqual(['2:41027:2']);
+    });
+
+    it('chavesComConfirmacaoVigente sem chaves não consulta', async () => {
+        const db = buildDb();
+        expect((await make(db).chavesComConfirmacaoVigente([])).size).toBe(0);
+        expect(db.selectMany).not.toHaveBeenCalled();
+    });
+
     it('inserirEvento: parametrizado, detalhe como jsonb; devolve o id', async () => {
         const db = buildDb();
         const id = await make(db).inserirEvento({

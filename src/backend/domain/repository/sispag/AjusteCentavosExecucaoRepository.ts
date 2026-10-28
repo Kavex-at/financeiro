@@ -299,6 +299,47 @@ export default class AjusteCentavosExecucaoRepository {
         return new Map(rows.map((r) => [`${r.fil_cod}:${r.doc_cod}:${r.tit_cod_origem}`, r.etapa]));
     };
 
+    /**
+     * I18j(5) — líquido, em centavos, dos títulos NOVOS de ajustes já rechaveados (o mais recente
+     * por título). O `tit_cod_novo` só é gravado quando o líquido do título novo bate com
+     * `valor_boleto_centavos` (I18d), então daí em diante esse é o líquido verificado. Insumo do
+     * valor do item que entra no lote depois do rechaveamento, o mesmo que a troca em rascunho
+     * grava. Chave `filCod:docCod:titCod`; sem chaves não consulta.
+     */
+    public liquidosDeTitulosRenegociados = async (
+        chaves: ReadonlyArray<{ filCod: number; docCod: string; titCod: string }>,
+    ): Promise<Map<string, number>> => {
+        if (chaves.length === 0) return new Map();
+        const rows = (await this.db.selectMany(
+            `SELECT DISTINCT ON (e.fil_cod, e.doc_cod, e.tit_cod_novo)
+                    e.fil_cod, e.doc_cod, e.tit_cod_novo, e.valor_boleto_centavos
+               FROM sispag_ajuste_centavos_execucao e
+               JOIN unnest($filCods::int[], $docCods::text[], $titCods::text[])
+                    AS k(fil_cod, doc_cod, tit_cod)
+                 ON k.fil_cod = e.fil_cod AND k.doc_cod = e.doc_cod AND k.tit_cod = e.tit_cod_novo
+              WHERE e.etapa IN ('rechaveada', 'concluido', 'concluido_sem_decisao',
+                    'aguardando_aprovacao_manual')
+                AND e.valor_boleto_centavos IS NOT NULL
+              ORDER BY e.fil_cod, e.doc_cod, e.tit_cod_novo, e.criado_em DESC`,
+            {
+                filCods: chaves.map((c) => c.filCod),
+                docCods: chaves.map((c) => c.docCod),
+                titCods: chaves.map((c) => c.titCod),
+            },
+        )) as Array<{
+            fil_cod: number;
+            doc_cod: string;
+            tit_cod_novo: string;
+            valor_boleto_centavos: number | string;
+        }>;
+        return new Map(
+            rows.map((r) => [
+                `${r.fil_cod}:${r.doc_cod}:${r.tit_cod_novo}`,
+                Number(r.valor_boleto_centavos),
+            ]),
+        );
+    };
+
     /** O ajuste mais recente por título de origem, da filial (endpoint `GET`, M7). */
     public listarUltimosDaFilial = async (filCod: number): Promise<AjusteCentavosExecucao[]> => {
         const rows = await this.db.selectMany(

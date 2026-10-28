@@ -11,7 +11,10 @@ import type LeituraGrupoBoleto from './LeituraGrupoBoleto.js';
 import type LogService from '../LogService.js';
 import type ContaPagadoraResolver from './ContaPagadoraResolver.js';
 import type SituacaoPagamentoService from './SituacaoPagamentoService.js';
+import type AjusteCentavosExecucaoRepository from '../../repository/sispag/AjusteCentavosExecucaoRepository.js';
+import type SugestaoBoletoRepository from '../../repository/sispag/SugestaoBoletoRepository.js';
 import FormacaoLotesService from './FormacaoLotesService.js';
+import PreSelecaoItemLote from './PreSelecaoItemLote.js';
 
 const titulo = (over: Partial<TituloAPagar> = {}): TituloAPagar => ({
     docCod: '100',
@@ -41,6 +44,10 @@ const make = (
         grupos?: GrupoParaFormacao[];
         situacaoDe?: (grupoId: string) => string;
         orfaos?: string[];
+        /** Chaves `fil:doc:tit` com boleto confirmado no app (CONFIRMADA + par VIGENTE). */
+        confirmados?: string[];
+        /** Líquido do ledger do ajuste de centavos, em centavos, por chave do título novo. */
+        liquidos?: Record<string, number>;
     } = {},
 ) => {
     const resolverPadrao = jest
@@ -105,6 +112,18 @@ const make = (
         { avaliarVarios } as unknown as SituacaoPagamentoService,
         grupoRepo as unknown as GrupoBoletoRepository,
         leituraGrupo as unknown as LeituraGrupoBoleto,
+        new PreSelecaoItemLote(
+            {
+                chavesComConfirmacaoVigente: jest
+                    .fn()
+                    .mockResolvedValue(new Set(over.confirmados ?? [])),
+            } as unknown as SugestaoBoletoRepository,
+            {
+                liquidosDeTitulosRenegociados: jest
+                    .fn()
+                    .mockResolvedValue(new Map(Object.entries(over.liquidos ?? {}))),
+            } as unknown as AjusteCentavosExecucaoRepository,
+        ),
     );
     return {
         service,
@@ -277,6 +296,34 @@ describe('FormacaoLotesService', () => {
                     .map((l) => l.length)
                     .sort(),
             ).toEqual([4, 6]);
+        });
+
+        it('boleto confirmado no app vai para o lote de BOLETOS, como BOLETO e com o líquido do ledger', async () => {
+            // Produção 2026-10-28 (NELSON HEUSI): confirmado sem DDA no ERP e renegociado pelo
+            // ajuste de centavos — caía no lote "resto", sem forma de pagamento e com o valor base.
+            const elegiveis = [
+                titulo({ docCod: '41027', titCod: '2', vencimento: DIA_1, valor: 647.56 }),
+                titulo({ docCod: '7', vencimento: DIA_1, temBoleto: true }),
+                titulo({ docCod: '8', vencimento: DIA_1 }),
+            ];
+            const { service, loteRepo } = make({
+                elegiveis,
+                confirmados: ['2:41027:2'],
+                liquidos: { '2:41027:2': 64757 },
+            });
+            const r = await service.formar({ triggeredBy: 'cron' });
+            expect(r.lotesFormados).toBe(2);
+            const lotes = loteRepo.adicionarItens.mock.calls.map(
+                (c: unknown[]) =>
+                    c[1] as Array<{ docCod: string; modalidade?: string; valor: number }>,
+            );
+            const boletos = lotes.find((l) => l.some((i) => i.docCod === '7'));
+            expect(boletos?.map((i) => [i.docCod, i.modalidade, i.valor]).sort()).toEqual([
+                ['41027', 'BOLETO', 647.57],
+                ['7', 'BOLETO', 1000],
+            ]);
+            const resto = lotes.find((l) => l.some((i) => i.docCod === '8'));
+            expect(resto?.map((i) => [i.docCod, i.modalidade])).toEqual([['8', undefined]]);
         });
 
         it('grupo só de boletos (ou só de outros) fica num lote só', async () => {
