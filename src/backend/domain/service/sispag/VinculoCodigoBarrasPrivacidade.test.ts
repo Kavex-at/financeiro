@@ -13,6 +13,7 @@ import RemessaCnabValidator from '../../libs/cnab/RemessaCnabValidator.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import MaskDestino from '../../libs/sispag/MaskDestino.js';
 import type BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
+import type AjusteCentavosExecucaoRepository from '../../repository/sispag/AjusteCentavosExecucaoRepository.js';
 import type BoletoDdaRepository from '../../repository/sispag/BoletoDdaRepository.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type RemessaExecucaoRepository from '../../repository/sispag/RemessaExecucaoRepository.js';
@@ -411,6 +412,9 @@ const montar = (opcoes: { confirmaTransitorio?: boolean; semDecisao?: boolean } 
         env as unknown as EnvironmentProvider,
         log as unknown as LogService,
         db as unknown as PostgreeDatabaseClient,
+        {
+            liquidosDeTitulosRenegociados: jest.fn(async () => new Map<string, number>()),
+        } as unknown as AjusteCentavosExecucaoRepository,
     );
     const remessa = new RemessaService(
         loteRepo as unknown as LotePagamentoRepository,

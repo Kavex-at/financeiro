@@ -66,6 +66,16 @@ const SUCESSO_SCHEMA = z.object({
 const PERGUNTA_AUTO_RESPONDIVEL = 'FIN_041.EXISTE_CODIGO_BARRAS_ASSOCIADO_TITULO';
 
 /**
+ * ADR-0040, emenda 2026-10-28: a troca para a forma "título" é respondida `YES` SÓ quando o
+ * chamador autoriza (`aceitarFormaTitulo`), e ele só autoriza para os itens do vínculo do código
+ * de barras confirmado (ADR-0071). Esses itens vão sem destino e são pagos pela barra; sem o YES
+ * todo boleto confirmado de favorecido sem conta no banco do lote parava aqui (PRD, NELSON HEUSI).
+ * Para qualquer outro item a pergunta continua humana: lá ela trocaria a forma escolhida.
+ */
+const PERGUNTA_FORMA_TITULO =
+    'FIN_041.PESSOA_FAVORECIDA_SEM_CONTA_ATIVA_NO_BANCO_MODALIDADE_ALTERADA_TITULO_PROPRIO';
+
+/**
  * Boundary do grid de pendentes. Existe por um motivo específico: `titVldReflexoDdaAssoc` é o
  * ÚNICO sinal de "este pagamento tem boleto", e uma coerção tolerante (`?? 0`) o degradaria em
  * silêncio para `false` se o Conexos renomeasse o campo — reintroduzindo, num lugar novo, a
@@ -1445,7 +1455,15 @@ export default class ConexosSispagWriteClient {
      * `id`, não pelo `key` e não um array.
      */
     public importarTitulos = async (params: ImportarTitulosParams): Promise<void> => {
-        const { filCod, bncCod, flpCod, itens, op = 1, associarDda = false } = params;
+        const {
+            filCod,
+            bncCod,
+            flpCod,
+            itens,
+            op = 1,
+            associarDda = false,
+            aceitarFormaTitulo = false,
+        } = params;
         const path = 'fin015/finItemSispag/titulosPendentes/importar';
         const selecao = {
             op,
@@ -1476,6 +1494,7 @@ export default class ConexosSispagWriteClient {
                     itens: [item],
                     op,
                     associarDda,
+                    aceitarFormaTitulo,
                 });
             }
             return;
@@ -1485,16 +1504,20 @@ export default class ConexosSispagWriteClient {
             await this.base.ensureSid();
             await this.base.postGenericOnce<unknown>(path, body, { filCod });
         } catch (cause) {
-            const idPergunta = this.perguntaAutoRespondivel(cause);
-            if (idPergunta === undefined) throw this.toConexosError(path, cause);
+            const resposta = this.perguntaAutoRespondivel(cause, aceitarFormaTitulo);
+            if (resposta === undefined) throw this.toConexosError(path, cause);
+            const idPergunta = resposta.id;
             // Toda auto-resposta ao ERP num fluxo de pagamento é registrada. Sem isto, não há
             // como provar depois o que a ferramenta respondeu — e isto é uma decisão
             // automatizada numa escrita que move dinheiro.
             await this.logService.info({
                 type: LOG_TYPE.BUSINESS_INFO,
-                message: 'fin015 import: pergunta do ERP auto-respondida YES (boleto DDA)',
+                message:
+                    resposta.chave === PERGUNTA_FORMA_TITULO
+                        ? 'fin015 import: pergunta do ERP auto-respondida YES (boleto confirmado, forma título)'
+                        : 'fin015 import: pergunta do ERP auto-respondida YES (boleto DDA)',
                 data: {
-                    pergunta: PERGUNTA_AUTO_RESPONDIVEL,
+                    pergunta: resposta.chave,
                     questionId: idPergunta,
                     filCod,
                     bncCod,
@@ -1517,18 +1540,29 @@ export default class ConexosSispagWriteClient {
     };
 
     /**
-     * `id` da pergunta quando o ERP interrompeu com a ÚNICA pergunta que respondemos sozinhos;
+     * `id` e chave da pergunta quando o ERP interrompeu com UMA pergunta que respondemos
+     * sozinhos: a do boleto DDA sempre; a da forma "título" só com `aceitarFormaTitulo`.
      * `undefined` em qualquer outro caso (inclusive envelope com 2+ perguntas, mesmo que uma
-     * delas seja a allowlistada — aí a decisão volta a ser humana).
+     * delas seja allowlistada — aí a decisão volta a ser humana).
      */
-    private perguntaAutoRespondivel = (cause: unknown): string | undefined => {
+    private perguntaAutoRespondivel = (
+        cause: unknown,
+        aceitarFormaTitulo: boolean,
+    ): { id: string; chave: string } | undefined => {
         const data = (cause as { response?: { data?: unknown } })?.response?.data;
         const parsed = QUESTION_SCHEMA.safeParse(data);
         if (!parsed.success || parsed.data.questions.length !== 1) return undefined;
         const q = parsed.data.questions[0];
-        if (q.key !== PERGUNTA_AUTO_RESPONDIVEL) return undefined;
+        const permitida =
+            q.key === PERGUNTA_AUTO_RESPONDIVEL ||
+            (aceitarFormaTitulo && q.key === PERGUNTA_FORMA_TITULO);
+        if (!permitida) return undefined;
         // A resposta é chaveada pelo `id` — o schema já garante que ele existe.
-        return q.id;
+        return {
+            id: q.id,
+            chave:
+                q.key === PERGUNTA_FORMA_TITULO ? PERGUNTA_FORMA_TITULO : PERGUNTA_AUTO_RESPONDIVEL,
+        };
     };
 
     /**

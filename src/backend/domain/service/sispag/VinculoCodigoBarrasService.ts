@@ -47,6 +47,7 @@ import ModoVinculoCodigoBarras, {
 } from '../../libs/boleto/ModoVinculoCodigoBarras.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
+import AjusteCentavosExecucaoRepository from '../../repository/sispag/AjusteCentavosExecucaoRepository.js';
 import BoletoDdaRepository from '../../repository/sispag/BoletoDdaRepository.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import SugestaoBoletoRepository from '../../repository/sispag/SugestaoBoletoRepository.js';
@@ -198,6 +199,8 @@ export default class VinculoCodigoBarrasService {
         @inject(EnvironmentProvider) private readonly environmentProvider: EnvironmentProvider,
         @inject(LogService) private readonly logService: LogService,
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
+        @inject(AjusteCentavosExecucaoRepository)
+        private readonly ajustes: AjusteCentavosExecucaoRepository,
     ) {}
 
     // ── Modo ────────────────────────────────────────────────────────────────
@@ -217,6 +220,9 @@ export default class VinculoCodigoBarrasService {
     /**
      * Elegibilidade de cada BOLETO do lote usando SÓ o que é local (banco/pool): zero chamada ao
      * ERP. O valor em aberto é o da carteira persistida (`CARTEIRA_LOCAL`), não o `fin064` ao vivo.
+     * Título renegociado pelo ajuste de centavos usa o líquido do ledger (I18j(5)): a carteira
+     * guarda o `titMnyValor` base, um centavo abaixo do boleto, e a previsão acusaria
+     * `VALOR_DIFERENTE` num título que, ao vivo, bate com o boleto.
      * `registrar` grava `VINCULO_SIMULADO` (só no caminho vivo do `shadow`; o endpoint e o dry-run
      * não gravam nada durável).
      */
@@ -225,10 +231,14 @@ export default class VinculoCodigoBarrasService {
         opcoes: { registrar?: boolean } = {},
     ): Promise<PrevisaoVinculo[]> => {
         const ctx = await this.carregarContexto();
+        const boletos = this.boletos_(lote);
+        const liquidos = await this.ajustes.liquidosDeTitulosRenegociados(boletos.map(paraTitulo));
         const previsoes: PrevisaoVinculo[] = [];
-        for (const item of this.boletos_(lote)) {
+        for (const item of boletos) {
             const local = await this.titulos.buscarPorChave(item);
             if (local?.temBoleto === true) continue; // caminho DDA do ERP: nada a prever.
+            const liquidoLedger = liquidos.get(chaveDe(item));
+            const valorLocal = liquidoLedger !== undefined ? liquidoLedger / 100 : local?.valor;
             const avaliado = await this.avaliar({
                 lote,
                 item,
@@ -236,7 +246,7 @@ export default class VinculoCodigoBarrasService {
                 temBoletoDda: false,
                 // Carteira persistida: indicativa por construção (sem juros/desconto/pago).
                 aberto: ValorAbertoLiquido.semAcrescimos(
-                    local && local.ativo !== false ? local.valor : undefined,
+                    local && local.ativo !== false ? valorLocal : undefined,
                 ),
                 vencimentoTitulo: this.vencimentoCivil(local?.vencimento ?? item.vencimento),
                 titulo: local,
