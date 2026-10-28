@@ -94,6 +94,16 @@ describe('TitulosAPagarExportService', () => {
         expect(linhas[0]?.vencimento).toEqual(new Date(Date.UTC(2026, 9, 8)));
     });
 
+    it('coluna "Nº doc" logo depois de Documento, com o doc_esp_numero do título', async () => {
+        const comNumero = titulo({ docCod: 'N', numeroDocumento: '25349' });
+        const semNumero = titulo({ docCod: 'S' });
+        const { service } = make({ titulos: [comNumero, semNumero] });
+        const { colunas, linhas } = await service.montar([chave(comNumero), chave(semNumero)]);
+        const headers = colunas.map((c) => c.header);
+        expect(headers[headers.indexOf('Documento') + 1]).toBe('Nº doc');
+        expect(linhas.map((l) => l.numeroDocumento)).toEqual(['25349', null]);
+    });
+
     it('mantém a ordem pedida (a da tela) e ignora chaves fora da carteira ativa', async () => {
         const a = titulo({ docCod: 'A' });
         const b = titulo({ docCod: 'B', valor: 10 });

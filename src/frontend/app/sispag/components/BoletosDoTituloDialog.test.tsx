@@ -3,7 +3,8 @@
  * que o Conexos lista como candidato dos boletos de mesmo valor e destaca a diferença de data.
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import * as React from 'react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { BoletoDda, BoletosDdaResposta } from '@/lib/sispag'
 import { BoletosDoTituloDialog } from './BoletosDoTituloDialog'
@@ -172,5 +173,111 @@ describe('BoletosDoTituloDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Tentar de novo' }))
     expect(await screen.findByText('001532761')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  describe('gaveta lateral (não modal) com o nº do documento', () => {
+    const t1 = { ...titulo, filCod: 2, docCod: '40919', numeroDocumento: '25349', valor: 647.56, vencimento: '2026-10-26' }
+
+    it('o cabeçalho mostra título, nº do documento, valor, vencimento, filial e credor', async () => {
+      mockApiFetch.mockResolvedValue(ok(resposta([])))
+      render(<BoletosDoTituloDialog titulo={t1} onClose={jest.fn()} />)
+      const dlg = await screen.findByRole('dialog', { name: /40919\/1/ })
+      expect(dlg).toHaveTextContent('nº documento 25349')
+      expect(dlg).toHaveTextContent('R$ 647,56')
+      expect(dlg).toHaveTextContent('vence 26/10/2026')
+      expect(dlg).toHaveTextContent('filial 2')
+      expect(dlg).toHaveTextContent('ADP BRASIL LTDA')
+    })
+
+    it('sem nº do documento mostra "nº documento —"', async () => {
+      mockApiFetch.mockResolvedValue(ok(resposta([])))
+      render(<BoletosDoTituloDialog titulo={titulo} onClose={jest.fn()} />)
+      expect(await screen.findByRole('dialog')).toHaveTextContent('nº documento —')
+    })
+
+    it('sem nº no título, usa o do desfecho (mesmo título)', async () => {
+      mockApiFetch.mockResolvedValue(ok(resposta([])))
+      const desfecho = {
+        filCod: 1,
+        docCod: '5046',
+        titCod: '1',
+        numeroDocumento: '777',
+        valorTitulo: 4815.33,
+        vencimentoTitulo: '2026-09-24',
+        dataDebito: '2026-09-24',
+        situacao: 'SEM_CANDIDATO' as const,
+        candidatos: [],
+        totalCandidatos: 0,
+        motivo: 'sem boleto',
+        avisoVenceAntes: 'NENHUM' as const,
+        diasVencidoNoDebito: 0,
+      }
+      render(<BoletosDoTituloDialog titulo={titulo} onClose={jest.fn()} desfecho={desfecho} />)
+      expect(await screen.findByRole('dialog')).toHaveTextContent('nº documento 777')
+    })
+
+    it('não é modal: a página atrás continua clicável e o clique fora não fecha', async () => {
+      mockApiFetch.mockResolvedValue(ok(resposta([])))
+      const onClose = jest.fn()
+      const naTabela = jest.fn()
+      render(
+        <>
+          <button type="button" onClick={naTabela}>
+            linha da tabela
+          </button>
+          <BoletosDoTituloDialog titulo={titulo} onClose={onClose} />
+        </>,
+      )
+      const dlg = await screen.findByRole('dialog')
+      expect(dlg).not.toHaveAttribute('aria-modal', 'true')
+      // Acessível (não aria-hidden) e clicável com a gaveta aberta.
+      await userEvent.click(screen.getByRole('button', { name: 'linha da tabela' }))
+      expect(naTabela).toHaveBeenCalledTimes(1)
+      expect(onClose).not.toHaveBeenCalled()
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+    })
+
+    it('trocar de título com a gaveta aberta troca o conteúdo', async () => {
+      mockApiFetch.mockResolvedValue(ok(resposta([])))
+      const { rerender } = render(<BoletosDoTituloDialog titulo={titulo} onClose={jest.fn()} />)
+      expect(await screen.findByRole('dialog', { name: /5046\/1/ })).toBeInTheDocument()
+      rerender(<BoletosDoTituloDialog titulo={t1} onClose={jest.fn()} />)
+      expect(await screen.findByRole('dialog', { name: /40919\/1/ })).toHaveTextContent(
+        'nº documento 25349',
+      )
+      expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    })
+
+    it('Esc fecha', async () => {
+      mockApiFetch.mockResolvedValue(ok(resposta([])))
+      const onClose = jest.fn()
+      render(<BoletosDoTituloDialog titulo={titulo} onClose={onClose} />)
+      await screen.findByRole('dialog')
+      await userEvent.keyboard('{Escape}')
+      expect(onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('o foco entra na gaveta ao abrir e volta ao gatilho ao fechar (X)', async () => {
+      mockApiFetch.mockResolvedValue(ok(resposta([])))
+      function Harness() {
+        const [aberto, setAberto] = React.useState(false)
+        return (
+          <>
+            <button type="button" onClick={() => setAberto(true)}>
+              abrir gaveta
+            </button>
+            <BoletosDoTituloDialog titulo={aberto ? titulo : null} onClose={() => setAberto(false)} />
+          </>
+        )
+      }
+      render(<Harness />)
+      const gatilho = screen.getByRole('button', { name: 'abrir gaveta' })
+      await userEvent.click(gatilho)
+      const dlg = await screen.findByRole('dialog')
+      await waitFor(() => expect(dlg).toContainElement(document.activeElement as HTMLElement))
+      await userEvent.click(within(dlg).getByRole('button', { name: 'Fechar' }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(gatilho).toHaveFocus()
+    })
   })
 })

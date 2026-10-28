@@ -439,3 +439,56 @@ describe('TitulosAbaSituacao — prazo efetivo do boleto sugerido (I19t)', () =>
     expect(screen.getByRole('region', { name: 'Boletos perdidos' })).toBeInTheDocument()
   })
 })
+
+describe('TitulosAbaSituacao: nº do documento e linha ativa da gaveta', () => {
+  const comNumero = TITULOS_FIXTURE.map((t, i) => (i === 0 ? { ...t, numeroDocumento: '25349' } : t))
+
+  it('coluna "Nº doc" logo depois de Documento, com o número ou "—"', () => {
+    montar({ titulos: comNumero })
+    const cabecalhos = within(screen.getByRole('table'))
+      .getAllByRole('columnheader')
+      .map((c) => c.textContent ?? '')
+    const iDoc = cabecalhos.findIndex((c) => c.startsWith('Documento'))
+    expect(cabecalhos[iDoc + 1]).toMatch(/^Nº doc/)
+    expect(screen.getByRole('cell', { name: '25349' })).toBeInTheDocument()
+  })
+
+  it('a linha do título aberto na gaveta fica marcada (aria-current)', () => {
+    const t = comNumero[0]
+    montar({ titulos: comNumero, tituloAtivo: `${t.filCod}:${t.docCod}:${t.titCod}` })
+    const ativas = linhasDaTabela().filter((r) => r.getAttribute('aria-current') === 'true')
+    expect(ativas).toHaveLength(1)
+    expect(within(ativas[0]).getByRole('cell', { name: '25349' })).toBeInTheDocument()
+  })
+
+  const classesDosCabecalhos = () =>
+    within(screen.getByRole('table'))
+      .getAllByRole('columnheader')
+      .map((c) => [(c.textContent ?? '').trim(), c.className] as const)
+      .filter(([nome]) => nome !== '')
+
+  it('gaveta aberta: Situação, Próxima ação e Filial saem entre xl e 2xl; o resto fica', () => {
+    const t = comNumero[0]
+    montar({ titulos: comNumero, tituloAtivo: `${t.filCod}:${t.docCod}:${t.titCod}`, gavetaAberta: true })
+    const ocultas = classesDosCabecalhos()
+      .filter(([, classe]) => classe.split(' ').includes('xl:max-2xl:hidden'))
+      .map(([nome]) => nome)
+    expect(ocultas).toEqual(['Situação', 'Próxima ação', 'Filial'])
+    // As células da linha seguem o cabeçalho.
+    const ativa = linhasDaTabela().find((r) => r.getAttribute('aria-current') === 'true')
+    if (!ativa) throw new Error('sem linha ativa')
+    const celulas = within(ativa).getAllByRole('cell')
+    expect(celulas.filter((c) => c.className.split(' ').includes('xl:max-2xl:hidden'))).toHaveLength(3)
+    // Credor truncado com o nome inteiro no title.
+    const credor = celulas.find((c) => c.getAttribute('title') === comNumero[0].credor)
+    expect(credor?.className).toContain('xl:max-2xl:max-w-28')
+  })
+
+  it('gaveta fechada: nenhuma coluna é ocultada', () => {
+    montar({ titulos: comNumero })
+    for (const [, classe] of classesDosCabecalhos()) expect(classe).not.toContain('max-2xl')
+    for (const c of within(linhasDaTabela()[0]).getAllByRole('cell')) {
+      expect(c.className).not.toContain('max-2xl')
+    }
+  })
+})

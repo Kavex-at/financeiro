@@ -21,6 +21,12 @@
   diferentes, o título aparece como ambíguo com esse motivo, para você rejeitar o que não é dele.
 - **Na tela**, a evidência mostra "número do boleto igual ao do documento (confiável)". Quem confirma
   continua sendo você; nada é confirmado nem pago sozinho.
+- **Boletos do título abrem num painel lateral.** O "Boletos DDA do título" deixou de ser uma janela no
+  meio da tela: abre à direita, e a tabela continua visível e clicável, com a linha do título destacada.
+  Clicar em "ver boleto sugerido" de outro título troca o conteúdo do painel; Esc ou o X fecham.
+- **Número do documento à vista.** O cabeçalho do painel mostra "nº documento" ao lado do título, do
+  valor, do vencimento e da filial, e a tabela de títulos a pagar (e a exportação em Excel) ganhou a
+  coluna "Nº doc". Dá para conferir "número do boleto = número do documento" sem abrir o Conexos.
 
 ## v0.76.0 (2026-10-27) — SISPAG: boleto com data diferente do título pede confirmação e não se perde
 

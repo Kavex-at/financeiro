@@ -253,6 +253,11 @@ export interface SugestaoBoletoTitulo {
     titCod: string;
     pesCod?: string;
     credor?: string;
+    /**
+     * Nº do documento do fornecedor (`doc_esp_numero`) — o que a âncora de número (I15s) compara
+     * com o nº do boleto. Exposto para a tela conferir a âncora sem abrir o Conexos.
+     */
+    numeroDocumento?: string;
     valorTitulo: number;
     /** Data civil `YYYY-MM-DD`. */
     vencimentoTitulo: string;
@@ -380,6 +385,11 @@ export interface CandidatoTitulo {
 export interface DesfechoTitulo extends ChaveTitulo {
     pesCod?: string;
     credor?: string;
+    /**
+     * Nº do documento do fornecedor (`doc_esp_numero`) — o que a âncora de número (I15s) compara
+     * com o nº do boleto. Exposto para a tela conferir a âncora sem abrir o Conexos.
+     */
+    numeroDocumento?: string;
     valorTitulo: number;
     vencimentoTitulo: string;
     dataDebito: string;

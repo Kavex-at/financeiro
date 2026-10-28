@@ -408,6 +408,7 @@ export function LoteCard({
   selecionado = false,
   onSelecionar,
   pesCodDoItem,
+  numeroDocumentoDoItem,
   onVerBoleto,
   onRecarregar,
 }: {
@@ -429,6 +430,8 @@ export function LoteCard({
    * ele, o atalho "Pedir autorização" leva à tela de autorizações já preenchida.
    */
   pesCodDoItem?: (item: ItemLote) => string | undefined
+  /** Nº do documento (`doc_esp_numero`) do título, pela carteira — a gaveta dos boletos o mostra. */
+  numeroDocumentoDoItem?: (item: ItemLote) => string | undefined
   /** Pendência "Ver boleto" (ADR-0076): abre os boletos DDA/sugestão do título. */
   onVerBoleto?: (t: TituloAPagar) => void
   /** Depois de uma ação de pendência que muda o servidor: a página recarrega lotes e painel. */
@@ -1003,7 +1006,7 @@ export function LoteCard({
                                 variant="link"
                                 size="sm"
                                 className="h-auto p-0 text-xs"
-                                onClick={() => setTituloDda(tituloDeItem(i))}
+                                onClick={() => setTituloDda(tituloDeItem(i, numeroDocumentoDoItem?.(i)))}
                               >
                                 Ver boletos DDA
                               </Button>

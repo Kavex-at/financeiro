@@ -59,6 +59,21 @@
   --z-tooltip: 70;
   --z-max: 9999;
 
+  /* Sombra e movimento da gaveta (`tokens.md` §Shadow / §Motion). Valor literal de propósito:
+     redefinir `--shadow-xl` aqui sobrescreveria o utilitário `shadow-xl` do Tailwind. */
+  --shadow-drawer: 0 20px 25px -5px rgb(0 0 0 / 0.12), 0 8px 10px -6px rgb(0 0 0 / 0.08);
+  --duration-slow: 300ms;
+
+  /* Gaveta de detalhe não modal entre xl e 2xl (`tokens.md` §Gaveta de detalhe). 480px é a menor
+     largura em que o cartão de boleto não quebra a linha de diferenças; a reserva desconta o
+     padding direito da área principal (lg:px-8), que já fica sob a gaveta. */
+  --drawer-detail-width: 30rem;
+  --drawer-detail-reserve: calc(var(--drawer-detail-width) - 2rem);
+
+  /* Linha ativa de tabela (`tokens.md` §Seleção de linha): filete à esquerda da linha. */
+  --selection-bar-width: 3px;
+  --shadow-selection: inset var(--selection-bar-width) 0 0 0 var(--primary);
+
   /* Origem do documento — domain tokens for the FIFO timeline (Phase 4 of
      `exposure-from-invoice-baixa`). Same pattern as `--color-status-*`:
      domain-bound but lives in the DS because it is part of the visual

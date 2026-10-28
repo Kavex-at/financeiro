@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/column-header-filter'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { ESTADO_PAGAMENTO, type TituloAPagar, type TituloRetidoPorCodigoBarras } from '@/lib/sispag'
-import { formatBRL } from '@/lib/utils'
+import { cn, formatBRL } from '@/lib/utils'
 import { FormaPagamentoBadge } from '../components/FormaPagamentoBadge'
 import { rotuloLote } from '../components/loteDoTitulo'
 import { TitulosRetidosBadge } from '../components/TitulosRetidosBadge'
@@ -24,12 +24,15 @@ import { ROTULO_DONO } from './rotulos'
 import { descreverFiltros, type OpcoesDosFiltros } from './filtrosAtivos'
 import { alternarTodosSituacao, estadoSelecionarTodosSituacao, motivoNaoSelecionavel, selecionavel } from './selecao'
 import {
+  CLASSE_LINHA_ATIVA,
   chaveDoTitulo,
+  classeDaColunaComGaveta,
   type ColunaTitulo,
   donoDe,
   FAIXAS_VENCIMENTO,
   haFiltroAtivo,
   ROTULO_FAIXA,
+  layoutComGaveta,
   rotuloSituacao,
 } from './situacaoTitulos'
 import type { TabelaTitulosEstado } from './useTabelaTitulos'
@@ -56,6 +59,8 @@ export function TabelaTitulos({
   onIrParaLote,
   onRetirar,
   onResolvido,
+  tituloAtivo,
+  gavetaAberta = false,
 }: {
   tabela: TabelaTitulosEstado
   opcoes: OpcoesDosFiltros
@@ -72,12 +77,21 @@ export function TabelaTitulos({
   onIrParaLote: (loteId: string) => void
   onRetirar: (t: TituloAPagar) => void
   onResolvido: () => void | Promise<void>
+  /** Chave `fil:doc:tit` do título aberto na gaveta dos boletos: a linha fica marcada. */
+  tituloAtivo?: string | null
+  /**
+   * Gaveta dos boletos aberta: entre `xl` e `2xl` a tabela fica compacta e as colunas de baixa
+   * prioridade saem (`layoutComGaveta`), para o essencial não ficar sob a gaveta.
+   */
+  gavetaAberta?: boolean
 }) {
   const { filtros, ordenacao, filtrados, slice } = tabela
   const todos = estadoSelecionarTodosSituacao(filtrados, selecionados)
   const resumo = `${filtrados.length.toLocaleString('pt-BR')} resultado(s)`
   const direcao = (c: ColunaTitulo) => (ordenacao.coluna === c ? ordenacao.direcao : null)
+  const layout = layoutComGaveta(gavetaAberta)
   const comum = (c: ColunaTitulo) => ({
+    className: cn(layout.cabecalho, classeDaColunaComGaveta(c, gavetaAberta)),
     direcao: direcao(c),
     onOrdenar: (d: 1 | -1) => tabela.ordenar(c, d),
     resumo,
@@ -121,7 +135,7 @@ export function TabelaTitulos({
           </Button>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border">
+        <div className={cn('overflow-x-auto rounded-lg border', layout.tabela)}>
           <Table>
             <TableHeader>
               <TableRow>
@@ -161,6 +175,19 @@ export function TabelaTitulos({
                     valor={filtros.documento}
                     placeholder="Ex.: 5544/1"
                     onChange={(documento) => tabela.atualizar({ documento })}
+                  />
+                </ColumnHeaderFilter>
+                <ColumnHeaderFilter
+                  label="Nº doc"
+                  {...comum('numeroDocumento')}
+                  ativo={filtros.numeroDocumento !== ''}
+                  onLimpar={() => tabela.atualizar({ numeroDocumento: '' })}
+                >
+                  <FiltroTexto
+                    label="Nº do documento do fornecedor"
+                    valor={filtros.numeroDocumento}
+                    placeholder="Ex.: 25349"
+                    onChange={(numeroDocumento) => tabela.atualizar({ numeroDocumento })}
                   />
                 </ColumnHeaderFilter>
                 <ColumnHeaderFilter
@@ -265,8 +292,19 @@ export function TabelaTitulos({
                 const motivo = motivoNaoSelecionavel(t)
                 const retido = retidos.get(chave)
                 const acaoPropria = t.situacaoPagamento?.acao
+                const ativo = tituloAtivo === chave
                 return (
-                  <TableRow key={chave} className={bloqueado ? 'bg-danger-subtle/20' : undefined}>
+                  <TableRow
+                    key={chave}
+                    aria-current={ativo ? 'true' : undefined}
+                    className={
+                      ativo
+                        ? CLASSE_LINHA_ATIVA
+                        : bloqueado
+                          ? 'bg-danger-subtle/20'
+                          : undefined
+                    }
+                  >
                     {podeExecutar ? (
                       <TableCell>
                         {bloqueado ? (
@@ -291,7 +329,10 @@ export function TabelaTitulos({
                         )}
                       </TableCell>
                     ) : null}
-                    <TableCell className="max-w-[18rem] truncate font-medium">
+                    <TableCell
+                      className={cn('max-w-[18rem] truncate font-medium', layout.credor)}
+                      title={t.credor}
+                    >
                       <span className={t.loteRascunho || t.loteComprometido ? 'text-muted-foreground' : undefined}>
                         {t.credor ?? '—'}
                       </span>
@@ -323,6 +364,9 @@ export function TabelaTitulos({
                     <TableCell className="text-muted-foreground">
                       {t.docCod}/{t.titCod}
                     </TableCell>
+                    <TableCell className="tabular-nums text-muted-foreground">
+                      {t.numeroDocumento ?? '—'}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">{formatBRL(t.valor)}</TableCell>
                     <TableCell>
                       <VencimentoCelula
@@ -331,14 +375,14 @@ export function TabelaTitulos({
                         titulo={t}
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className={layout.quebra}>
                       <FormaPagamentoBadge
                         titulo={t}
                         sugestao={resumoDoDesfecho(t)}
                         onAbrirSugestao={() => onAbrirSugestao(t)}
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className={classeDaColunaComGaveta('situacao', gavetaAberta)}>
                       <div className="flex flex-col items-start gap-1">
                         <Badge
                           variant="outline"
@@ -353,7 +397,7 @@ export function TabelaTitulos({
                         ) : null}
                       </div>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className={classeDaColunaComGaveta('acao', gavetaAberta)}>
                       <div className="flex flex-col items-start gap-1">
                         {bloqueado && acaoPropria ? (
                           <>
@@ -386,7 +430,11 @@ export function TabelaTitulos({
                         ) : null}
                       </div>
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{t.filCod}</TableCell>
+                    <TableCell
+                      className={cn('text-muted-foreground', classeDaColunaComGaveta('filial', gavetaAberta))}
+                    >
+                      {t.filCod}
+                    </TableCell>
                   </TableRow>
                 )
               })}

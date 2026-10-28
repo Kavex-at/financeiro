@@ -1208,6 +1208,7 @@ export default class BoletoSuggestionService {
         titCod: d.titCod,
         ...(d.pesCod ? { pesCod: d.pesCod } : {}),
         ...(d.credor ? { credor: d.credor } : {}),
+        ...(d.numeroDocumento ? { numeroDocumento: d.numeroDocumento } : {}),
         valorTitulo: d.valorTitulo,
         vencimentoTitulo: d.vencimentoTitulo,
         dataDebito: d.dataDebito,

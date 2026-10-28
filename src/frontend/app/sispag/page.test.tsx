@@ -913,7 +913,60 @@ describe('SispagPage — sugestão de boleto na aba de títulos (ADR-0068)', () 
     expect(screen.queryByRole('button', { name: 'sugestão disponível' })).not.toBeInTheDocument()
   })
 
-  it('emissores confirmados: botão abre a lista (sispag:ver)', async () => {
+  it('coluna "Nº doc" ao lado de Documento, com o nº do documento do título', async () => {
+    permissoes = ['sispag:ver']
+    jest
+      .requireMock('@/lib/sispag')
+      .fetchSispagPainel.mockResolvedValue({ ...painel, titulos: [{ ...titulo, numeroDocumento: '25349' }] })
+    await act(async () => {
+      render(<SispagPage />)
+    })
+    const doc = await screen.findByRole('columnheader', { name: 'Documento' })
+    const cabecalhos = screen.getAllByRole('columnheader').map((c) => c.textContent)
+    expect(cabecalhos[cabecalhos.indexOf(doc.textContent) + 1]).toBe('Nº doc')
+    expect(screen.getByRole('cell', { name: '25349' })).toBeInTheDocument()
+  })
+
+  it('gaveta não modal: com ela aberta, outro título da tabela troca o conteúdo e a linha ativa', async () => {
+    permissoes = ['sispag:ver']
+    const outro = {
+      ...titulo,
+      docCod: '7777',
+      credor: 'OUTRO CREDOR SA',
+      numeroDocumento: '25349',
+    } as unknown as TituloAPagar
+    const lib = jest.requireMock('@/lib/sispag')
+    lib.fetchSispagPainel.mockResolvedValue({ ...painel, titulos: [titulo, outro] })
+    lib.fetchTodasSugestoesBoleto.mockResolvedValue({
+      sugestoes: [sugestao, { ...sugestao, docCod: '7777' }],
+      total: 2,
+      pagina: 1,
+      tamanho: 100,
+      contagem: {},
+    })
+    await act(async () => {
+      render(<SispagPage />)
+    })
+    const [primeiro, segundo] = await screen.findAllByRole('button', { name: 'sugestão disponível' })
+    await userEvent.click(primeiro)
+    expect(await screen.findByRole('dialog', { name: /5046\/1/ })).toHaveTextContent('nº documento —')
+    const linhaDe = (credor: string) => screen.getByText(credor, { selector: 'span' }).closest('tr')
+    expect(linhaDe('ADP BRASIL LTDA')).toHaveAttribute('aria-current', 'true')
+
+    // A tabela segue acessível (não aria-hidden) e clicável com a gaveta aberta.
+    await userEvent.click(segundo)
+    const dlg = await screen.findByRole('dialog', { name: /7777\/1/ })
+    expect(dlg).toHaveTextContent('nº documento 25349')
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    expect(linhaDe('OUTRO CREDOR SA')).toHaveAttribute('aria-current', 'true')
+    expect(linhaDe('ADP BRASIL LTDA')).not.toHaveAttribute('aria-current')
+
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(linhaDe('OUTRO CREDOR SA')).not.toHaveAttribute('aria-current')
+  })
+
+    it('emissores confirmados: botão abre a lista (sispag:ver)', async () => {
     permissoes = ['sispag:ver']
     await act(async () => {
       render(<SispagPage />)

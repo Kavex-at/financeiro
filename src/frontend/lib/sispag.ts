@@ -236,6 +236,11 @@ export interface TituloAPagar {
   numRemessa?: string
   pesCod?: string
   tpdCod?: string
+  /**
+   * Nº do documento do fornecedor (NF/fatura, `doc_esp_numero` do fin064). É o que a âncora
+   * "número do boleto igual ao do documento" (I15s) compara com o nº do boleto DDA.
+   */
+  numeroDocumento?: string
   prontoParaRemessa?: boolean
   /**
    * O Conexos tem um boleto DDA (`fin124`) casado com este título — é o que permite a
@@ -1129,6 +1134,8 @@ export interface TituloSemBoleto {
   valor?: number
   /** Data civil `YYYY-MM-DD`. */
   vencimento?: string
+  /** Nº do documento do fornecedor (`doc_esp_numero`); ausente = a carteira não conhece. */
+  numeroDocumento?: string
 }
 
 /**
@@ -1235,6 +1242,7 @@ async function sispagRequest<T>(path: string, init: RequestInit): Promise<T> {
         ...(typeof det.credor === 'string' ? { credor: det.credor } : {}),
         ...(typeof det.valor === 'number' ? { valor: det.valor } : {}),
         ...(typeof det.vencimento === 'string' ? { vencimento: det.vencimento } : {}),
+        ...(typeof det.numeroDocumento === 'string' ? { numeroDocumento: det.numeroDocumento } : {}),
       })
     }
     if (body.code === 'CONCILIACAO_EM_DUVIDA') {
@@ -1769,8 +1777,11 @@ export async function fetchBoletosDda(filtro: FiltroBoletosDda): Promise<Boletos
   return (await res.json()) as BoletosDdaResposta
 }
 
-/** Dados do item de um lote que o diálogo dos boletos DDA usa (vencimento vira data civil). */
-export const tituloDeItem = (i: ItemLote): TituloSemBoleto => ({
+/**
+ * Dados do item de um lote que o diálogo dos boletos DDA usa (vencimento vira data civil). O item
+ * não carrega o nº do documento: quem chama o passa, da carteira do painel.
+ */
+export const tituloDeItem = (i: ItemLote, numeroDocumento?: string): TituloSemBoleto => ({
   filCod: i.filCod,
   docCod: i.docCod,
   titCod: i.titCod,
@@ -1779,6 +1790,7 @@ export const tituloDeItem = (i: ItemLote): TituloSemBoleto => ({
   ...(i.vencimento !== undefined
     ? { vencimento: new Date(i.vencimento).toISOString().slice(0, 10) }
     : {}),
+  ...(numeroDocumento ? { numeroDocumento } : {}),
 })
 
 /** Dias entre duas datas civis `YYYY-MM-DD` (`b − a`), sem passar por fuso. */
@@ -2326,6 +2338,8 @@ export const sugestaoBoletoSchema = z.object({
   titCod: z.string(),
   pesCod: z.string().optional(),
   credor: z.string().optional(),
+  /** Nº do documento do fornecedor (`doc_esp_numero`); ausente em backend antigo. */
+  numeroDocumento: z.string().optional(),
   valorTitulo: z.number(),
   /** Data civil `YYYY-MM-DD`. */
   vencimentoTitulo: z.string(),
@@ -2433,6 +2447,8 @@ export const desfechoTituloSchema = z.object({
   titCod: z.string(),
   pesCod: z.string().optional(),
   credor: z.string().optional(),
+  /** Nº do documento do fornecedor (`doc_esp_numero`); ausente em backend antigo. */
+  numeroDocumento: z.string().optional(),
   valorTitulo: z.number(),
   vencimentoTitulo: z.string(),
   dataDebito: z.string(),

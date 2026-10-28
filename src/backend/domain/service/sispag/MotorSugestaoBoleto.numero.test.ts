@@ -445,3 +445,19 @@ describe('MotorSugestaoBoleto — âncora de número (I15s, NUMERO_CONFIAVEL)', 
         });
     });
 });
+
+describe('MotorSugestaoBoleto — nº do documento na saída (a tela confere a âncora sem o Conexos)', () => {
+    it('o desfecho e a sugestão carregam o numeroDocumento do título', () => {
+        const t = titulo('25037');
+        const e = entrada({ titulos: [t], boletos: [boleto('25037'), boleto('25041')] });
+        expect(desfecho(e, t)?.numeroDocumento).toBe('25037');
+        expect(motor.sugerir(e).find((s) => s.docCod === '25037')?.numeroDocumento).toBe('25037');
+    });
+
+    it('título sem número: o campo fica ausente (não string vazia)', () => {
+        const t = titulo('900', { numeroDocumento: undefined });
+        const d = desfecho(entrada({ titulos: [t], boletos: [boleto('900')] }), t);
+        expect(d).toBeDefined();
+        expect(d && 'numeroDocumento' in d).toBe(false);
+    });
+});
