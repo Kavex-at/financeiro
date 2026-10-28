@@ -22,6 +22,7 @@ import { ESTADO_PAGAMENTO } from '../../interface/sispag/SituacaoPagamento.js';
 import ContaPagadoraResolver, { type ContaPagadoraEscolhida } from './ContaPagadoraResolver.js';
 import SituacaoPagamentoService from './SituacaoPagamentoService.js';
 import LeituraGrupoBoleto from './LeituraGrupoBoleto.js';
+import PreSelecaoItemLote, { type PreSelecaoItem } from './PreSelecaoItemLote.js';
 
 /** Horizonte da formação automática: só títulos a vencer nos próximos N dias. */
 const HORIZONTE_DIAS = 7;
@@ -66,6 +67,7 @@ export default class FormacaoLotesService {
         private readonly situacaoPagamento: SituacaoPagamentoService,
         @inject(GrupoBoletoRepository) private readonly grupoRepo: GrupoBoletoRepository,
         @inject(LeituraGrupoBoleto) private readonly leituraGrupo: LeituraGrupoBoleto,
+        @inject(PreSelecaoItemLote) private readonly preSelecao: PreSelecaoItemLote,
     ) {}
 
     public formar = async (input: { triggeredBy: string }): Promise<FormacaoLotesResult> =>
@@ -90,7 +92,10 @@ export default class FormacaoLotesService {
             await this.tituloRepo.listElegiveisParaFormacao(HORIZONTE_DIAS, hoje),
         );
         const { lotaveis, naoLotados } = await this.gruposLotaveis(hoje);
-        const fatias = this.fatiar(this.agrupar(elegiveis), lotaveis);
+        // Modalidade e valor de entrada resolvidos UMA vez na rodada, com a mesma regra da
+        // inclusão manual (A2, I18j(5)).
+        const preSelecao = await this.preSelecao.resolver(elegiveis);
+        const fatias = this.fatiar(this.agrupar(elegiveis), lotaveis, preSelecao);
         let lotesFormados = 0;
         let titulosLotados = 0;
         let gruposLotados = 0;
@@ -104,7 +109,12 @@ export default class FormacaoLotesService {
                     await this.contaResolver.resolverPadrao(fatia.filCod),
                 );
             }
-            await this.montarLote(fatia, input.triggeredBy, contaPorFilial.get(fatia.filCod));
+            await this.montarLote(
+                fatia,
+                input.triggeredBy,
+                contaPorFilial.get(fatia.filCod),
+                preSelecao,
+            );
             lotesFormados += 1;
             titulosLotados +=
                 fatia.titulos.length + fatia.grupos.reduce((n, g) => n + g.titulos.length, 0);
@@ -207,6 +217,7 @@ export default class FormacaoLotesService {
         fatia: FatiaDeLote,
         ator: string,
         conta: ContaPagadoraEscolhida | undefined,
+        preSelecao: ReadonlyMap<string, PreSelecaoItem>,
     ): Promise<void> => {
         await this.db.withTransaction(async (tx) => {
             const lote = await this.loteRepo.criarLote(
@@ -222,17 +233,20 @@ export default class FormacaoLotesService {
             );
             await this.loteRepo.adicionarItens(
                 lote.id,
-                fatia.titulos.map((t) => ({
-                    filCod: t.filCod,
-                    docCod: t.docCod,
-                    titCod: t.titCod,
-                    credor: t.credor,
-                    valor: t.valor,
-                    vencimento: t.vencimento,
-                    // A2: boleto auto-detectado (código de barras); senão "a definir".
-                    modalidade: t.temBoleto ? MODALIDADE.BOLETO : undefined,
-                    incluidoPor: ator,
-                })),
+                fatia.titulos.map((t) => {
+                    const pre = preSelecao.get(this.chaveTitulo(t));
+                    return {
+                        filCod: t.filCod,
+                        docCod: t.docCod,
+                        titCod: t.titCod,
+                        credor: t.credor,
+                        valor: pre?.valor ?? t.valor,
+                        vencimento: t.vencimento,
+                        // A2: boleto com DDA no ERP ou confirmado no app; senão "a definir".
+                        modalidade: pre?.modalidade,
+                        incluidoPor: ator,
+                    };
+                }),
                 tx,
             );
             for (const g of fatia.grupos) {
@@ -289,11 +303,15 @@ export default class FormacaoLotesService {
         return grupos;
     };
 
+    private chaveTitulo = (t: { filCod: number; docCod: string; titCod: string }): string =>
+        `${t.filCod}:${t.docCod}:${t.titCod}`;
+
     private chave = (filCod: number, vencimento?: number): string =>
         `${filCod}:${vencimento !== undefined ? this.calendar.fromErpEpoch(vencimento) : 'sem-venc'}`;
 
     /**
-     * Separa cada (filial × dia) em BOLETOS (`temBoleto`) e o RESTO (ADR-0064): no máximo dois
+     * Separa cada (filial × dia) em BOLETOS (pré-selecionados BOLETO: DDA no ERP ou boleto
+     * confirmado no app) e o RESTO (ADR-0064): no máximo dois
      * lotes, nunca mistos, sem teto de quantidade. O teto de 25 era nosso (revisão humana), não do
      * Conexos/CNAB. Lote só de boletos também não passa pela conferência TED/PIX (ADR-0063). O
      * grupo de boleto vai para o lote de BOLETOS do dia do VENCIMENTO DO BOLETO (PI-8), criando-o
@@ -302,6 +320,7 @@ export default class FormacaoLotesService {
     private fatiar = (
         avulsos: Map<string, TituloAPagar[]>,
         grupos: GrupoLotavel[],
+        preSelecao: ReadonlyMap<string, PreSelecaoItem>,
     ): FatiaDeLote[] => {
         const gruposPorChave = new Map<string, GrupoLotavel[]>();
         for (const g of grupos) {
@@ -311,8 +330,10 @@ export default class FormacaoLotesService {
         const fatias: FatiaDeLote[] = [];
         for (const [key, titulos] of avulsos) {
             const filCod = titulos[0]?.filCod ?? 0;
-            const boletos = titulos.filter((t) => t.temBoleto === true);
-            const resto = titulos.filter((t) => t.temBoleto !== true);
+            const ehBoleto = (t: TituloAPagar): boolean =>
+                preSelecao.get(this.chaveTitulo(t))?.modalidade === MODALIDADE.BOLETO;
+            const boletos = titulos.filter(ehBoleto);
+            const resto = titulos.filter((t) => !ehBoleto(t));
             const doDia = gruposPorChave.get(key) ?? [];
             gruposPorChave.delete(key);
             if (boletos.length > 0 || doDia.length > 0) {
