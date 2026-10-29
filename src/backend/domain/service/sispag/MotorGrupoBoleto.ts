@@ -345,6 +345,7 @@ export default class MotorGrupoBoleto {
             confirmavel: avaliacao.confirmavel,
             ...(avaliacao.motivo ? { motivo: avaliacao.motivo } : {}),
             motivos: avaliacao.motivos,
+            avisos: avaliacao.avisos,
         };
     };
 

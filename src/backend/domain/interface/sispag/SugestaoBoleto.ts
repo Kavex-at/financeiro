@@ -331,6 +331,8 @@ export const SITUACAO_SUGESTAO_TITULO = {
     CONFIRMADA: 'CONFIRMADA',
     ORFA: 'ORFA',
     EM_GRUPO: 'EM_GRUPO',
+    /** O título é de uma SUGESTÃO de grupo (I21v, ADR-0077): o boleto dela não é candidato 1:1. */
+    GRUPO_SUGERIDO: 'GRUPO_SUGERIDO',
 } as const;
 export type SituacaoSugestaoTitulo =
     (typeof SITUACAO_SUGESTAO_TITULO)[keyof typeof SITUACAO_SUGESTAO_TITULO];
@@ -381,6 +383,21 @@ export interface CandidatoTitulo {
     transferidaPor?: string;
 }
 
+/**
+ * Ponteiro para a SUGESTÃO de grupo (I21v) a que o título pertence. Só leitura de tela: nunca
+ * confirma nada (I21w). Sem barras nem linha digitável; só o número do boleto e a soma.
+ */
+export interface GrupoSugeridoRef {
+    ddcCod: number;
+    ditCod: number;
+    numeroBoleto?: string;
+    nTitulos: number;
+    valorBoletoCentavos: number;
+    /** A sugestão de grupo é confirmável hoje (I21c/I21e); senão `motivo` diz por quê. */
+    confirmavel: boolean;
+    motivo?: string;
+}
+
 /** Desfecho por título: até `SUGESTAO_TOP_CANDIDATOS` candidatos, ranqueados. */
 export interface DesfechoTitulo extends ChaveTitulo {
     pesCod?: string;
@@ -402,6 +419,8 @@ export interface DesfechoTitulo extends ChaveTitulo {
     motivoOrfa?: string;
     /** `EM_GRUPO` (I15q): o `GrupoBoleto CONFIRMADO` que contém o título. */
     grupoBoletoId?: string;
+    /** I21v: a sugestão de grupo que contém o título (situação `GRUPO_SUGERIDO` ou só o ponteiro). */
+    grupoSugerido?: GrupoSugeridoRef;
 }
 
 /** Candidato como a API o expõe: emissor MASCARADO, sem barras nem linha digitável (I15k). */

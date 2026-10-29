@@ -16,6 +16,8 @@ export interface FiltroPaginaBoletoDda {
     /** Texto livre: número, valor, credor, documento, código de barras, linha digitável, arquivo. */
     busca?: string;
     filCod?: number;
+    /** I21v: só os boletos de grupo (sugerido ou confirmado); ortogonal à situação. */
+    emGrupo?: boolean;
     /**
      * Intervalo de vencimento do boleto, data civil `YYYY-MM-DD`, inclusivo. Compara por ordem de
      * string (o formato garante). Com intervalo ativo, boleto sem vencimento sai.
@@ -115,13 +117,18 @@ export default class PaginacaoBoletoDda {
             CANDIDATO: 0,
             AMBIGUO: 0,
             SEM_TITULO: 0,
+            emGrupo: 0,
         };
-        for (const b of semSituacao) contagem[b.situacao] += 1;
+        for (const b of semSituacao) {
+            contagem[b.situacao] += 1;
+            if (b.grupo) contagem.emGrupo += 1;
+        }
 
-        const filtradas =
-            filtro.situacao === undefined
-                ? semSituacao
-                : semSituacao.filter((b) => b.situacao === filtro.situacao);
+        const filtradas = semSituacao.filter(
+            (b) =>
+                (filtro.situacao === undefined || b.situacao === filtro.situacao) &&
+                (filtro.emGrupo !== true || b.grupo !== undefined),
+        );
 
         const tamanho = Math.min(Math.max(1, filtro.tamanho), BOLETO_DDA_TAMANHO_MAX);
         const ultima = Math.max(1, Math.ceil(filtradas.length / tamanho));

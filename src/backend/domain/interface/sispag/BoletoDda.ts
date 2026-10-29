@@ -108,6 +108,22 @@ export interface BoletoDdaConsolidado {
      * débito, ou além de 5 dias): só informação, não conta para a situação (I15h).
      */
     informativos?: BoletoDdaTitulo[];
+    /**
+     * I21v: o boleto fecha a soma de um grupo — sugerido (I21e/f) ou confirmado. Ortogonal à
+     * `situacao`: um boleto `CANDIDATO` ou `AMBIGUO` pode ser de grupo.
+     */
+    grupo?: BoletoDdaGrupo;
+}
+
+/** O grupo de títulos que o boleto paga (só o resumo; o detalhe vem dos endpoints de grupos). */
+export interface BoletoDdaGrupo {
+    estado: 'SUGERIDO' | 'CONFIRMADO';
+    /** Só em `CONFIRMADO`. */
+    id?: string;
+    filCod: number;
+    nTitulos: number;
+    /** Sugestão confirmável hoje; `CONFIRMADO` é sempre `true`. */
+    confirmavel: boolean;
 }
 
 export const BOLETO_DDA_ESCOPO = {
@@ -118,7 +134,10 @@ export const BOLETO_DDA_ESCOPO = {
 export type BoletoDdaEscopo = (typeof BOLETO_DDA_ESCOPO)[keyof typeof BOLETO_DDA_ESCOPO];
 
 /** Contagem por situação (chips da aba). `todas` = soma. */
-export type BoletoDdaContagem = Record<BoletoDdaSituacao | 'todas', number>;
+export type BoletoDdaContagem = Record<BoletoDdaSituacao | 'todas', number> & {
+    /** Boletos de grupo (sugerido ou confirmado), depois de filial + busca (I21v). */
+    emGrupo: number;
+};
 
 /** Uma PÁGINA da aba — o pool inteiro nunca vai ao navegador. */
 export interface BoletosDdaResposta {

@@ -6,7 +6,9 @@ import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import {
     BOLETO_DDA_ESCOPO,
     type ArquivoDda,
+    type BoletoDdaConsolidado,
     type BoletoDdaEscopo,
+    type BoletoDdaGrupo,
     type BoletosDdaResposta,
     type SincronizacaoDdaResultado,
 } from '../../interface/sispag/BoletoDda.js';
@@ -17,6 +19,7 @@ import BoletoDdaRepository from '../../repository/sispag/BoletoDdaRepository.js'
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
+import BoletoSuggestionService from './BoletoSuggestionService.js';
 import ConsolidacaoBoletoDda from './ConsolidacaoBoletoDda.js';
 import { REGRA_CANDIDATO_TEXTO } from './RegraSugestaoBoleto.js';
 import SugestaoBoletoCache from './SugestaoBoletoCache.js';
@@ -57,6 +60,8 @@ export default class BoletoDdaService {
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
         @inject(LogService) private readonly logService: LogService,
         @inject(SugestaoBoletoCache) private readonly sugestoesCache: SugestaoBoletoCache,
+        // I21v: o grupo (sugerido ou confirmado) de cada boleto, do cenário em cache das sugestões.
+        @inject(BoletoSuggestionService) private readonly sugestoes: BoletoSuggestionService,
     ) {}
 
     /**
@@ -74,13 +79,17 @@ export default class BoletoDdaService {
             this.loteRepo.listTitulosEmLotesAbertos(),
             this.repo.ultimaSincronizacao(),
         ]);
-        const consolidados = this.consolidacao.consolidar({ boletos, titulos, titulosEmLote });
+        const consolidados = this.comGrupo(
+            this.consolidacao.consolidar({ boletos, titulos, titulosEmLote }),
+            await this.gruposOuNenhum(),
+        );
         const pagina = this.paginacao.paginar(consolidados, {
             pagina: input.pagina ?? 1,
             tamanho: input.tamanho ?? BOLETO_DDA_TAMANHO_PADRAO,
             ...(input.situacao ? { situacao: input.situacao } : {}),
             ...(input.busca ? { busca: input.busca } : {}),
             ...(input.filCod !== undefined ? { filCod: input.filCod } : {}),
+            ...(input.emGrupo ? { emGrupo: true } : {}),
             ...(input.vencimentoDe ? { vencimentoDe: input.vencimentoDe } : {}),
             ...(input.vencimentoAte ? { vencimentoAte: input.vencimentoAte } : {}),
         });
@@ -90,6 +99,35 @@ export default class BoletoDdaService {
             regraCandidato: REGRA_CANDIDATO_TEXTO,
         };
     };
+
+    /** Falha ao ler os grupos desliga SÓ o resumo de grupo na aba (nunca derruba a lista). */
+    private gruposOuNenhum = async (): Promise<ReadonlyMap<string, BoletoDdaGrupo>> => {
+        try {
+            return await this.sugestoes.gruposPorBoleto();
+        } catch (err: unknown) {
+            const code = (err as { code?: unknown } | null)?.code;
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'falha ao ler os grupos de boleto; a aba segue sem o resumo de grupo',
+                data: {
+                    erro: err instanceof Error ? err.message : String(err),
+                    ...(typeof code === 'string' ? { codigoErro: code } : {}),
+                },
+            });
+            return new Map();
+        }
+    };
+
+    private comGrupo = (
+        linhas: BoletoDdaConsolidado[],
+        grupos: ReadonlyMap<string, BoletoDdaGrupo>,
+    ): BoletoDdaConsolidado[] =>
+        grupos.size === 0
+            ? linhas
+            : linhas.map((b) => {
+                  const grupo = grupos.get(`${b.ddcCod}:${b.ditCod}`);
+                  return grupo ? { ...b, grupo } : b;
+              });
 
     public sincronizar = async (input: {
         triggeredBy: string;

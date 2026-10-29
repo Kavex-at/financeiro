@@ -29,6 +29,7 @@ import ValorAbertoLiquido, {
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import F from './__fixtures__/grupoBoleto.js';
+import CenarioGrupoBoleto from './CenarioGrupoBoleto.js';
 import GrupoBoletoService from './GrupoBoletoService.js';
 import MotorGrupoBoleto from './MotorGrupoBoleto.js';
 import RegraGrupoBoleto from './RegraGrupoBoleto.js';
@@ -437,6 +438,32 @@ describe('GrupoBoletoService.sugerir (I21e/f, PI-7)', () => {
         expect(h.db.withTransaction).not.toHaveBeenCalled();
         expect(h.grupos.inserirConfirmado).not.toHaveBeenCalled();
         expect(JSON.stringify(r)).not.toMatch(/\d{44}/);
+    });
+
+    it('I21v: a aba e a carteira montam o cenário do mesmo jeito (CenarioGrupoBoleto.montar)', async () => {
+        const h = pedroni();
+        const viaAba = await h.service.sugerir({});
+        const viaCarteira = motor.sugerir(
+            CenarioGrupoBoleto.montar({
+                titulos: h.cen.titulos,
+                boletos: h.cen.boletos,
+                pares: h.cen.pares,
+                decisoes: h.cen.decisoes,
+                grupos: h.cen.grupos,
+                marcas: h.cen.marcas,
+                comprometidos: [],
+            }),
+        );
+        expect(viaCarteira).toEqual(viaAba);
+        const ponteiros = CenarioGrupoBoleto.paraMotor1a1(viaCarteira);
+        expect(ponteiros).toHaveLength(1);
+        expect(ponteiros[0]).toMatchObject({
+            ditCod: 332841,
+            nTitulos: 3,
+            valorBoletoCentavos: 157500,
+            confirmavel: true,
+        });
+        expect(JSON.stringify(ponteiros)).not.toMatch(/\d{44}/);
     });
 
     it('filtra por filial', async () => {

@@ -51,6 +51,8 @@ export const SUGESTAO_BOLETO_SEM_DDA = {
     CANDIDATO_FRACO: 'CANDIDATO_FRACO',
     SEM_CANDIDATO: 'SEM_CANDIDATO',
     AGUARDANDO_VINCULO: 'AGUARDANDO_VINCULO',
+    /** I21v: há sugestão de grupo; confirmar na gaveta do título ou na aba Boletos DDA. */
+    GRUPO_SUGERIDO: 'GRUPO_SUGERIDO',
 } as const;
 export type SugestaoBoletoSemDda =
     (typeof SUGESTAO_BOLETO_SEM_DDA)[keyof typeof SUGESTAO_BOLETO_SEM_DDA];

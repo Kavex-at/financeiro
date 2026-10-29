@@ -62,6 +62,7 @@ import LogService from '../LogService.js';
 import type { EntradaMotorGrupo } from './MotorGrupoBoleto.js';
 import MotorGrupoBoleto from './MotorGrupoBoleto.js';
 import RegraGrupoBoleto from './RegraGrupoBoleto.js';
+import CenarioGrupoBoleto from './CenarioGrupoBoleto.js';
 import SugestaoBoletoCache from './SugestaoBoletoCache.js';
 
 const M = MOTIVO_GRUPO_INELEGIVEL;
@@ -813,28 +814,15 @@ export default class GrupoBoletoService {
                 this.bloqueios.listAtivos(),
                 this.lotes.listTitulosEmLotesComprometidos(),
             ]);
-        const loteComprometido = new Map(
-            comprometidos.map((c) => [chaveTitulo(c), { id: c.id, status: c.status }] as const),
-        );
-        return {
-            titulos: titulos.map((t) => {
-                const lote = loteComprometido.get(chaveTitulo(t));
-                return lote ? { ...t, loteComprometido: lote } : t;
-            }),
+        // Mesma montagem da carteira de títulos (I21v): `CenarioGrupoBoleto.montar`.
+        return CenarioGrupoBoleto.montar({
+            titulos,
             boletos,
-            paresVigentes: pares.map((p) => ({ pesCod: p.pesCod, emissorChave: p.emissorChave })),
-            decisoesConfirmadas: decisoes,
-            gruposConfirmados: grupos.map((g) => ({
-                id: g.id,
-                ddcCod: g.ddcCod,
-                ditCod: g.ditCod,
-                titulos: g.titulos,
-            })),
-            marcasAtivas: marcas.map((m) => ({
-                filCod: m.filCod,
-                docCod: m.docCod,
-                titCod: m.titCod,
-            })),
-        };
+            pares,
+            decisoes,
+            grupos,
+            marcas,
+            comprometidos,
+        });
     };
 }

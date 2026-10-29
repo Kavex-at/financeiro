@@ -3,6 +3,27 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.52.0 — SISPAG: sugestão de grupo vista pela carteira de títulos (2026-10-29, emenda da ADR-0077)
+
+Feature: `sispag-grupo-na-carteira` (`/feature-tweak boleto-agrupado-sispag`). Sem ADR nova, sem migration.
+
+- **Invariantes novas I21v e I21w (`implemented`):** o boleto de uma sugestão de grupo (I21e/f) deixa de ser
+  candidato confirmável 1:1 e os títulos dela ganham o ponteiro `grupoSugerido` (e a situação
+  `GRUPO_SUGERIDO` quando o 1:1 não é forte); `UNICA_SEGURA`/`CONFIRMADA`/`ORFA`/`EM_GRUPO` mantêm a situação.
+  A sugestão é só evidência de tela: nunca confirma, não libera lote, não muda a situação de pagamento.
+- Emendas I15e(4), I15m e I15q. Entidade: `DesfechoTitulo` ganha `grupoSugerido`; `SituacaoSugestaoTitulo`
+  ganha `GRUPO_SUGERIDO` (derivados, não persistidos).
+- Medido em PRD (cópia de 2026-10-29): RHENUS 5541/1 + 5566/1 × boleto 129818 (R$ 26.369,85), sugestão de grupo
+  confirmável que a carteira não mostrava e oferecia o boleto 1:1 a 5566.
+- **Complemento 2026-10-29 (UI):** a confirmação e a anulação do grupo passam a ser feitas **na gaveta do título** e
+  **na linha do boleto da aba Boletos DDA** (cartão "Pagam vários títulos", filtro "Em grupo", linha expansível,
+  "Compor com títulos"); a **aba Boletos agrupados deixa de existir**. Mesmos endpoints e regras; a sugestão expõe os
+  `avisos` e a lista de boletos DDA ganha o resumo `grupo` e a contagem/filtro `emGrupo` (derivados, sem persistência).
+  I21g, I21i, I21t, I21v e I21w reescritas no lugar; I21w deixa de dizer que a carteira nunca confirma e passa a dizer
+  que o selo e a tabela não têm botão de confirmar.
+- Numeração: vem sobre a 0.51.0 (ADR-0080, I15t, `sispag-confirmar-em-conjunto`), já em `main`; as letras
+  I21v e I21w seguem a I21u.
+
 ## v0.51.0 — SISPAG: confirmação em conjunto de títulos irmãos (2026-10-29, ADR-0080)
 
 Feature: `sispag-confirmar-em-conjunto` (`/feature-new`).

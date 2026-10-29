@@ -13,6 +13,7 @@ import {
     EXIGE_RECONHECIMENTO,
     ESTADO_SUGESTAO,
     type EmissorBoleto,
+    type GrupoSugeridoRef,
     MOTIVO_ORFA_RECONHECIMENTO_INVALIDADO,
     type ParVigenteChave,
     RESULTADO_SUGESTAO,
@@ -53,6 +54,11 @@ export interface EntradaMotorSugestao {
      */
     gruposConfirmados?: GrupoConfirmadoChaveado[];
     /**
+     * SUGESTÕES de grupo (I21v, ADR-0077), do `MotorGrupoBoleto`: o boleto delas deixa de ser
+     * candidato 1:1 e os títulos ganham o ponteiro (ou a situação `GRUPO_SUGERIDO`). Ausente ≡ vazio.
+     */
+    gruposSugeridos?: GrupoSugeridoChaveado[];
+    /**
      * Números de documento de TODOS os títulos (ativos ou não, `titulo_a_pagar` sem filtro `ativo`),
      * para a guarda de duplicata da âncora de número (I15s). Sem ela vale só `titulos`.
      */
@@ -70,6 +76,11 @@ export interface GrupoConfirmadoChaveado {
     id: string;
     ddcCod: number;
     ditCod: number;
+    titulos: Array<{ filCod: number; docCod: string; titCod: string }>;
+}
+
+/** Sugestão de grupo no formato que o motor 1:1 consome: o ponteiro e as chaves dos títulos. */
+export interface GrupoSugeridoChaveado extends GrupoSugeridoRef {
     titulos: Array<{ filCod: number; docCod: string; titCod: string }>;
 }
 
@@ -134,6 +145,8 @@ interface Preparo {
     porChave: Map<string, BoletoLivre>;
     /** Título → id do `GrupoBoleto CONFIRMADO` que o contém (I15q). */
     grupoDoTitulo: Map<string, string>;
+    /** Título → ponteiro da SUGESTÃO de grupo que o contém (I21v). */
+    grupoSugeridoDoTitulo: Map<string, GrupoSugeridoRef>;
     pares: Set<string>;
     rejeitadas: Set<string>;
     elegiveis: TituloElegivel[];
@@ -147,6 +160,14 @@ interface Preparo {
     }>;
     resolvidosPorDecisao: Set<string>;
 }
+
+/** Desfechos que a sugestão de grupo NÃO substitui (I21v): 1:1 forte e decisões já tomadas. */
+const SITUACOES_QUE_MANTEM: ReadonlySet<SituacaoSugestaoTitulo> = new Set([
+    SITUACAO_SUGESTAO_TITULO.UNICA_SEGURA,
+    SITUACAO_SUGESTAO_TITULO.CONFIRMADA,
+    SITUACAO_SUGESTAO_TITULO.ORFA,
+    SITUACAO_SUGESTAO_TITULO.EM_GRUPO,
+]);
 
 const FORCA_ATENCAO_ANCORADA = 2;
 const FORCA_ATENCAO_FRACA = 3;
@@ -217,6 +238,8 @@ const MOTIVO_POR_SITUACAO: Readonly<Record<SituacaoSugestaoTitulo, string>> = {
     [SITUACAO_SUGESTAO_TITULO.ORFA]: 'Confirmação órfã: anule para liberar o título.',
     [SITUACAO_SUGESTAO_TITULO.EM_GRUPO]:
         'Título em grupo de boleto confirmado: um boleto paga este e outros títulos do credor. Anule o grupo para sugerir um boleto só para ele.',
+    [SITUACAO_SUGESTAO_TITULO.GRUPO_SUGERIDO]:
+        'Um único boleto fecha a soma deste título com outros do mesmo credor e vencimento: confirme o grupo na gaveta do título ou na aba Boletos DDA.',
 };
 
 /**
@@ -323,17 +346,74 @@ export default class MotorSugestaoBoleto {
         if (!entrada.numeroAncoraDesligada) this.ancorarPorNumero(pendentes, entrada);
         pendentes.sort((x, y) => this.prioridade(x.alvo, y.alvo));
 
+        // I21v: o título de uma sugestão de grupo só RESERVA boleto na camada dos seguros (a única
+        // que o mantém `UNICA_SEGURA`); ancorado/ATENCAO viraria `GRUPO_SUGERIDO` e seguraria o
+        // boleto de um rival à toa. A alocação (legada e por desfecho) já parte disso.
+        const alocaveis: PendenteCompleto[] = pendentes.map((pc) =>
+            p.grupoSugeridoDoTitulo.has(pc.alvo.chave)
+                ? { alvo: pc.alvo, candidatos: pc.candidatos.filter((c) => c.forca <= 1) }
+                : pc,
+        );
         // O contrato legado só enxerga o que `aceita`; a ordem relativa da lista completa é a mesma.
-        const legado: Pendente[] = pendentes.map(({ alvo, candidatos }) => ({
+        const legado: Pendente[] = alocaveis.map(({ alvo, candidatos }) => ({
             alvo,
             candidatos: candidatos.filter((c) => this.aceita(c.avaliacao)),
         }));
         sugestoes.push(...this.alocar(legado, p.ocupados));
-        desfechos.push(...this.alocarDesfechos(pendentes));
+        desfechos.push(...this.alocarDesfechos(alocaveis));
+        const final = this.aplicarGrupoSugerido(sugestoes, desfechos, p.grupoSugeridoDoTitulo);
         return {
-            sugestoes: sugestoes.sort((x, y) => this.prioridadeChave(x, y)),
-            desfechos: desfechos.sort((x, y) => this.prioridadeDesfecho(x, y)),
+            sugestoes: final.sugestoes.sort((x, y) => this.prioridadeChave(x, y)),
+            desfechos: final.desfechos.sort((x, y) => this.prioridadeDesfecho(x, y)),
         };
+    };
+
+    /** I21v: marca os desfechos e tira do contrato legado o 1:1 dos títulos que o grupo tomou. */
+    private aplicarGrupoSugerido = (
+        sugestoes: SugestaoBoletoTitulo[],
+        desfechos: DesfechoTitulo[],
+        porTitulo: ReadonlyMap<string, GrupoSugeridoRef>,
+    ): { sugestoes: SugestaoBoletoTitulo[]; desfechos: DesfechoTitulo[] } => {
+        const marcados = this.marcarGrupoSugerido(desfechos, porTitulo);
+        const tomados = new Set(
+            marcados
+                .filter((d) => d.situacao === SITUACAO_SUGESTAO_TITULO.GRUPO_SUGERIDO)
+                .map((d) => chaveTitulo(d)),
+        );
+        return {
+            sugestoes: sugestoes.filter(
+                (s) => s.estado !== ESTADO_SUGESTAO.SUGERIDA || !tomados.has(chaveTitulo(s)),
+            ),
+            desfechos: marcados,
+        };
+    };
+
+    /**
+     * I21v/I21w: o título de uma SUGESTÃO de grupo ganha o ponteiro. O 1:1 forte (`UNICA_SEGURA`)
+     * e as decisões (`CONFIRMADA`, `ORFA`, `EM_GRUPO`) mantêm o desfecho; os demais viram
+     * `GRUPO_SUGERIDO` e nenhum candidato deles é confirmável. Evidência de tela: nunca confirma.
+     */
+    private marcarGrupoSugerido = (
+        desfechos: DesfechoTitulo[],
+        porTitulo: ReadonlyMap<string, GrupoSugeridoRef>,
+    ): DesfechoTitulo[] => {
+        if (porTitulo.size === 0) return desfechos;
+        return desfechos.map((d) => {
+            const grupo = porTitulo.get(chaveTitulo(d));
+            if (!grupo) return d;
+            if (SITUACOES_QUE_MANTEM.has(d.situacao)) return { ...d, grupoSugerido: grupo };
+            return {
+                ...d,
+                situacao: SITUACAO_SUGESTAO_TITULO.GRUPO_SUGERIDO,
+                motivo: MOTIVO_POR_SITUACAO[SITUACAO_SUGESTAO_TITULO.GRUPO_SUGERIDO],
+                candidatos: d.candidatos.map((c) => ({
+                    ...c,
+                    confirmavel: false,
+                    motivo: MOTIVO_POR_SITUACAO[SITUACAO_SUGESTAO_TITULO.GRUPO_SUGERIDO],
+                })),
+                grupoSugerido: grupo,
+            };
+        });
     };
 
     /** Estruturas compartilhadas pelo contrato legado e pelo desfecho. */
@@ -343,8 +423,7 @@ export default class MotorSugestaoBoleto {
         const grupoDoTitulo = new Map(
             grupos.flatMap((g) => g.titulos.map((t) => [chaveTitulo(t), g.id] as const)),
         );
-        const livres = this.livres(entrada).filter((b) => !boletosDeGrupo.has(b.chave));
-        const porChave = new Map(livres.map((b) => [b.chave, b]));
+        const todosLivres = this.livres(entrada).filter((b) => !boletosDeGrupo.has(b.chave));
         const pares = new Set(entrada.paresVigentes.map((p) => `${p.pesCod}|${p.emissorChave}`));
         const rejeitadas = new Set(
             entrada.rejeitadas.map((d) => `${chaveTitulo(d)}|${chaveBoleto(d)}`),
@@ -352,6 +431,19 @@ export default class MotorSugestaoBoleto {
         const dpsPorTitulo = new Map((entrada.dps ?? []).map((d) => [chaveTitulo(d), d.dps]));
         const elegiveis = this.elegiveis(entrada.titulos, entrada.datasDebito, dpsPorTitulo);
         const elegivelPorChave = new Map(elegiveis.map((e) => [e.chave, e]));
+        // I21v: o boleto de uma SUGESTÃO de grupo também sai do jogo 1:1 (como o de grupo confirmado).
+        const sugeridos = this.sugestoesValidas(entrada, todosLivres, elegiveis, pares);
+        // Boleto de decisão 1:1 CONFIRMADA continua dela (I15g): o título ganha o ponteiro, o pool não muda.
+        const comDecisao = new Set(entrada.confirmadas.map((d) => chaveBoleto(d)));
+        const boletosDeGrupoSugerido = new Set(
+            sugeridos.map((g) => chaveBoleto(g)).filter((k) => !comDecisao.has(k)),
+        );
+        const grupoSugeridoDoTitulo = new Map<string, GrupoSugeridoRef>();
+        for (const { titulos, ...ref } of sugeridos) {
+            for (const t of titulos) grupoSugeridoDoTitulo.set(chaveTitulo(t), ref);
+        }
+        const livres = todosLivres.filter((b) => !boletosDeGrupoSugerido.has(b.chave));
+        const porChave = new Map(livres.map((b) => [b.chave, b]));
         const tituloPorChave = new Map(entrada.titulos.map((t) => [chaveTitulo(t), t]));
 
         // Cada CONFIRMADA ativa cai em uma de três: viva (título e boleto no jogo), órfã (visível,
@@ -404,6 +496,7 @@ export default class MotorSugestaoBoleto {
             livres,
             porChave,
             grupoDoTitulo,
+            grupoSugeridoDoTitulo,
             pares,
             rejeitadas,
             elegiveis,
@@ -412,6 +505,32 @@ export default class MotorSugestaoBoleto {
             orfas,
             resolvidosPorDecisao,
         };
+    };
+
+    /**
+     * Sugestões de grupo que valem para o 1:1 (I21v). Fora: o grupo cujo boleto um título DE FORA do
+     * grupo já tem como candidato seguro (CONHECIDO/FORTE): tirá-lo do pool perderia o 1:1 dele em
+     * silêncio, e vale o comportamento de antes.
+     */
+    private sugestoesValidas = (
+        entrada: EntradaMotorSugestao,
+        livres: BoletoLivre[],
+        elegiveis: TituloElegivel[],
+        pares: Set<string>,
+    ): GrupoSugeridoChaveado[] => {
+        const sugeridos = entrada.gruposSugeridos ?? [];
+        if (sugeridos.length === 0) return [];
+        const boletoPorChave = new Map(livres.map((b) => [b.chave, b]));
+        return sugeridos.filter((g) => {
+            const boleto = boletoPorChave.get(chaveBoleto(g));
+            if (!boleto) return true;
+            const doGrupo = new Set(g.titulos.map((t) => chaveTitulo(t)));
+            return !elegiveis.some(
+                (e) =>
+                    !doGrupo.has(e.chave) &&
+                    (FORCA[this.avaliar(e, boleto, pares).resultado] ?? 9) <= 1,
+            );
+        });
     };
 
     // ── 1. Entrada → estruturas ────────────────────────────────────────────────────────────────

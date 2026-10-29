@@ -10,7 +10,8 @@ related_files:
   - src/backend/domain/repository/sispag/GrupoBoletoRepository.ts
   - src/backend/domain/service/sispag/GrupoBoletoService.ts
   - src/backend/migrations/0090_sispag_grupo_boleto.sql
-  - src/frontend/app/sispag/components/GrupoBoletoPainel.tsx
+  - src/frontend/app/sispag/components/GrupoBoletoBloco.tsx
+  - src/frontend/app/sispag/components/GrupoBoletoDaFilial.tsx
 properties: [id, filCod, pesCod, credor, emissorChave, ddcCod, ditCod, numeroBoleto, codbarMascarado, valorBoleto, vencimentoBoleto, titulos, somaTitulos, origem, intercambiavel, avisosReconhecidos, confirmacaoEmissorId, estado, confirmadoPor, confirmadoEm, anuladoPor, anuladoEm, motivoAnulacao, pagoObservadoEm, versao, execucao]
 relationships:
   - "GrupoBoleto 1—N(≥2) TituloAPagar (via GrupoBoletoTitulo: filCod/docCod/titCod + snapshot de valor líquido e vencimento)"

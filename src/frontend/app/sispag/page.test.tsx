@@ -215,6 +215,13 @@ describe('SispagPage — falha ao carregar os lotes', () => {
     expect(screen.getByRole('tab', { name: 'Lotes candidatos (1)' })).toBeInTheDocument()
   })
 
+  it('I21v: a aba Boletos agrupados saiu; Boletos DDA a absorveu', async () => {
+    ;(fetchLotes as jest.Mock).mockResolvedValue([])
+    await renderPainel()
+    expect(screen.getByRole('tab', { name: 'Boletos DDA (fin124)' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Boletos agrupados' })).not.toBeInTheDocument()
+  })
+
   it('o link para Favorecidos autorizados aparece para quem vê o SISPAG (ADR-0065)', async () => {
     permissoes = ['sispag:ver']
     ;(fetchLotes as jest.Mock).mockResolvedValue([])

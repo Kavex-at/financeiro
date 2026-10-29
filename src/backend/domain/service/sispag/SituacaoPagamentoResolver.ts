@@ -136,6 +136,8 @@ const DETALHE_DESFECHO: Readonly<Partial<Record<SituacaoSugestaoTitulo, string>>
     [SITUACAO_SUGESTAO_TITULO.SO_VENCIDA]: 'o único boleto candidato está vencido',
     [SITUACAO_SUGESTAO_TITULO.DISPUTADA]: 'o boleto candidato está reservado a outro título',
     [SITUACAO_SUGESTAO_TITULO.SEM_CANDIDATO]: 'nenhum boleto no pool de DDA',
+    [SITUACAO_SUGESTAO_TITULO.GRUPO_SUGERIDO]:
+        'há grupo de boleto sugerido: confirme na gaveta do título ou na aba Boletos DDA',
 };
 
 /** Em que pé está a sugestão de boleto (I19r). `CONFIRMADA` e `ORFA` são tratadas à parte. */
@@ -149,6 +151,7 @@ const SUGESTAO_DO_DESFECHO: Readonly<
     [SITUACAO_SUGESTAO_TITULO.SO_FRACA]: SUGESTAO_BOLETO_SEM_DDA.CANDIDATO_FRACO,
     [SITUACAO_SUGESTAO_TITULO.SO_VENCIDA]: SUGESTAO_BOLETO_SEM_DDA.CANDIDATO_FRACO,
     [SITUACAO_SUGESTAO_TITULO.SEM_CANDIDATO]: SUGESTAO_BOLETO_SEM_DDA.SEM_CANDIDATO,
+    [SITUACAO_SUGESTAO_TITULO.GRUPO_SUGERIDO]: SUGESTAO_BOLETO_SEM_DDA.GRUPO_SUGERIDO,
 };
 
 /** O botão de `BOLETO_SEM_DDA` diz o que a analista vai fazer no painel do boleto. */
@@ -158,6 +161,7 @@ const ROTULO_ACAO_SUGESTAO: Readonly<Record<SugestaoBoletoSemDda, string>> = {
     [SUGESTAO_BOLETO_SEM_DDA.CANDIDATO_FRACO]: 'Ver candidatos',
     [SUGESTAO_BOLETO_SEM_DDA.SEM_CANDIDATO]: 'Ver boleto',
     [SUGESTAO_BOLETO_SEM_DDA.AGUARDANDO_VINCULO]: 'Ver boleto',
+    [SUGESTAO_BOLETO_SEM_DDA.GRUPO_SUGERIDO]: 'Ver grupo sugerido',
 };
 
 const semAcento = (s: string): string =>

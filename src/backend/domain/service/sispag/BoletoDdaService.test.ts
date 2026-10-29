@@ -14,6 +14,7 @@ import BoletoDdaService from './BoletoDdaService.js';
 import ConsolidacaoBoletoDda from './ConsolidacaoBoletoDda.js';
 import RegraSugestaoBoleto, { REGRA_CANDIDATO_TEXTO } from './RegraSugestaoBoleto.js';
 import PaginacaoBoletoDda from './PaginacaoBoletoDda.js';
+import type BoletoSuggestionService from './BoletoSuggestionService.js';
 import SugestaoBoletoCache from './SugestaoBoletoCache.js';
 
 const HOJE = new Date('2026-09-23T15:00:00Z');
@@ -39,6 +40,10 @@ const build = (lockLivre = true) => {
     };
     const log = { info: jest.fn(), warn: jest.fn() };
     const cache = new SugestaoBoletoCache();
+    // I21v: os grupos (sugeridos e confirmados) por boleto vêm do cenário em cache das sugestões.
+    const gruposDaTela = {
+        gruposPorBoleto: jest.fn(async () => new Map<string, unknown>()),
+    };
     const service = new BoletoDdaService(
         dda as unknown as ConexosDdaClient,
         { getFilCodDefault: jest.fn().mockResolvedValue(1) } as unknown as ConexosBaseClient,
@@ -54,8 +59,9 @@ const build = (lockLivre = true) => {
         db as unknown as PostgreeDatabaseClient,
         log as unknown as LogService,
         cache,
+        gruposDaTela as unknown as BoletoSuggestionService,
     );
-    return { service, dda, repo, log, cache };
+    return { service, dda, repo, log, cache, gruposDaTela };
 };
 
 describe('BoletoDdaService — invalida o cache das sugestões (ADR-0068, PERF-1)', () => {
@@ -187,7 +193,14 @@ describe('BoletoDdaService', () => {
             total: 0,
             pagina: 1,
             tamanho: 20,
-            contagem: { todas: 0, VINCULADO: 0, CANDIDATO: 0, AMBIGUO: 0, SEM_TITULO: 0 },
+            contagem: {
+                todas: 0,
+                VINCULADO: 0,
+                CANDIDATO: 0,
+                AMBIGUO: 0,
+                SEM_TITULO: 0,
+                emGrupo: 0,
+            },
             filiais: [],
             sincronizadoEm: 123,
             regraCandidato: REGRA_CANDIDATO_TEXTO,
@@ -214,5 +227,48 @@ describe('BoletoDdaService', () => {
         expect(r.pagina).toBe(3);
         expect(r.boletos.map((b) => b.ditCod)).toEqual([41, 42, 43, 44, 45]);
         expect(r.contagem.SEM_TITULO).toBe(45);
+    });
+
+    describe('grupo por boleto (I21v)', () => {
+        const boletos = [
+            { ddcCod: 165, ditCod: 24398, valor: 26369.85, vencimento: '2026-10-29' },
+            { ddcCod: 1, ditCod: 2, valor: 10, vencimento: '2026-10-29' },
+        ];
+
+        it('anexa o grupo ao boleto, conta emGrupo e filtra por emGrupo', async () => {
+            const { service, repo, gruposDaTela } = build();
+            repo.listBoletos.mockResolvedValue(boletos);
+            gruposDaTela.gruposPorBoleto.mockResolvedValue(
+                new Map([
+                    [
+                        '165:24398',
+                        { estado: 'SUGERIDO', filCod: 1, nTitulos: 2, confirmavel: true },
+                    ],
+                ]),
+            );
+            const todos = await service.listar({ escopo: 'todos' });
+            expect(todos.boletos.find((b) => b.ditCod === 24398)?.grupo).toMatchObject({
+                estado: 'SUGERIDO',
+                nTitulos: 2,
+            });
+            expect(todos.boletos.find((b) => b.ditCod === 2)?.grupo).toBeUndefined();
+            expect(todos.contagem.emGrupo).toBe(1);
+            const so = await service.listar({ escopo: 'todos', emGrupo: true });
+            expect(so.boletos.map((b) => b.ditCod)).toEqual([24398]);
+        });
+
+        it('falha ao ler os grupos não derruba a aba: lista sem grupo e avisa com o código do driver', async () => {
+            const { service, repo, gruposDaTela, log } = build();
+            repo.listBoletos.mockResolvedValue(boletos);
+            gruposDaTela.gruposPorBoleto.mockRejectedValue(
+                Object.assign(new Error('banco fora'), { code: '57P01' }),
+            );
+            const r = await service.listar({ escopo: 'todos' });
+            expect(r.boletos).toHaveLength(2);
+            expect(r.contagem.emGrupo).toBe(0);
+            expect(log.warn).toHaveBeenCalledWith(
+                expect.objectContaining({ data: expect.objectContaining({ codigoErro: '57P01' }) }),
+            );
+        });
     });
 });

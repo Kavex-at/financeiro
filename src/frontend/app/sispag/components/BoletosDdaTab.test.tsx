@@ -61,8 +61,18 @@ const pagina = (
   boletos: BoletoDda[],
   over: Partial<BoletosDdaResposta> = {},
 ): BoletosDdaResposta => {
-  const contagem = { todas: boletos.length, VINCULADO: 0, CANDIDATO: 0, AMBIGUO: 0, SEM_TITULO: 0 }
-  for (const b of boletos) contagem[b.situacao] += 1
+  const contagem = {
+    todas: boletos.length,
+    VINCULADO: 0,
+    CANDIDATO: 0,
+    AMBIGUO: 0,
+    SEM_TITULO: 0,
+    emGrupo: 0,
+  }
+  for (const b of boletos) {
+    contagem[b.situacao] += 1
+    if (b.grupo) contagem.emGrupo += 1
+  }
   return {
     boletos,
     total: boletos.length,

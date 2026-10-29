@@ -13,7 +13,7 @@ import LineCopyAuditFailedError from '../../errors/LineCopyAuditFailedError.js';
 import OverdueBoletoNotConfirmableError from '../../errors/OverdueBoletoNotConfirmableError.js';
 import TitleSuggestionNotFoundError from '../../errors/TitleSuggestionNotFoundError.js';
 import WarningAcknowledgementRequiredError from '../../errors/WarningAcknowledgementRequiredError.js';
-import type { BoletoDda } from '../../interface/sispag/BoletoDda.js';
+import type { BoletoDda, BoletoDdaGrupo } from '../../interface/sispag/BoletoDda.js';
 import {
     type ConfirmacaoEmissor,
     type ConfirmacaoEmissorView,
@@ -72,6 +72,9 @@ import type { ContextoConjunto } from '../../interface/sispag/ConfirmacaoEmConju
 import MotorSugestaoBoleto from './MotorSugestaoBoleto.js';
 import PrazoBoletoCalculador from './PrazoBoletoCalculador.js';
 import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
+import BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
+import CenarioGrupoBoleto from './CenarioGrupoBoleto.js';
+import MotorGrupoBoleto from './MotorGrupoBoleto.js';
 import SugestaoBoletoCache from './SugestaoBoletoCache.js';
 
 export interface ChaveSugestao {
@@ -116,6 +119,8 @@ interface CenarioSugestoes {
     desfechos: DesfechoTitulo[];
     pares: ConfirmacaoEmissor[];
     datasDebito: Map<string, string>;
+    /** I21v: o grupo (sugerido ou confirmado) de cada boleto, por `ddcCod:ditCod`. */
+    gruposPorBoleto: Map<string, BoletoDdaGrupo>;
     sincronizadoEm: number | undefined;
 }
 
@@ -175,6 +180,10 @@ export default class BoletoSuggestionService {
         @inject(GrupoBoletoRepository) private readonly grupoRepo: GrupoBoletoRepository,
         @inject(GrupoBoletoService) private readonly grupoService: GrupoBoletoService,
         @inject(RegraIrmaosConjunto) private readonly regraConjunto: RegraIrmaosConjunto,
+        // I21v: a sugestão de grupo entra no MESMO cenário em cache (motor puro, sem Conexos).
+        @inject(MotorGrupoBoleto) private readonly motorGrupo: MotorGrupoBoleto,
+        @inject(BloqueioDuplicidadeRepository)
+        private readonly bloqueioRepo: BloqueioDuplicidadeRepository,
     ) {}
 
     // ── Leitura ────────────────────────────────────────────────────────────────────────────────
@@ -1085,12 +1094,80 @@ export default class BoletoSuggestionService {
         }
     };
 
+    /** Marcas ativas para o motor de grupos; falha na leitura desliga SÓ a sugestão de grupo (I21v). */
+    private marcasOuNenhuma = async (): Promise<
+        Array<{ filCod: number; docCod: string; titCod: string }> | undefined
+    > => {
+        try {
+            return await this.bloqueioRepo.listAtivos();
+        } catch (err: unknown) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'falha ao ler marcas ativas; sugestão de grupo desligada na carteira nesta execução',
+                data: {
+                    erro: err instanceof Error ? err.message : String(err),
+                    ...this.codigoDoErro(err),
+                },
+            });
+            return undefined;
+        }
+    };
+
+    /** Lotes comprometidos para o motor de grupos; falha desliga SÓ a sugestão de grupo (I21v). */
+    private comprometidosOuNenhum = async (): Promise<
+        Awaited<ReturnType<LotePagamentoRepository['listTitulosEmLotesComprometidos']>> | undefined
+    > => {
+        try {
+            return await this.loteRepo.listTitulosEmLotesComprometidos();
+        } catch (err: unknown) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'falha ao ler os lotes comprometidos; sugestão de grupo desligada na carteira nesta execução',
+                data: {
+                    erro: err instanceof Error ? err.message : String(err),
+                    ...this.codigoDoErro(err),
+                },
+            });
+            return undefined;
+        }
+    };
+
+    /**
+     * I21v: as sugestões de grupo (I21e/f) sobre os dados JÁ carregados para o 1:1, pelo mesmo
+     * `CenarioGrupoBoleto.montar` das sugestões de grupo. Informativo: qualquer falha volta ao
+     * 1:1 de antes, com aviso no log (a confirmação de grupo segue relendo tudo sob o lock).
+     */
+    private gruposSugeridos = async (
+        dados: Omit<Parameters<typeof CenarioGrupoBoleto.montar>[0], 'marcas'> & {
+            marcas: Array<{ filCod: number; docCod: string; titCod: string }>;
+        },
+    ): Promise<ReturnType<typeof CenarioGrupoBoleto.paraMotor1a1>> => {
+        try {
+            return CenarioGrupoBoleto.paraMotor1a1(
+                this.motorGrupo.sugerir(CenarioGrupoBoleto.montar(dados)),
+            );
+        } catch (err: unknown) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'falha ao calcular sugestões de grupo; carteira segue só com o 1:1',
+                data: {
+                    erro: err instanceof Error ? err.message : String(err),
+                    ...this.codigoDoErro(err),
+                },
+            });
+            return [];
+        }
+    };
+
     /** Lê o pool e a carteira persistidos e roda o motor com o estado de decisões de agora. */
     private sugerirAgora = async (): Promise<{
         sugestoes: SugestaoBoletoTitulo[];
         desfechos: DesfechoTitulo[];
         pares: ConfirmacaoEmissor[];
         datasDebito: Map<string, string>;
+        gruposPorBoleto: Map<string, BoletoDdaGrupo>;
         titulos: number;
         boletos: number;
     }> => {
@@ -1104,6 +1181,8 @@ export default class BoletoSuggestionService {
             emLotes,
             dps,
             grupos,
+            marcas,
+            comprometidos,
         ] = await Promise.all([
             this.tituloRepo.listAtivos(),
             // I15s: guarda de duplicata do número — TODOS os títulos, ativos ou não.
@@ -1115,7 +1194,22 @@ export default class BoletoSuggestionService {
             this.loteRepo.listTitulosEmLotesAbertos(),
             this.dpsLidosOuNenhum(),
             this.grupoRepo.listarConfirmados(),
+            // I21v: as duas leituras que o motor de grupos pede além das acima (mesmo Promise.all).
+            this.marcasOuNenhuma(),
+            this.comprometidosOuNenhum(),
         ]);
+        const gruposSugeridos =
+            marcas && comprometidos
+                ? await this.gruposSugeridos({
+                      titulos,
+                      boletos,
+                      pares,
+                      decisoes: confirmadas,
+                      grupos,
+                      marcas,
+                      comprometidos,
+                  })
+                : [];
         const datasDebito = this.mapaDatasDebito(emLotes);
         const { sugestoes, desfechos } = this.motor.analisar({
             titulos,
@@ -1131,6 +1225,7 @@ export default class BoletoSuggestionService {
                 ditCod: g.ditCod,
                 titulos: g.titulos,
             })),
+            ...(gruposSugeridos.length > 0 ? { gruposSugeridos } : {}),
             ...(titulosDoCredor ? { titulosDoCredor } : { numeroAncoraDesligada: true }),
         });
         return {
@@ -1138,9 +1233,54 @@ export default class BoletoSuggestionService {
             desfechos,
             pares,
             datasDebito,
+            gruposPorBoleto: this.resumoDosGrupos(gruposSugeridos, grupos),
             titulos: titulos.length,
             boletos: boletos.length,
         };
+    };
+
+    /**
+     * I21v: o resumo de grupo de cada boleto para a aba Boletos DDA. O confirmado vence a sugestão
+     * (um boleto de grupo confirmado já saiu do motor de grupos, mas a ordem fica explícita).
+     */
+    private resumoDosGrupos = (
+        sugeridos: ReturnType<typeof CenarioGrupoBoleto.paraMotor1a1>,
+        confirmados: Array<{
+            id: string;
+            ddcCod: number;
+            ditCod: number;
+            titulos: Array<{ filCod: number }>;
+        }>,
+    ): Map<string, BoletoDdaGrupo> => {
+        const mapa = new Map<string, BoletoDdaGrupo>();
+        for (const g of sugeridos) {
+            const filCod = g.titulos[0]?.filCod;
+            if (filCod === undefined) continue;
+            mapa.set(`${g.ddcCod}:${g.ditCod}`, {
+                estado: 'SUGERIDO',
+                filCod,
+                nTitulos: g.nTitulos,
+                confirmavel: g.confirmavel,
+            });
+        }
+        for (const g of confirmados) {
+            const filCod = g.titulos[0]?.filCod;
+            if (filCod === undefined) continue;
+            mapa.set(`${g.ddcCod}:${g.ditCod}`, {
+                estado: 'CONFIRMADO',
+                id: g.id,
+                filCod,
+                nTitulos: g.titulos.length,
+                confirmavel: true,
+            });
+        }
+        return mapa;
+    };
+
+    /** I21v: o grupo (sugerido ou confirmado) de cada boleto, do MESMO cenário em cache da listagem. */
+    public gruposPorBoleto = async (): Promise<ReadonlyMap<string, BoletoDdaGrupo>> => {
+        const { valor: cenario } = await this.cache.obter(this.calcularCenario);
+        return cenario.gruposPorBoleto;
     };
 
     /**
@@ -1218,6 +1358,16 @@ export default class BoletoSuggestionService {
                 !mesmoTitulo(d, chave) && d.candidatos.some((c) => c.confirmavel && mesmoBoleto(c)),
         );
         if (rival) throw new BoletoAlreadySuggestedToOtherTitleError(chave);
+        // I21v: o boleto é o de uma SUGESTÃO de grupo deste título — 1:1 não se confirma.
+        const doGrupo = desfecho?.grupoSugerido;
+        if (doGrupo && doGrupo.ddcCod === chave.ddcCod && doGrupo.ditCod === chave.ditCod) {
+            throw new BoletoSuggestionNotAvailableError({
+                ...chave,
+                motivo:
+                    'Este boleto fecha a soma de um grupo sugerido (vários títulos do credor): ' +
+                    'confirme o grupo na gaveta do título ou na aba Boletos DDA em vez de confirmá-lo 1:1.',
+            });
+        }
         throw new BoletoSuggestionNotAvailableError({
             ...chave,
             motivo:

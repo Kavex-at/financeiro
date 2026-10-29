@@ -29,6 +29,7 @@ import {
 import { SITUACAO_BADGE } from './BoletosDdaTab'
 import { DiferencaBadge, fmtCivil } from './CandidatosBoletoDialog'
 import { ConfirmacaoEmConjuntoSecao } from './ConfirmacaoEmConjuntoSecao'
+import { GrupoBoletoDaFilial } from './GrupoBoletoDaFilial'
 import { SugestaoBoletoPainel } from './SugestaoBoletoPainel'
 
 function TabelaBoletos({ linhas, mostrarLigacao }: { linhas: BoletoDdaDoTitulo[]; mostrarLigacao: boolean }) {
@@ -109,6 +110,7 @@ export function BoletosDoTituloDialog({
   ddaDefasadoHoras,
   onDecidido,
   vinculadoEmLoteVivo = false,
+  onGrupoAlterado,
 }: {
   /** O item do título tem o código vinculado num lote vivo (ADR-0071, I17l). */
   vinculadoEmLoteVivo?: boolean
@@ -124,6 +126,8 @@ export function BoletosDoTituloDialog({
   podeCopiar?: boolean
   ddaDefasadoHoras?: number | undefined
   onDecidido?: () => void | Promise<void>
+  /** I21v: depois de confirmar ou anular o grupo aqui, a tela relê carteira, lotes e sugestões. */
+  onGrupoAlterado?: (() => void | Promise<void>) | undefined
 }) {
   // O resultado guarda de QUE título é: ao trocar de título, o resultado antigo deixa de valer
   // sem precisar zerar estado dentro do efeito.
@@ -143,6 +147,28 @@ export function BoletosDoTituloDialog({
     ajuste?: AjusteCentavos
   } | null>(null)
   const [versaoAjuste, setVersaoAjuste] = React.useState(0)
+  // I21v (S1): o grupo no topo quando a situação é do grupo; abaixo do 1:1, recolhido, quando o 1:1
+  // é forte e o título só ganhou o ponteiro.
+  const temGrupo = desfecho?.grupoSugerido !== undefined || desfecho?.situacao === 'EM_GRUPO'
+  const grupoNoTopo =
+    desfecho?.situacao === 'GRUPO_SUGERIDO' || desfecho?.situacao === 'EM_GRUPO'
+  // Com o grupo em cima e nenhum candidato individual, a seção "Sugestão de boleto" só repetiria o
+  // texto do servidor e falaria de um botão de confirmar que não existe para este título.
+  const soGrupo =
+    grupoNoTopo && (desfecho?.candidatos.length ?? 0) === 0 && sugestoes.length === 0
+  const blocoDoGrupo =
+    temGrupo && titulo?.filCod !== undefined ? (
+      <GrupoBoletoDaFilial
+        filCod={titulo.filCod}
+        onde={{
+          tipo: 'titulo',
+          chave: { filCod: titulo.filCod, docCod: titulo.docCod, titCod: titulo.titCod },
+        }}
+        tituloAtual={{ filCod: titulo.filCod, docCod: titulo.docCod, titCod: titulo.titCod }}
+        podeExecutar={podeExecutar}
+        onAlterado={onGrupoAlterado}
+      />
+    ) : null
   const chaveAjuste = titulo?.filCod !== undefined ? `${titulo.filCod}:${titulo.docCod}:${titulo.titCod}` : null
   React.useEffect(() => {
     if (!titulo || titulo.filCod === undefined || chaveAjuste === null) return
@@ -238,7 +264,8 @@ export function BoletosDoTituloDialog({
             <Drawer.CloseButton />
           </Drawer.Header>
           <Drawer.Body className="flex flex-col gap-4">
-            {sugestoes.length > 0 || desfecho !== undefined ? (
+            {grupoNoTopo ? blocoDoGrupo : null}
+            {(sugestoes.length > 0 || desfecho !== undefined) && !soGrupo ? (
               <SugestaoBoletoPainel
                 sugestoes={sugestoes}
                 desfecho={desfecho}
@@ -269,6 +296,14 @@ export function BoletosDoTituloDialog({
                 }}
               />
             ) : null}
+            {temGrupo && !grupoNoTopo ? (
+              <details className="rounded-lg border bg-muted/30 p-3">
+                <summary className="cursor-pointer text-sm font-medium">
+                  Este título também faz parte de um grupo sugerido
+                </summary>
+                <div className="pt-3">{blocoDoGrupo}</div>
+              </details>
+            ) : null}
             {erro ? (
               <div role="alert">
                 <EmptyState
@@ -294,10 +329,13 @@ export function BoletosDoTituloDialog({
                 <Spinner /> Consultando os boletos DDA…
               </div>
             ) : vazio ? (
-              <EmptyState
-                title="Nenhum boleto DDA com este valor"
-                description="Confira se o arquivo DDA deste boleto já foi importado (fin124) e se o valor do título bate com o do boleto."
-              />
+              // Título de grupo: o boleto que o paga está no bloco do grupo; "nenhum boleto" seria ruído.
+              grupoNoTopo ? null : (
+                <EmptyState
+                  title="Nenhum boleto DDA com este valor"
+                  description="Confira se o arquivo DDA deste boleto já foi importado (fin124) e se o valor do título bate com o do boleto."
+                />
+              )
             ) : (
               <>
                 {dados.doTitulo.length > 0 ? (

@@ -1618,6 +1618,22 @@ describe('GET /sispag/boletos-dda', () => {
         });
     });
 
+    it('I21v: repassa emGrupo=true como booleano; valor inválido é 400', async () => {
+        const listar = registrar();
+        await comApp({}, async (url) => {
+            const ok = await fetch(`${url}/sispag/boletos-dda?emGrupo=true`);
+            expect(ok.status).toBe(200);
+            const ruim = await fetch(`${url}/sispag/boletos-dda?emGrupo=talvez`);
+            expect(ruim.status).toBe(400);
+        });
+        expect(listar).toHaveBeenCalledWith({
+            escopo: 'a-vencer',
+            pagina: 1,
+            tamanho: 20,
+            emGrupo: true,
+        });
+    });
+
     it('repassa o intervalo de vencimento (data civil)', async () => {
         const listar = registrar();
         await comApp({}, async (url) => {
