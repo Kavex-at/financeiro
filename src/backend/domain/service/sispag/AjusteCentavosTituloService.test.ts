@@ -921,3 +921,55 @@ describe('AjusteCentavosTituloService — casos canônicos da I18 (ADR-0074)', (
         });
     });
 });
+
+describe('AjusteCentavosTituloService.executarEmSequencia — conjunto (I15t(6), ADR-0080)', () => {
+    const pedido = (titCod: string, filCod = 2) => ({
+        filCod,
+        docCod: '536',
+        titCod,
+        decisaoId: `dec-${titCod}`,
+    });
+
+    it('um ajuste por título, em sequência: o próximo só começa quando o anterior termina', async () => {
+        const h = build();
+        const linha: string[] = [];
+        const ajustar = jest.spyOn(h.service, 'ajustar').mockImplementation(async (p) => {
+            linha.push(`inicio:${p.titCod}`);
+            await new Promise((r) => setImmediate(r));
+            linha.push(`fim:${p.titCod}`);
+            return { resultado: 'executado', modo: 'on' } as never;
+        });
+        jest.spyOn(h.service, 'retomarPendentes').mockResolvedValue({
+            retomados: 0,
+            falhas: 0,
+        } as never);
+        await h.service.executarEmSequencia([pedido('1'), pedido('2'), pedido('3')]);
+        expect(linha).toEqual(['inicio:1', 'fim:1', 'inicio:2', 'fim:2', 'inicio:3', 'fim:3']);
+        expect(ajustar.mock.calls.map(([p]) => p.gatilho)).toEqual([
+            'confirmar',
+            'confirmar',
+            'confirmar',
+        ]);
+    });
+
+    it('a falha de um título não impede os seguintes; uma retomada por filial no fim', async () => {
+        const h = build();
+        const ajustar = jest
+            .spyOn(h.service, 'ajustar')
+            .mockRejectedValueOnce(new Error('timeout'))
+            .mockResolvedValue({ resultado: 'executado', modo: 'on' } as never);
+        const retomar = jest
+            .spyOn(h.service, 'retomarPendentes')
+            .mockResolvedValue({ retomados: 0, falhas: 0 } as never);
+        await h.service.executarEmSequencia([pedido('1'), pedido('2'), pedido('3', 5)]);
+        expect(ajustar).toHaveBeenCalledTimes(3);
+        expect(retomar.mock.calls.map(([p]) => p.filCod)).toEqual([2, 5]);
+    });
+
+    it('agendarEmSequencia sem pedidos não faz nada', () => {
+        const h = build();
+        const ajustar = jest.spyOn(h.service, 'ajustar');
+        h.service.agendarEmSequencia([]);
+        expect(ajustar).not.toHaveBeenCalled();
+    });
+});

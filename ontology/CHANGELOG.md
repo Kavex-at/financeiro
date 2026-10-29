@@ -3,6 +3,19 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.51.0 — SISPAG: confirmação em conjunto de títulos irmãos (2026-10-29, ADR-0080)
+
+Feature: `sispag-confirmar-em-conjunto` (`/feature-new`).
+
+- **Ação nova `confirmarSugestoesEmConjunto`** e **invariante I15t**, ambas `implemented` na mesma feature (app v0.78.0): da
+  gaveta de um título, confirmar de uma vez os irmãos (mesmo `pesCod` e filial) cujo boleto foi
+  escolhido pela âncora `NUMERO_CONFIAVEL`, até 30, linha a linha pelo mesmo `confirmar`, com
+  resultado por linha. Nada vem marcado.
+- Avisos derivados por linha: `FAIXA_AJUSTE_MANUAL` (centavos e +1..+5 dias, I18a(4) inalterada) e
+  `ESCOLHIDO_SO_PELO_NUMERO` (aglomerado de boletos idênticos tipo TIME LOG).
+- Ajuste de centavos de hoje, um pedido por título, em fila sequencial. Trilha: `detalhe.conjunto`
+  no `DECISAO_CONFIRMADA`. Sem entidade, estado ou migration. Um cenário do motor por pedido (D9, ~1,3 s para 30 linhas). Coverage: ações 50 → 51 (implemented +1).
+
 ## v0.50.0 — SISPAG: âncora de número na sugestão de boleto DDA (2026-10-27, ADR-0079)
 
 Feature: `sispag-numdoc-desempate` (`/feature-tweak sugestao-boleto-dda-sispag`).

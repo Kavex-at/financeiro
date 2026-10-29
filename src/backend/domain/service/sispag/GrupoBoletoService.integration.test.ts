@@ -22,6 +22,7 @@ import GrupoBoletoService from './GrupoBoletoService.js';
 import MotorGrupoBoleto from './MotorGrupoBoleto.js';
 import MotorSugestaoBoleto from './MotorSugestaoBoleto.js';
 import RegraGrupoBoleto from './RegraGrupoBoleto.js';
+import RegraIrmaosConjunto from './RegraIrmaosConjunto.js';
 import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
 import SugestaoBoletoCache from './SugestaoBoletoCache.js';
 
@@ -168,6 +169,7 @@ describeComBanco('GrupoBoletoService (integração)', () => {
             { agendarAposConfirmar: () => undefined } as never,
             grupoRepo,
             service,
+            new RegraIrmaosConjunto(codigoBarras),
         );
         for (const doc of ['38883', '38884', '38885']) await inserirTitulo(doc);
         // Outro credor: fora do conjunto fechado do PEDRONI (I21e).

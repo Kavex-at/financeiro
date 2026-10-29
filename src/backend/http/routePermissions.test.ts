@@ -149,6 +149,8 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     ['GET /sispag/sugestoes-boleto', P.SISPAG_VER],
     ['GET /sispag/sugestoes-boleto/titulo', P.SISPAG_VER],
     ['POST /sispag/sugestoes-boleto/confirmar', P.SISPAG_EXECUTAR],
+    ['GET /sispag/sugestoes-boleto/titulo/irmaos', P.SISPAG_VER],
+    ['POST /sispag/sugestoes-boleto/confirmar-em-conjunto', P.SISPAG_EXECUTAR],
     ['POST /sispag/sugestoes-boleto/rejeitar', P.SISPAG_EXECUTAR],
     ['POST /sispag/sugestoes-boleto/anular', P.SISPAG_EXECUTAR],
     ['POST /sispag/sugestoes-boleto/copiar-linha', P.SISPAG_VER],
@@ -268,11 +270,11 @@ for (const [mount, router] of ROUTERS) {
 }
 
 describe('cobertura de guard por rota (introspecção)', () => {
-    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + perfil, ADR-0058; + senha, ADR-0059; sispag: -3 rotas de destino por item +6 de exceção, ADR-0061; + carteira ao abrir, ADR-0060; + 5 da verificação TED/PIX e conferência, ADR-0063; + export de títulos das remessas; + export de títulos a pagar; + busca de favorecido e prévia do destino; + sincronização dos lotes ao abrir e botão único, ADR-0066; + 6 da sugestão de boleto, ADR-0068; + anular a confirmação, I15l; + 2 leituras dos retidos por código de barras, ADR-0069 emenda 1; + previsão do vínculo do código de barras, ADR-0071; + detalhe de candidatos por título, ADR-0072; + 3 do ajuste de centavos, ADR-0074; + criação de lotes por filial, ADR-0075; + 6 do boleto agrupado, ADR-0077): 27/68/15/10/2/1/7/1', () => {
+    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + perfil, ADR-0058; + senha, ADR-0059; sispag: -3 rotas de destino por item +6 de exceção, ADR-0061; + carteira ao abrir, ADR-0060; + 5 da verificação TED/PIX e conferência, ADR-0063; + export de títulos das remessas; + export de títulos a pagar; + busca de favorecido e prévia do destino; + sincronização dos lotes ao abrir e botão único, ADR-0066; + 6 da sugestão de boleto, ADR-0068; + anular a confirmação, I15l; + 2 leituras dos retidos por código de barras, ADR-0069 emenda 1; + previsão do vínculo do código de barras, ADR-0071; + detalhe de candidatos por título, ADR-0072; + 3 do ajuste de centavos, ADR-0074; + criação de lotes por filial, ADR-0075; + 6 do boleto agrupado, ADR-0077; + 2 da confirmação em conjunto, ADR-0080): 27/70/15/10/2/1/7/1', () => {
         const porMount = (m: string) =>
             TABELA.filter(([r]) => r.split(' ')[1].split('/')[1] === m).length;
         expect(porMount('permutas')).toBe(27);
-        expect(porMount('sispag')).toBe(68);
+        expect(porMount('sispag')).toBe(70);
         expect(porMount('recebimentos')).toBe(15);
         expect(porMount('usuarios')).toBe(10);
         expect(porMount('operacao')).toBe(2);

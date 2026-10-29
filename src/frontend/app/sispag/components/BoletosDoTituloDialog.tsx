@@ -28,6 +28,7 @@ import {
 } from '@/lib/sispag'
 import { SITUACAO_BADGE } from './BoletosDdaTab'
 import { DiferencaBadge, fmtCivil } from './CandidatosBoletoDialog'
+import { ConfirmacaoEmConjuntoSecao } from './ConfirmacaoEmConjuntoSecao'
 import { SugestaoBoletoPainel } from './SugestaoBoletoPainel'
 
 function TabelaBoletos({ linhas, mostrarLigacao }: { linhas: BoletoDdaDoTitulo[]; mostrarLigacao: boolean }) {
@@ -249,6 +250,19 @@ export function BoletosDoTituloDialog({
                 itemVinculadoEmLoteVivo={vinculadoEmLoteVivo}
                 ajusteCentavos={ajusteAtual?.ajuste}
                 modoAjusteCentavos={ajusteAtual?.modo}
+                onDecidido={async () => {
+                  setVersaoAjuste((n) => n + 1)
+                  await onDecidido?.()
+                }}
+              />
+            ) : null}
+            {titulo.filCod !== undefined && desfecho !== undefined ? (
+              // Confirmação em conjunto (I15t, ADR-0080): irmãos do mesmo credor e filial escolhidos
+              // pelo número; some sozinha quando não há nenhum além deste título.
+              <ConfirmacaoEmConjuntoSecao
+                origem={{ filCod: titulo.filCod, docCod: titulo.docCod, titCod: titulo.titCod }}
+                podeExecutar={podeExecutar}
+                versao={versaoAjuste}
                 onDecidido={async () => {
                   setVersaoAjuste((n) => n + 1)
                   await onDecidido?.()

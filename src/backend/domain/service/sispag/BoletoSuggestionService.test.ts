@@ -27,6 +27,7 @@ import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import BoletoSuggestionService from './BoletoSuggestionService.js';
 import AncoraOrdemDps from './AncoraOrdemDps.js';
 import MotorSugestaoBoleto from './MotorSugestaoBoleto.js';
+import RegraIrmaosConjunto from './RegraIrmaosConjunto.js';
 import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
 import SugestaoBoletoCache from './SugestaoBoletoCache.js';
 
@@ -296,6 +297,7 @@ const montar = (over: Partial<Cenario> = {}) => {
         ajuste as never,
         grupoRepo as never,
         grupoService as never,
+        new RegraIrmaosConjunto(codigoBarras),
     );
     return {
         grupoRepo,
@@ -1879,5 +1881,94 @@ describe('BoletoSuggestionService × boleto agrupado (I15q, I15e(4), cascata I15
             h.service.revogarPar({ id: 'par-1', motivo: 'emissor errado', ator: 'ana' }),
         ).rejects.toThrow('falhou');
         expect(h.eventos.some((e) => e.tipo === 'PAR_REVOGADO')).toBe(false);
+    });
+});
+
+describe('BoletoSuggestionService.confirmar — linha de confirmação em conjunto (I15t, ADR-0080)', () => {
+    const ANCORADO = { ...TITULO, numeroDocumento: '7128' };
+    const BOLETO_NUM = { ...BOLETO, numero: '7128' };
+    const CONJUNTO = {
+        id: 'conj-1',
+        origem: { filCod: 1, docCod: '9001', titCod: '1' },
+        pesCod: '7001',
+    };
+
+    it('par ancorado pelo número: confirma, grava detalhe.conjunto e NÃO agenda o ajuste', async () => {
+        const { service, eventos, ajuste } = montar({
+            titulos: [ANCORADO],
+            boletos: [BOLETO_NUM],
+        });
+        const r = await service.confirmar({ ...CHAVE, ator: 'ana', conjunto: CONJUNTO });
+        expect(r.criada).toBe(true);
+        const ev = eventos.find((e) => e.tipo === 'DECISAO_CONFIRMADA');
+        expect((ev?.detalhe as Record<string, unknown>).conjunto).toEqual({
+            id: 'conj-1',
+            tituloOrigem: '1/9001/1',
+        });
+        expect(ajuste.agendarAposConfirmar).not.toHaveBeenCalled();
+    });
+
+    it('sem NUMERO_CONFIAVEL ao vivo: recusa com motivo e não grava', async () => {
+        const { service, repo } = montar();
+        await expect(
+            service.confirmar({ ...CHAVE, ator: 'ana', conjunto: CONJUNTO }),
+        ).rejects.toMatchObject({
+            name: 'BoletoSuggestionNotAvailableError',
+            userMessage: expect.stringMatching(/número do documento/),
+        });
+        expect(repo.inserirDecisao).not.toHaveBeenCalled();
+    });
+
+    it('título de outro credor que o da origem: recusa', async () => {
+        const { service, repo } = montar({ titulos: [ANCORADO], boletos: [BOLETO_NUM] });
+        await expect(
+            service.confirmar({
+                ...CHAVE,
+                ator: 'ana',
+                conjunto: { ...CONJUNTO, pesCod: '9999' },
+            }),
+        ).rejects.toMatchObject({ userMessage: expect.stringMatching(/outro credor/) });
+        expect(repo.inserirDecisao).not.toHaveBeenCalled();
+    });
+
+    it('sem conjunto, o evento não tem detalhe.conjunto e o ajuste é agendado', async () => {
+        const { service, eventos, ajuste } = montar({
+            titulos: [ANCORADO],
+            boletos: [BOLETO_NUM],
+        });
+        await service.confirmar({ ...CHAVE, ator: 'ana' });
+        const ev = eventos.find((e) => e.tipo === 'DECISAO_CONFIRMADA');
+        expect(ev?.detalhe).not.toHaveProperty('conjunto');
+        expect(ajuste.agendarAposConfirmar).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('BoletoSuggestionService.confirmar — cenário do conjunto (I15t(4))', () => {
+    const ANCORADO = { ...TITULO, numeroDocumento: '7128' };
+    const BOLETO_NUM = { ...BOLETO, numero: '7128' };
+    const CONJUNTO = {
+        id: 'conj-1',
+        origem: { filCod: 1, docCod: '9001', titCod: '1' },
+        pesCod: '7001',
+    };
+
+    it('com conjunto, usa o cenário recebido e não recalcula o motor', async () => {
+        const h = montar({ titulos: [ANCORADO], boletos: [BOLETO_NUM] });
+        const cenario = await h.service.cenarioParaConjunto();
+        h.tituloRepo.listAtivos.mockClear();
+        const r = await h.service.confirmar({ ...CHAVE, ator: 'ana', conjunto: CONJUNTO }, cenario);
+        expect(r.criada).toBe(true);
+        expect(h.tituloRepo.listAtivos).not.toHaveBeenCalled();
+        // Título e boleto continuam relidos ao vivo.
+        expect(h.tituloRepo.buscarPorChave).toHaveBeenCalled();
+        expect(h.boletoRepo.buscarPorChave).toHaveBeenCalled();
+    });
+
+    it('sem conjunto, o cenário recebido é ignorado (recalcula ao vivo)', async () => {
+        const h = montar({ titulos: [ANCORADO], boletos: [BOLETO_NUM] });
+        const cenario = await h.service.cenarioParaConjunto();
+        h.tituloRepo.listAtivos.mockClear();
+        await h.service.confirmar({ ...CHAVE, ator: 'ana' }, cenario);
+        expect(h.tituloRepo.listAtivos).toHaveBeenCalledTimes(1);
     });
 });
