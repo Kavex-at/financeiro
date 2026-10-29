@@ -1,5 +1,22 @@
 # Columbia Financeiro — Changelog
 
+## v0.78.0 (2026-10-29) — SISPAG: confirmar de uma vez os títulos irmãos na gaveta do boleto
+
+- **Confirmação em conjunto.** Na gaveta de um título aparece "Outros títulos deste fornecedor com
+  número confiável": os títulos do mesmo credor e da mesma filial cujo boleto foi escolhido pelo
+  número do documento (nº do documento = nº do boleto). Cada linha mostra título, nº do documento,
+  nº do boleto, a diferença de valor e a de dias. Nada vem marcado: você marca os que quer confirmar,
+  até 30 por vez, e confirma todos com um clique.
+- **Resumo antes de confirmar.** O diálogo conta quantos terão o ajuste automático de centavos,
+  quantos precisam de ajuste manual no Conexos (diferença de centavos com o boleto vencendo depois) e
+  quantos foram escolhidos só pelo número (há boletos idênticos do mesmo emissor).
+- **Resultado por título.** Cada título é conferido de novo no servidor. Os que mudaram voltam
+  recusados, com o motivo; os outros são confirmados mesmo assim. Confirmar de novo o que já foi
+  confirmado não muda nada.
+- **Ajuste de centavos um por vez.** Os títulos confirmados no conjunto com diferença de centavos no
+  mesmo dia entram no ajuste automático de hoje, um depois do outro. Nada mais é escrito no Conexos.
+- Na cópia de PRD, 30 títulos do NELSON HEUSI confirmam em cerca de 1,3 s.
+
 ## v0.77.2 (2026-10-28) — SISPAG: boleto confirmado sem DDA chega à remessa
 
 - **Sem falso "valor diferente (+R$ 0,01)".** No lote, o aviso "não será vinculado: valor do boleto
