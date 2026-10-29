@@ -67,6 +67,8 @@ import AjusteCentavosTituloService from './AjusteCentavosTituloService.js';
 import GrupoBoletoService from './GrupoBoletoService.js';
 import type { PrazoBoleto } from '../../interface/sispag/PrazoBoleto.js';
 import ConferenciaReconhecimento from './ConferenciaReconhecimento.js';
+import RegraIrmaosConjunto from './RegraIrmaosConjunto.js';
+import type { ContextoConjunto } from '../../interface/sispag/ConfirmacaoEmConjunto.js';
 import MotorSugestaoBoleto from './MotorSugestaoBoleto.js';
 import PrazoBoletoCalculador from './PrazoBoletoCalculador.js';
 import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
@@ -98,6 +100,13 @@ export interface ResultadoDecisao {
      * aos vistos)? Derivado, nunca persistido; ausente = não se sabe (fail-closed na tela).
      */
     reconhecimentoValido?: boolean;
+}
+
+/** O cenário que uma decisão consulta: desfechos, pares vigentes e datas de débito. */
+export interface CenarioDecisao {
+    desfechos: DesfechoTitulo[];
+    pares: ConfirmacaoEmissor[];
+    datasDebito: Map<string, string>;
 }
 
 /** O que a listagem guarda em cache: o motor + os pares + o frescor do DDA (`ultimaSincronizacao`). */
@@ -165,6 +174,7 @@ export default class BoletoSuggestionService {
         private readonly ajusteCentavos: AjusteCentavosTituloService,
         @inject(GrupoBoletoRepository) private readonly grupoRepo: GrupoBoletoRepository,
         @inject(GrupoBoletoService) private readonly grupoService: GrupoBoletoService,
+        @inject(RegraIrmaosConjunto) private readonly regraConjunto: RegraIrmaosConjunto,
     ) {}
 
     // ── Leitura ────────────────────────────────────────────────────────────────────────────────
@@ -252,7 +262,18 @@ export default class BoletoSuggestionService {
             reconheceAvisos?: SinalSugestao[];
             /** Reconhecimento tipado da divergência de data (I15r, ADR-0078). */
             reconhecimento?: ReconhecimentoDivergenciaBody;
+            /**
+             * Linha de uma confirmação em conjunto (I15t, ADR-0080): confere a elegibilidade do
+             * conjunto ao vivo, grava `detalhe.conjunto` e deixa o ajuste de centavos para o conjunto.
+             */
+            conjunto?: ContextoConjunto;
         },
+        /**
+         * Só no conjunto (I15t(4), emenda 2026-10-29 da ADR-0080): o cenário recalculado DO BANCO
+         * uma vez no início do conjunto, em vez de um por linha. Título, boleto e decisões
+         * continuam relidos ao vivo por linha; fora de um conjunto é ignorado.
+         */
+        cenarioDoConjunto?: CenarioDecisao,
     ): Promise<ResultadoDecisao> => {
         this.exigirAtor(input.ator);
         const chave = this.chave(input);
@@ -303,7 +324,7 @@ export default class BoletoSuggestionService {
             });
         }
 
-        const cenario = await this.sugerirAgora();
+        const cenario = await this.cenarioDaDecisao(input.conjunto, cenarioDoConjunto);
         const pesCod = titulo.pesCod;
         const parVigente = cenario.pares.some(
             (p) => p.pesCod === pesCod && p.emissorChave === emissor.chave,
@@ -319,6 +340,7 @@ export default class BoletoSuggestionService {
         const sugestao = this.sugestaoConfirmavel(cenario.desfechos, chave);
         const tier = sugestao.avaliacao.resultado;
         if (!TIERS.has(tier)) throw new OverdueBoletoNotConfirmableError(chave);
+        this.exigirElegivelNoConjunto(chave, pesCod, sugestao, input.conjunto);
         // Aviso (I15o): conferido contra a avaliação RECALCULADA acima, nunca contra o cache.
         // Divergência de data com valor igual (I15r, ADR-0078): reconhecimento TIPADO, que substitui
         // o aviso simples e o implica. Sem a exigência, vale o aviso simples de hoje.
@@ -453,6 +475,7 @@ export default class BoletoSuggestionService {
                         deltaDias: sugestao.avaliacao.deltaDias,
                         sinais,
                         ...reconhecimento,
+                        ...this.detalheDoConjunto(input.conjunto),
                     },
                 },
                 tx,
@@ -469,12 +492,7 @@ export default class BoletoSuggestionService {
         if (resultado.criada) {
             // I18g(1) (ADR-0074): o ajuste de centavos é agendado SÓ depois do commit, fora da
             // transação e sem esperar o ERP — a resposta do `confirmar` não muda por causa dele.
-            this.ajusteCentavos.agendarAposConfirmar({
-                filCod: resultado.decisao.filCod,
-                docCod: resultado.decisao.docCod,
-                titCod: resultado.decisao.titCod,
-                decisaoId: resultado.decisao.id,
-            });
+            this.agendarAjusteIndividual(resultado.decisao, input.conjunto);
             await this.logService.info({
                 type: LOG_TYPE.BUSINESS_INFO,
                 message: 'sugestao_boleto.decisao',
@@ -1021,6 +1039,13 @@ export default class BoletoSuggestionService {
      * Desfecho por título calculado agora, sem cache — para o leitor de DPS (ADR-0073) escolher
      * quem ainda não tem desempate. Mesma entrada do cenário da tela.
      */
+    /**
+     * Desfechos do cenário em CACHE (o mesmo da listagem). Só para exibir, como a gaveta da
+     * confirmação em conjunto (I15t); quem decide é o `confirmar`, que relê ao vivo.
+     */
+    public desfechosEmCache = async (): Promise<DesfechoTitulo[]> =>
+        (await this.cache.obter(this.calcularCenario)).valor.desfechos;
+
     public desfechosAgora = async (): Promise<DesfechoTitulo[]> =>
         (await this.sugerirAgora()).desfechos;
 
@@ -1221,6 +1246,63 @@ export default class BoletoSuggestionService {
         avaliacao: c.avaliacao,
         estado: ESTADO_SUGESTAO.SUGERIDA,
     });
+
+    /**
+     * I15t(1), ao vivo: o par recalculado agora ainda é de um irmão elegível do conjunto. Fora de um
+     * conjunto, não confere nada.
+     */
+    private exigirElegivelNoConjunto = (
+        chave: ChaveSugestao,
+        pesCod: string,
+        sugestao: SugestaoBoletoTitulo,
+        conjunto?: ContextoConjunto,
+    ): void => {
+        if (!conjunto) return;
+        const motivo = this.regraConjunto.motivoInelegivel({
+            origem: { ...conjunto.origem, pesCod: conjunto.pesCod },
+            titulo: { ...chave, pesCod },
+            avaliacao: sugestao.avaliacao,
+        });
+        if (motivo) throw new BoletoSuggestionNotAvailableError({ ...chave, motivo });
+    };
+
+    /**
+     * Cenário recalculado do banco agora (nunca o cache): o que o conjunto passa a cada linha
+     * (I15t(4)). Custa um motor inteiro (~1,4 s na carteira real); por isso um por conjunto.
+     */
+    public cenarioParaConjunto = async (): Promise<CenarioDecisao> => this.sugerirAgora();
+
+    private cenarioDaDecisao = async (
+        conjunto?: ContextoConjunto,
+        cenarioDoConjunto?: CenarioDecisao,
+    ): Promise<CenarioDecisao> =>
+        conjunto && cenarioDoConjunto ? cenarioDoConjunto : this.sugerirAgora();
+
+    /** I15t(7): a trilha da linha leva o id do conjunto e o título de origem. */
+    private detalheDoConjunto = (
+        conjunto?: ContextoConjunto,
+    ): { conjunto?: { id: string; tituloOrigem: string } } => {
+        if (!conjunto) return {};
+        const { filCod, docCod, titCod } = conjunto.origem;
+        return { conjunto: { id: conjunto.id, tituloOrigem: `${filCod}/${docCod}/${titCod}` } };
+    };
+
+    /**
+     * I18g(1): o confirmar individual agenda o ajuste do seu título. No conjunto (I15t(6)) quem agenda
+     * é o conjunto, em fila sequencial, depois da última linha.
+     */
+    private agendarAjusteIndividual = (
+        decisao: DecisaoSugestao,
+        conjunto?: ContextoConjunto,
+    ): void => {
+        if (conjunto) return;
+        this.ajusteCentavos.agendarAposConfirmar({
+            filCod: decisao.filCod,
+            docCod: decisao.docCod,
+            titCod: decisao.titCod,
+            decisaoId: decisao.id,
+        });
+    };
 
     /**
      * I15o: `VENCE_ANTES_DO_TITULO` só se confirma com o reconhecimento do analista, conferido

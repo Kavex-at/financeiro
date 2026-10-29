@@ -34,3 +34,8 @@ ADR-0068, Q1 (par + registro por título). Idempotente (I15j). A UI mostra o tí
 "boleto confirmado (emissor X) — remessa ainda depende do ERP" e **mantém** o aviso do lote.
 Confirmação de tier `ATENCAO` é permitida (diferença com sinal já visível), mas nunca alarga limite
 (I15d). **Implemented** (v0.66.0); o reconhecimento tipado da data divergente (I15r) é `implemented` (ADR-0078, Fase 1); a confirmação continua com **zero** escrita no ERP (I15b).
+
+> **Nota (ADR-0080, `implemented`):** também é chamado linha a linha pela confirmação em conjunto
+> (`confirmarSugestoesEmConjunto`, I15t); nesse caso o evento `DECISAO_CONFIRMADA` leva
+> `detalhe.conjunto = { id, tituloOrigem }` e o ajuste de centavos entra na fila sequencial do conjunto.
+> Nada mais muda.

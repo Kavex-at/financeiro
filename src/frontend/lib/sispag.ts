@@ -2676,6 +2676,108 @@ export async function fetchDetalheTituloBoleto(chave: ChaveAnulacaoBoleto): Prom
   })
 }
 
+// ── Confirmação em conjunto de títulos irmãos (I15t, ADR-0080) ────────────────────────────────
+
+/**
+ * Avisos por linha (I15t(5)): `FAIXA_AJUSTE_MANUAL` = centavos e +1..+5 dias, a renegociação é
+ * manual no Conexos; `ESCOLHIDO_SO_PELO_NUMERO` = há outro boleto idêntico do mesmo emissor.
+ */
+export const AVISOS_CONJUNTO = ['FAIXA_AJUSTE_MANUAL', 'ESCOLHIDO_SO_PELO_NUMERO'] as const
+export type AvisoConjunto = (typeof AVISOS_CONJUNTO)[number]
+
+export const irmaoConjuntoSchema = z.object({
+  filCod: z.number(),
+  docCod: z.string(),
+  titCod: z.string(),
+  ddcCod: z.number(),
+  ditCod: z.number(),
+  /** O título em que a gaveta foi aberta (primeira linha quando elegível). */
+  origem: z.boolean(),
+  numeroDocumento: z.string().optional(),
+  numeroBoleto: z.string().optional(),
+  valorTitulo: z.number(),
+  vencimentoTitulo: z.string(),
+  valorBoleto: z.number(),
+  vencimentoBoleto: z.string(),
+  /** boleto − título, em reais, com sinal. */
+  deltaValor: z.number(),
+  /** vencimento do boleto − vencimento do título, em dias, com sinal. */
+  deltaDias: z.number(),
+  tier: resultadoSugestaoSchema,
+  emissor: z
+    .object({ banco: z.string(), layout: layoutEmissorSchema, mascarado: z.string() })
+    .optional(),
+  avisos: z.array(z.enum(AVISOS_CONJUNTO)),
+  /** 0 < |Δ| ≤ R$ 0,05 no mesmo dia: o ajuste de centavos automático deve rodar. */
+  ajusteAutomatico: z.boolean(),
+})
+export type IrmaoConjunto = z.infer<typeof irmaoConjuntoSchema>
+
+export const irmaosConjuntoSchema = z.object({
+  origem: z.object({ filCod: z.number(), docCod: z.string(), titCod: z.string() }),
+  irmaos: z.array(irmaoConjuntoSchema),
+  /** Teto de linhas marcadas por conjunto (30). */
+  maximo: z.number(),
+})
+export type IrmaosConjunto = z.infer<typeof irmaosConjuntoSchema>
+
+export const resultadoConjuntoSchema = z.object({
+  conjuntoId: z.string(),
+  resultados: z.array(
+    z.object({
+      chave: z.object({
+        filCod: z.number(),
+        docCod: z.string(),
+        titCod: z.string(),
+        ddcCod: z.number(),
+        ditCod: z.number(),
+      }),
+      status: z.enum(['CONFIRMADA', 'JA_CONFIRMADA', 'RECUSADA']),
+      motivo: z.string().optional(),
+    }),
+  ),
+  /** Linhas que terminaram confirmadas (novas ou já confirmadas antes). */
+  confirmadas: z.number(),
+  recusadas: z.number(),
+})
+export type ResultadoConjunto = z.infer<typeof resultadoConjuntoSchema>
+
+/** `GET .../titulo/irmaos` (`sispag:ver`): irmãos elegíveis à confirmação em conjunto. */
+export async function fetchIrmaosConjunto(chave: ChaveAnulacaoBoleto): Promise<IrmaosConjunto> {
+  const qs = new URLSearchParams({
+    filCod: String(chave.filCod),
+    docCod: chave.docCod,
+    titCod: chave.titCod,
+  })
+  return autorizacaoRequest(`${sugestoesBase}/titulo/irmaos?${qs.toString()}`, irmaosConjuntoSchema, {
+    cache: 'no-store',
+  })
+}
+
+/**
+ * `POST .../confirmar-em-conjunto` (`sispag:executar`). Cada linha passa pelo mesmo confirmar e
+ * tem o seu resultado; nunca tudo-ou-nada. Acima de 30 linhas, 422 e nada confirmado.
+ */
+export async function confirmarEmConjunto(
+  origem: ChaveAnulacaoBoleto,
+  itens: readonly ChaveSugestaoBoleto[],
+): Promise<ResultadoConjunto> {
+  return autorizacaoRequest(
+    `${sugestoesBase}/confirmar-em-conjunto`,
+    resultadoConjuntoSchema,
+    post({
+      origem: { filCod: origem.filCod, docCod: origem.docCod, titCod: origem.titCod },
+      itens: itens.map((i) => ({
+        filCod: i.filCod,
+        docCod: i.docCod,
+        titCod: i.titCod,
+        ddcCod: i.ddcCod,
+        ditCod: i.ditCod,
+      })),
+    }),
+  )
+}
+
 /** `POST .../rejeitar` (`sispag:executar`); `motivo` obrigatório. */
 export async function rejeitarSugestaoBoleto(
   chave: ChaveSugestaoBoleto,

@@ -69,6 +69,25 @@ export const TituloSugestaoQuerySchema = z.object({
     titCod: texto.max(64),
 });
 
+/**
+ * Confirmação em conjunto (I15t, ADR-0080): o título de origem e as linhas marcadas. `.strict()`
+ * nos dois níveis (sem "ator", sem reconhecimento: o conjunto não confirma par que o exija). O
+ * teto de domínio (30) é do serviço, que responde 422 nomeado; o Zod só barra o abuso (400).
+ */
+export const CONFIRMACAO_CONJUNTO_TETO_HTTP = 200;
+export const ConfirmarEmConjuntoBodySchema = z
+    .object({
+        origem: z
+            .object({
+                filCod: z.number().int().positive(),
+                docCod: texto.max(64),
+                titCod: texto.max(64),
+            })
+            .strict(),
+        itens: z.array(ChaveSugestaoBodySchema).min(1).max(CONFIRMACAO_CONJUNTO_TETO_HTTP),
+    })
+    .strict();
+
 /** `motivo` ausente é 400; em branco chega ao serviço, que responde 422 nomeado. */
 export const RejeitarSugestaoBodySchema = ChaveSugestaoBodySchema.extend({
     motivo: z.string().max(500),

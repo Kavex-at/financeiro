@@ -81,6 +81,7 @@ import {
     ChaveSugestaoBodySchema,
     ConfirmacaoEmissorIdSchema,
     ConfirmacoesEmissorQuerySchema,
+    ConfirmarEmConjuntoBodySchema,
     ConfirmarSugestaoBodySchema,
     RejeitarSugestaoBodySchema,
     RevogarConfirmacaoBodySchema,
@@ -89,6 +90,7 @@ import {
 } from '../domain/interface/sispag/SugestaoBoletoSchemas.js';
 import AjusteCentavosTituloService from '../domain/service/sispag/AjusteCentavosTituloService.js';
 import BoletoSuggestionService from '../domain/service/sispag/BoletoSuggestionService.js';
+import ConfirmacaoEmConjuntoService from '../domain/service/sispag/ConfirmacaoEmConjuntoService.js';
 
 /**
  * Rotas SISPAG (Escopo II) — SPIKE READ-ONLY (semente da Fatia 1).
@@ -984,6 +986,55 @@ router.post(
                 criada: r.criada,
                 decisao: decisaoParaApi(r.decisao, r.reconhecimentoValido),
             });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// ── Confirmação em conjunto de títulos irmãos (I15t, ADR-0080) ──────────────────────────────
+const confirmacaoEmConjunto = (): ConfirmacaoEmConjuntoService =>
+    container.resolve(ConfirmacaoEmConjuntoService);
+
+// GET /sispag/sugestoes-boleto/titulo/irmaos?filCod=&docCod=&titCod= — `sispag:ver`. Títulos do mesmo
+// credor e filial cujo boleto foi escolhido pela âncora de número, a origem primeiro; com os avisos
+// (faixa de ajuste manual, escolhido só pelo número). Do cenário em cache: só exibe. 404 nomeado
+// se o título de origem não é elegível.
+router.get(
+    '/sugestoes-boleto/titulo/irmaos',
+    exigirPermissao(PERMISSION.SISPAG_VER),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const query = TituloSugestaoQuerySchema.safeParse(req.query);
+        if (!query.success) return respostaInvalida(res, query.error);
+        try {
+            const r = await confirmacaoEmConjunto().listarIrmaos(query.data);
+            res.setHeader('Cache-Control', 'no-store');
+            res.json(r);
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// POST /sispag/sugestoes-boleto/confirmar-em-conjunto — `sispag:executar`. 200 com o resultado POR
+// LINHA (`CONFIRMADA` | `JA_CONFIRMADA` | `RECUSADA` + motivo): cada linha passa pelo mesmo confirmar,
+// nunca tudo-ou-nada · 422 acima de 30 linhas (nada confirmado) · 404 origem fora da carteira.
+router.post(
+    '/sugestoes-boleto/confirmar-em-conjunto',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    limiteDecisaoBoleto,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const body = ConfirmarEmConjuntoBodySchema.safeParse(req.body);
+        if (!body.success) return respostaInvalida(res, body.error);
+        try {
+            res.json(
+                await confirmacaoEmConjunto().confirmarEmConjunto({
+                    ...body.data,
+                    ator: ator(req),
+                }),
+            );
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }

@@ -113,3 +113,7 @@ RECUSADO(motivo)`, lido do ledger `sispag_ajuste_centavos_execucao` e da trilha.
 desfecho dele na sugestão é `EM_GRUPO` (I15q) e o vínculo da barra é do grupo (I17o). Título com decisão
 `CONFIRMADA` não entra em grupo, e o boleto de um grupo nunca é candidato 1:1. Para levar a grupo um título
 já decidido, anular a decisão antes (I15l). Ver `entities/grupo-boleto.md`.
+
+> **Nota (ADR-0080, `implemented`):** decisão confirmada em conjunto (I15t) é uma decisão comum; o
+> vínculo com o conjunto fica só no evento `DECISAO_CONFIRMADA` (`detalhe.conjunto = { id,
+> tituloOrigem }`), sem coluna nova.

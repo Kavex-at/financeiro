@@ -309,6 +309,51 @@ export default class AjusteCentavosTituloService {
     };
 
     /**
+     * Confirmação em conjunto (I15t(6), ADR-0080): o mesmo ajuste do confirmar individual, um pedido
+     * por título, UM DEPOIS DO OUTRO numa só fila em segundo plano (nunca N renegociações
+     * simultâneas no `fin070`). Agenda e devolve na hora: a resposta do conjunto não espera o ERP.
+     */
+    public agendarEmSequencia = (pedidos: Array<Omit<PedidoAjuste, 'gatilho'>>): void => {
+        if (pedidos.length === 0) return;
+        void this.executarEmSequencia(pedidos);
+    };
+
+    /**
+     * O corpo de `agendarEmSequencia`, aguardável. A falha de um título é logada e não impede os
+     * seguintes; no fim, uma retomada por filial (como o `agendarAposConfirmar` faz por título).
+     */
+    public executarEmSequencia = async (
+        pedidos: Array<Omit<PedidoAjuste, 'gatilho'>>,
+    ): Promise<void> => {
+        for (const p of pedidos) {
+            try {
+                await this.ajustar({ ...p, gatilho: GATILHO_AJUSTE.CONFIRMAR });
+            } catch (err) {
+                await this.logService.error({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'ajuste de centavos após confirmar falhou',
+                    data: {
+                        filCod: p.filCod,
+                        titulo: `${p.docCod}/${p.titCod}`,
+                        erro: this.descrever(err),
+                    },
+                });
+            }
+        }
+        for (const filCod of new Set(pedidos.map((p) => p.filCod))) {
+            try {
+                await this.retomarPendentes({ filCod });
+            } catch (err) {
+                await this.logService.error({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'ajuste de centavos: varredura de retomada falhou',
+                    data: { filCod, erro: this.descrever(err) },
+                });
+            }
+        }
+    };
+
+    /**
      * Varredura de retomada pedida pela TELA do SISPAG ao abrir (I18g(3), M2): agenda e devolve na
      * hora; a tela nunca espera o ERP. Só no processo do servidor (o modo efetivo cuida disso).
      */

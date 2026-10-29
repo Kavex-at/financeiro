@@ -140,3 +140,7 @@ Renegociação em vez de correção do documento; conta contábil de juros/desco
 (I17b, I17m, I17n) · `business-rules/sugestao-boleto-dda-sispag.md` (I15c, I15g) ·
 `entities/decisao-sugestao-boleto.md` · `entities/titulo-a-pagar.md` · `business-rules/identidade-execucao-conexos.md`
 · `_inbox/sispag-centavos-hml-achados.md`
+
+> **Nota à I18g (ADR-0080, `implemented`):** na confirmação em conjunto (I15t) o ajuste é pedido uma vez
+> por título confirmado, em sequência, numa fila do conjunto; nunca como operação de grupo. A I18a(4)
+> (mesmo vencimento) segue inalterada. Só remissão; nenhuma regra muda.

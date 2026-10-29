@@ -23,6 +23,8 @@ import DivergenceAcknowledgementStaleError from '../domain/errors/DivergenceAckn
 import WarningAcknowledgementRequiredError from '../domain/errors/WarningAcknowledgementRequiredError.js';
 import { PERMISSION, type Permission } from '../domain/interface/auth/Permission.js';
 import BoletoSuggestionService from '../domain/service/sispag/BoletoSuggestionService.js';
+import ConfirmacaoEmConjuntoService from '../domain/service/sispag/ConfirmacaoEmConjuntoService.js';
+import BatchConfirmationTooLargeError from '../domain/errors/BatchConfirmationTooLargeError.js';
 import { AcessoFixture } from '../http/__fixtures__/acesso.fixture.js';
 import { errorMiddleware } from '../http/errorMiddleware.js';
 import { requestIdMiddleware } from '../middleware/requestId.js';
@@ -762,6 +764,102 @@ describe('confirmações de emissor', () => {
             const rota = `${url}/sispag/confirmacoes-emissor/${ID}/revogar`;
             expect((await post(rota, { motivo: 'x' })).status).toBe(404);
             expect((await post(rota, { motivo: '' })).status).toBe(422);
+        });
+    });
+});
+
+describe('confirmação em conjunto (I15t, ADR-0080)', () => {
+    const ORIGEM = { filCod: 2, docCod: '9001', titCod: '1' };
+    const conjunto = (over: Record<string, jest.Mock> = {}) => {
+        const s = {
+            listarIrmaos: jest.fn().mockResolvedValue({ origem: ORIGEM, irmaos: [], maximo: 30 }),
+            confirmarEmConjunto: jest.fn().mockResolvedValue({
+                conjuntoId: 'c-1',
+                resultados: [{ chave: CHAVE, status: 'CONFIRMADA' }],
+                confirmadas: 1,
+                recusadas: 0,
+            }),
+            ...over,
+        };
+        container.registerInstance(ConfirmacaoEmConjuntoService, s as never);
+        return s;
+    };
+    const IRMAOS = '/sispag/sugestoes-boleto/titulo/irmaos?filCod=2&docCod=9001&titCod=1';
+    const CONFIRMAR = '/sispag/sugestoes-boleto/confirmar-em-conjunto';
+
+    it('GET irmãos: sispag:ver, no-store, chave validada', async () => {
+        const s = conjunto();
+        await comApp(VER, async (url) => {
+            const r = await fetch(`${url}${IRMAOS}`);
+            expect(r.status).toBe(200);
+            expect(r.headers.get('cache-control')).toBe('no-store');
+            expect(s.listarIrmaos).toHaveBeenCalledWith(ORIGEM);
+            expect(
+                (await fetch(`${url}/sispag/sugestoes-boleto/titulo/irmaos?filCod=x`)).status,
+            ).toBe(400);
+        });
+        await comApp(NENHUMA, async (url) => {
+            expect((await fetch(`${url}${IRMAOS}`)).status).toBe(403);
+        });
+    });
+
+    it('GET irmãos: origem não elegível ⇒ 404 nomeado', async () => {
+        conjunto({
+            listarIrmaos: jest.fn().mockRejectedValue(new TitleSuggestionNotFoundError(ORIGEM)),
+        });
+        await comApp(VER, async (url) => {
+            const r = await fetch(`${url}${IRMAOS}`);
+            expect(r.status).toBe(404);
+            expect(((await r.json()) as { code: string }).code).toBe('TITULO_SEM_SUGESTAO');
+        });
+    });
+
+    it('POST: sispag:executar; o ator vem do token', async () => {
+        const s = conjunto();
+        await comApp(VER, async (url) => {
+            expect(
+                (await post(`${url}${CONFIRMAR}`, { origem: ORIGEM, itens: [CHAVE] })).status,
+            ).toBe(403);
+        });
+        await comApp(VER_EXECUTAR, async (url) => {
+            const r = await post(`${url}${CONFIRMAR}`, { origem: ORIGEM, itens: [CHAVE] });
+            expect(r.status).toBe(200);
+            expect(((await r.json()) as { confirmadas: number }).confirmadas).toBe(1);
+        });
+        expect(s.confirmarEmConjunto).toHaveBeenCalledWith({
+            origem: ORIGEM,
+            itens: [CHAVE],
+            ator: 'bia',
+        });
+    });
+
+    it('POST: corpo estrito (ator, reconhecimento, lista vazia ⇒ 400)', async () => {
+        const s = conjunto();
+        await comApp(VER_EXECUTAR, async (url) => {
+            for (const corpo of [
+                { origem: ORIGEM, itens: [CHAVE], ator: 'x' },
+                { origem: ORIGEM, itens: [{ ...CHAVE, reconheceAvisos: [] }] },
+                { origem: ORIGEM, itens: [] },
+                { itens: [CHAVE] },
+            ]) {
+                expect((await post(`${url}${CONFIRMAR}`, corpo)).status).toBe(400);
+            }
+        });
+        expect(s.confirmarEmConjunto).not.toHaveBeenCalled();
+    });
+
+    it('POST: acima do teto ⇒ 422 nomeado', async () => {
+        conjunto({
+            confirmarEmConjunto: jest
+                .fn()
+                .mockRejectedValue(new BatchConfirmationTooLargeError({ pedidas: 31, maximo: 30 })),
+        });
+        await comApp(VER_EXECUTAR, async (url) => {
+            const r = await post(`${url}${CONFIRMAR}`, { origem: ORIGEM, itens: [CHAVE] });
+            expect(r.status).toBe(422);
+            const b = (await r.json()) as { code: string; error: string };
+            expect(b.code).toBe('CONFIRMACAO_CONJUNTO_ACIMA_DO_LIMITE');
+            expect(b.error).toMatch(/no máximo 30/);
         });
     });
 });
