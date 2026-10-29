@@ -57,6 +57,7 @@ describe('PaginacaoBoletoDda', () => {
             CANDIDATO: 1,
             AMBIGUO: 1,
             SEM_TITULO: 1,
+            emGrupo: 0,
         });
         expect(r.total).toBe(1);
         expect(r.boletos.map((b) => b.numero)).toEqual(['329691']);
@@ -128,5 +129,56 @@ describe('PaginacaoBoletoDda', () => {
     it('lista vazia devolve página 1 sem linhas', () => {
         const r = paginacao.paginar([], { pagina: 5, tamanho: 20 });
         expect(r).toMatchObject({ boletos: [], total: 0, pagina: 1, filiais: [] });
+    });
+
+    describe('boleto de grupo (I21v): chip "Em grupo" ortogonal à situação', () => {
+        const GRUPO_SUG = {
+            estado: 'SUGERIDO' as const,
+            filCod: 1,
+            nTitulos: 2,
+            confirmavel: true,
+        };
+        const GRUPO_CONF = {
+            estado: 'CONFIRMADO' as const,
+            id: 'g-1',
+            filCod: 1,
+            nTitulos: 3,
+            confirmavel: true,
+        };
+        const comGrupo = [
+            { ...ADP, grupo: GRUPO_SUG },
+            { ...PEDRONI, grupo: GRUPO_CONF },
+            VINCULADO,
+            LIVRE,
+        ];
+
+        it('conta emGrupo (sugerido + confirmado) sem depender da situação', () => {
+            const r = paginacao.paginar(comGrupo, { pagina: 1, tamanho: 20 });
+            expect(r.contagem.emGrupo).toBe(2);
+            expect(r.contagem.todas).toBe(4);
+        });
+
+        it('filtro emGrupo devolve só os boletos de grupo e compõe com a situação', () => {
+            const r = paginacao.paginar(comGrupo, { emGrupo: true, pagina: 1, tamanho: 20 });
+            expect(r.boletos.map((b) => b.ditCod)).toEqual([1, 2]);
+            expect(r.total).toBe(2);
+            const so = paginacao.paginar(comGrupo, {
+                emGrupo: true,
+                situacao: 'AMBIGUO',
+                pagina: 1,
+                tamanho: 20,
+            });
+            expect(so.boletos.map((b) => b.numero)).toEqual(['329691']);
+        });
+
+        it('a contagem de emGrupo respeita filial e busca, e não muda com o filtro emGrupo', () => {
+            const r = paginacao.paginar(comGrupo, {
+                emGrupo: true,
+                busca: 'pedroni',
+                pagina: 1,
+                tamanho: 20,
+            });
+            expect(r.contagem.emGrupo).toBe(1);
+        });
     });
 });

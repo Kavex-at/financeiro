@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import { toast } from 'sonner'
-import { AlertTriangle, Copy, DatabaseZap, RefreshCcw } from 'lucide-react'
+import { AlertTriangle, ChevronDown, Copy, DatabaseZap, RefreshCcw } from 'lucide-react'
 import {
   Table,
   TableBody,
@@ -41,6 +41,7 @@ import {
   resumoCandidatos,
 } from './CandidatosBoletoDialog'
 import { CardsBoletosDda, type FiltroSituacaoDda } from './CardsBoletosDda'
+import { GrupoBoletoDaFilial } from './GrupoBoletoDaFilial'
 import { horasDdaDefasado } from './ddaDefasado'
 import { hojeBrt, somarDias } from './vencimentoDda'
 
@@ -106,9 +107,12 @@ function TituloLinha({ t, flpCod }: { t: BoletoDdaTitulo; flpCod?: number }) {
 
 export function BoletosDdaTab({
   onCompor,
+  onGrupoAlterado,
 }: {
   /** Compor um boleto agrupado a partir de um boleto livre (ADR-0077): só com `sispag:executar`. */
   onCompor?: (boleto: BoletoDda) => void
+  /** I21v: depois de confirmar ou anular um grupo aqui, a tela relê carteira, lotes e sugestões. */
+  onGrupoAlterado?: () => void | Promise<void>
 } = {}) {
   // ADR-0053: consultar os boletos (`GET /sispag/boletos-dda`) basta `sispag:ver`; sincronizar
   // com o fin124 ("Atualizar DDA") exige `sispag:executar` e some sem ela (R11). Sem `ver`, por
@@ -119,6 +123,10 @@ export function BoletosDdaTab({
   const [escopo, setEscopo] = React.useState<BoletoDdaEscopo>('a-vencer')
   const [situacao, setSituacao] = React.useState<FiltroSituacao>('todas')
   const [filial, setFilial] = React.useState('todas')
+  /** I21v: só os boletos de grupo (sugerido ou confirmado). */
+  const [emGrupo, setEmGrupo] = React.useState(false)
+  /** Linhas de grupo abertas (`ddcCod:ditCod`). */
+  const [abertos, setAbertos] = React.useState<ReadonlySet<string>>(new Set())
   /** Vencimento de/até (`YYYY-MM-DD`) — filtrado no servidor, como os demais. */
   const [vencimentoDe, setVencimentoDe] = React.useState('')
   const [vencimentoAte, setVencimentoAte] = React.useState('')
@@ -154,12 +162,13 @@ export function BoletosDdaTab({
       pagina,
       tamanho: TAMANHO_PAGINA,
       ...(situacao !== 'todas' ? { situacao } : {}),
+      ...(emGrupo ? { emGrupo: true } : {}),
       ...(buscaAplicada.trim() ? { busca: buscaAplicada.trim() } : {}),
       ...(filial !== 'todas' ? { filCod: Number(filial) } : {}),
       ...(vencimentoDe ? { vencimentoDe } : {}),
       ...(vencimentoAte ? { vencimentoAte } : {}),
     }),
-    [escopo, pagina, situacao, buscaAplicada, filial, vencimentoDe, vencimentoAte],
+    [escopo, pagina, situacao, emGrupo, buscaAplicada, filial, vencimentoDe, vencimentoAte],
   )
   const chave = `${JSON.stringify(filtro)}#${recarga}`
 
@@ -205,8 +214,21 @@ export function BoletosDdaTab({
     setVencimentoAte(urgentesAtivo ? '' : urgentesAte)
     setPagina(1)
   }
+  const alternarEmGrupo = () => {
+    setEmGrupo((v) => !v)
+    setPagina(1)
+  }
+  const alternarAberto = (b: BoletoDda) =>
+    setAbertos((atual) => {
+      const k = `${b.ddcCod}:${b.ditCod}`
+      const next = new Set(atual)
+      if (next.has(k)) next.delete(k)
+      else next.add(k)
+      return next
+    })
   const limparFiltros = () => {
     setSituacao('todas')
+    setEmGrupo(false)
     setFilial('todas')
     setBusca('')
     setBuscaAplicada('')
@@ -247,6 +269,7 @@ export function BoletosDdaTab({
   }
   const filtrando =
     situacao !== 'todas' ||
+    emGrupo ||
     filial !== 'todas' ||
     buscaAplicada.trim() !== '' ||
     vencimentoDe !== '' ||
@@ -324,7 +347,13 @@ export function BoletosDdaTab({
         ) : null}
       </div>
 
-      <CardsBoletosDda contagem={contagem} situacaoAtiva={situacao} onSelecionar={selecionarSituacao} />
+      <CardsBoletosDda
+        contagem={contagem}
+        situacaoAtiva={situacao}
+        onSelecionar={selecionarSituacao}
+        emGrupoAtivo={emGrupo}
+        onAlternarEmGrupo={alternarEmGrupo}
+      />
 
       <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Situação">
         {SITUACOES.map((s) => (
@@ -341,6 +370,15 @@ export function BoletosDdaTab({
             {s.label} ({contagem ? contagem[s.value] : '—'})
           </Button>
         ))}
+        <Button
+          size="sm"
+          variant={emGrupo ? 'default' : 'outline'}
+          onClick={alternarEmGrupo}
+          aria-pressed={emGrupo}
+          title="Boletos que pagam vários títulos de uma vez (grupo sugerido ou confirmado)"
+        >
+          Em grupo ({contagem ? contagem.emGrupo : '—'})
+        </Button>
         <Button
           size="sm"
           variant={urgentesAtivo ? 'default' : 'outline'}
@@ -421,12 +459,36 @@ export function BoletosDdaTab({
                 // resto de um ambíguo abre no modal — senão a linha vira uma coluna de cartões.
                 const principal = b.vinculo ?? b.candidatos[0]
                 const extras = b.vinculo ? 0 : b.candidatos.length - 1
+                const chaveLinha = `${b.ddcCod}:${b.ditCod}`
+                const aberto = abertos.has(chaveLinha)
                 return (
-                  <TableRow key={`${b.ddcCod}:${b.ditCod}`}>
+                  <React.Fragment key={chaveLinha}>
+                  <TableRow>
                     <TableCell>
-                      <Badge variant="outline" className={badge.className} title={badge.title}>
-                        {badge.label}
-                      </Badge>
+                      <div className="flex flex-col items-start gap-1">
+                        <Badge variant="outline" className={badge.className} title={badge.title}>
+                          {badge.label}
+                        </Badge>
+                        {b.grupo ? (
+                          <Button
+                            size="sm"
+                            variant="link"
+                            className="h-auto p-0 text-xs"
+                            aria-expanded={aberto}
+                            aria-controls={`grupo-${b.ddcCod}-${b.ditCod}`}
+                            onClick={() => alternarAberto(b)}
+                            aria-label={`${aberto ? 'Esconder' : 'Ver'} os ${b.grupo.nTitulos} títulos do grupo do boleto ${b.numero ?? b.ditCod}`}
+                          >
+                            <ChevronDown
+                              className={`size-3 transition-transform ${aberto ? 'rotate-180' : ''}`}
+                              aria-hidden
+                            />
+                            {b.grupo.estado === 'CONFIRMADO' ? 'Grupo confirmado' : 'Grupo sugerido'}
+                            {' · '}
+                            {b.grupo.nTitulos} títulos
+                          </Button>
+                        ) : null}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-col gap-0.5">
@@ -476,14 +538,18 @@ export function BoletosDdaTab({
                       )}
                     </TableCell>
                     <TableCell>
-                      {onCompor && b.situacao !== 'VINCULADO' && !b.vencido && b.codbar ? (
+                      {onCompor &&
+                      b.situacao !== 'VINCULADO' &&
+                      !b.vencido &&
+                      b.codbar &&
+                      b.grupo?.estado !== 'CONFIRMADO' ? (
                         <Button
                           size="sm"
                           variant="outline"
                           onClick={() => onCompor(b)}
-                          aria-label={`Compor boleto agrupado do boleto ${b.numero ?? b.ditCod}`}
+                          aria-label={`Compor com títulos o boleto ${b.numero ?? b.ditCod}`}
                         >
-                          Compor grupo
+                          Compor com títulos
                         </Button>
                       ) : null}
                       {b.linhaDigitavel ? (
@@ -499,6 +565,22 @@ export function BoletosDdaTab({
                       ) : null}
                     </TableCell>
                   </TableRow>
+                  {b.grupo && aberto ? (
+                    <TableRow>
+                      <TableCell colSpan={7} id={`grupo-${b.ddcCod}-${b.ditCod}`}>
+                        <GrupoBoletoDaFilial
+                          filCod={b.grupo.filCod}
+                          onde={{ tipo: 'boleto', ddcCod: b.ddcCod, ditCod: b.ditCod }}
+                          podeExecutar={podeExecutar}
+                          onAlterado={async () => {
+                            recarregar()
+                            await onGrupoAlterado?.()
+                          }}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                  </React.Fragment>
                 )
               })}
             </TableBody>

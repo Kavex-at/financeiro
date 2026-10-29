@@ -29,7 +29,14 @@ const resposta = (boletos: BoletoDda[]): BoletosDdaResposta => ({
   total: boletos.length,
   pagina: 1,
   tamanho: 50,
-  contagem: { todas: boletos.length, VINCULADO: 0, CANDIDATO: 0, AMBIGUO: 0, SEM_TITULO: 0 },
+  contagem: {
+    todas: boletos.length,
+    VINCULADO: 0,
+    CANDIDATO: 0,
+    AMBIGUO: 0,
+    SEM_TITULO: 0,
+    emGrupo: 0,
+  },
   filiais: [1],
   regraCandidato: 'candidato = regra em camadas',
 })

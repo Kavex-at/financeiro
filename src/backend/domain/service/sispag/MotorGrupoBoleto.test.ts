@@ -49,6 +49,12 @@ describe('MotorGrupoBoleto — sugestão de grupo fechado no mesmo vencimento (I
         expect(s?.titulos.map((t) => t.valorCentavos)).toEqual([52500, 52500, 52500]);
     });
 
+    it('S2: a sugestão carrega os avisos da regra (sugerido do mesmo dia não tem aviso)', () => {
+        const p = F.pedroni();
+        const [s] = motor.sugerir(entrada({ titulos: p.titulos, boletos: p.boletos }));
+        expect(s?.avisos).toEqual([]);
+    });
+
     it('HML AR SOLUÇÕES: 552/1 + 558/1 = R$ 2.346,94 ⇒ sugerido', () => {
         const sugestoes = motor.sugerir(entrada(F.arSolucoes()));
         expect(sugestoes).toHaveLength(1);

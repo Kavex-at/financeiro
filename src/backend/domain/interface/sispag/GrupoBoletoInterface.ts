@@ -362,6 +362,12 @@ export interface SugestaoGrupoBoleto {
     confirmavel: boolean;
     motivo?: MotivoGrupoInelegivel;
     motivos: MotivoGrupoInelegivel[];
+    /**
+     * Avisos que exigem reconhecimento antes de confirmar (I21i, I21g). A tela os mostra e os
+     * devolve em `reconheceAvisos`; o servidor os confere de novo. Hoje só a composição manual os
+     * gera (a sugestão é do mesmo vencimento), mas o contrato é o mesmo.
+     */
+    avisos: AvisoGrupo[];
 }
 
 // ── Entrada e saída do serviço (GrupoBoletoService) ──────────────────────────────────────────

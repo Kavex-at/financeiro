@@ -17,16 +17,21 @@ export function CardsBoletosDda({
   contagem,
   situacaoAtiva,
   onSelecionar,
+  emGrupoAtivo = false,
+  onAlternarEmGrupo,
 }: {
   /** `undefined` enquanto a primeira resposta não chegou: o card mostra "—", nunca zero. */
   contagem?: BoletoDdaContagem
   situacaoAtiva: FiltroSituacaoDda
   onSelecionar: (s: FiltroSituacaoDda) => void
+  /** I21v: o filtro "Em grupo" está ligado. */
+  emGrupoAtivo?: boolean
+  onAlternarEmGrupo?: () => void
 }) {
   const aConferir = contagem ? contagem.CANDIDATO + contagem.AMBIGUO : undefined
   const alternar = (s: BoletoDdaSituacao) => onSelecionar(situacaoAtiva === s ? 'todas' : s)
   return (
-    <KPIGrid columns={4} aria-label="Resumo dos boletos DDA">
+    <KPIGrid columns={5} aria-label="Resumo dos boletos DDA">
       <SimpleKPI
         label="Casados com título"
         value={fmt(contagem?.VINCULADO)}
@@ -101,6 +106,27 @@ export function CardsBoletosDda({
                 onClick={() => alternar('SEM_TITULO')}
               >
                 {situacaoAtiva === 'SEM_TITULO' ? 'Tirar o filtro' : 'Ver sem título'}
+              </Button>
+            ) : null}
+          </div>
+        }
+      />
+      <SimpleKPI
+        label="Pagam vários títulos"
+        value={fmt(contagem?.emGrupo)}
+        color="info"
+        active={emGrupoAtivo}
+        footer={
+          <div className="space-y-2">
+            <p>Um boleto que fecha a soma de vários títulos do credor</p>
+            {contagem && contagem.emGrupo > 0 && onAlternarEmGrupo ? (
+              <Button
+                size="sm"
+                variant="outline"
+                aria-pressed={emGrupoAtivo}
+                onClick={onAlternarEmGrupo}
+              >
+                {emGrupoAtivo ? 'Tirar o filtro' : 'Ver os grupos'}
               </Button>
             ) : null}
           </div>

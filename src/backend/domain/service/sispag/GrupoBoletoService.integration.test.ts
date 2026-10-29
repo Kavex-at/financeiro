@@ -170,6 +170,8 @@ describeComBanco('GrupoBoletoService (integração)', () => {
             grupoRepo,
             service,
             new RegraIrmaosConjunto(codigoBarras),
+            new MotorGrupoBoleto(codigoBarras, calendar, regra),
+            bloqueios,
         );
         for (const doc of ['38883', '38884', '38885']) await inserirTitulo(doc);
         // Outro credor: fora do conjunto fechado do PEDRONI (I21e).

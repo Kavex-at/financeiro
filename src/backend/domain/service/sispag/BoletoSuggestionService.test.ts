@@ -26,8 +26,11 @@ import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import BoletoSuggestionService from './BoletoSuggestionService.js';
 import AncoraOrdemDps from './AncoraOrdemDps.js';
+import F from './__fixtures__/grupoBoleto.js';
+import MotorGrupoBoleto from './MotorGrupoBoleto.js';
 import MotorSugestaoBoleto from './MotorSugestaoBoleto.js';
 import RegraIrmaosConjunto from './RegraIrmaosConjunto.js';
+import RegraGrupoBoleto from './RegraGrupoBoleto.js';
 import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
 import SugestaoBoletoCache from './SugestaoBoletoCache.js';
 
@@ -36,6 +39,7 @@ const calendar = BankingCalendar.withClock(() => HOJE);
 const codigoBarras = new CodigoBarrasBoleto();
 const regra = new RegraSugestaoBoleto();
 const motor = new MotorSugestaoBoleto(codigoBarras, calendar, regra, new AncoraOrdemDps());
+const motorGrupo = new MotorGrupoBoleto(codigoBarras, calendar, new RegraGrupoBoleto(codigoBarras));
 
 /** Relógio do cache nos testes: avança só quando o teste manda (TTL determinístico). */
 const relogio = { agora: HOJE.getTime() };
@@ -247,7 +251,11 @@ const montar = (over: Partial<Cenario> = {}) => {
         ),
         ultimaSincronizacao: jest.fn(async () => HOJE.getTime() - 2 * 3_600_000),
     };
-    const loteRepo = { listTitulosEmLotesAbertos: jest.fn(async () => []) };
+    const loteRepo = {
+        listTitulosEmLotesAbertos: jest.fn(async () => []),
+        listTitulosEmLotesComprometidos: jest.fn(async () => []),
+    };
+    const bloqueioRepo = { listAtivos: jest.fn(async () => []) };
     const dpsRepo = { listarLidos: jest.fn(async () => cen.dps) };
     const tx = {};
     const db = { withTransaction: jest.fn(async (fn: (t: unknown) => unknown) => fn(tx)) };
@@ -298,8 +306,11 @@ const montar = (over: Partial<Cenario> = {}) => {
         grupoRepo as never,
         grupoService as never,
         new RegraIrmaosConjunto(codigoBarras),
+        motorGrupo,
+        bloqueioRepo as never,
     );
     return {
+        bloqueioRepo,
         grupoRepo,
         grupoService,
         ordem,
@@ -1970,5 +1981,230 @@ describe('BoletoSuggestionService.confirmar — cenário do conjunto (I15t(4))',
         h.tituloRepo.listAtivos.mockClear();
         await h.service.confirmar({ ...CHAVE, ator: 'ana' }, cenario);
         expect(h.tituloRepo.listAtivos).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('BoletoSuggestionService — sugestão de grupo na carteira (I21v, I21w; PRD 2026-10-29)', () => {
+    // RHENUS (pesCod 1550), filial 1, vencimento 29/10: 5541/1 R$ 434,38 + 5566/1 R$ 25.935,47 =
+    // boleto 129818 (ddc 165 / dit 24398) R$ 26.369,85.
+    const RHENUS = (docCod: string, valor: number, numeroDocumento: string): TituloAPagar => ({
+        ...TITULO,
+        docCod,
+        pesCod: '1550',
+        credor: 'RHENUS',
+        valor,
+        numeroDocumento,
+        vencimento: utc('2026-10-29'),
+    });
+    const T_5541 = RHENUS('5541', 434.38, '163014');
+    const T_5566 = RHENUS('5566', 25935.47, '129818');
+    const B_GRUPO: BoletoDda = F.boleto({
+        ddcCod: 165,
+        ditCod: 24398,
+        numero: '129818',
+        valor: 26369.85,
+        vencimento: '2026-10-29',
+    });
+    const CHAVE_5566 = { filCod: 1, docCod: '5566', titCod: '1', ddcCod: 165, ditCod: 24398 };
+    const rhenus = () => montar({ titulos: [T_5541, T_5566], boletos: [B_GRUPO] });
+
+    it('a listagem marca os dois títulos como GRUPO_SUGERIDO, com o ponteiro, e conta a situação', async () => {
+        const h = rhenus();
+        const r = await h.service.listarSugestoes({});
+        expect(r.titulos.map((t) => [t.docCod, t.situacao]).sort()).toEqual([
+            ['5541', 'GRUPO_SUGERIDO'],
+            ['5566', 'GRUPO_SUGERIDO'],
+        ]);
+        expect(r.titulos[0]?.grupoSugerido).toMatchObject({
+            ddcCod: 165,
+            ditCod: 24398,
+            nTitulos: 2,
+            valorBoletoCentavos: 2636985,
+        });
+        expect(r.contagemSituacao.GRUPO_SUGERIDO).toBe(2);
+        expect(r.sugestoes).toEqual([]);
+    });
+
+    it('o mesmo cenário em cache serve a listagem e a situação por título (uma passada do motor de grupos)', async () => {
+        const h = rhenus();
+        const espiao = jest.spyOn(motorGrupo, 'sugerir');
+        try {
+            await h.service.listarSugestoes({});
+            await h.service.situacaoPorTitulo();
+            expect(espiao).toHaveBeenCalledTimes(1);
+            expect(h.tituloRepo.listAtivos).toHaveBeenCalledTimes(1);
+        } finally {
+            espiao.mockRestore();
+        }
+    });
+
+    it('confirmar 1:1 o boleto do grupo para 5566 é recusado, com o motivo do grupo; nada gravado', async () => {
+        const h = rhenus();
+        const erro = await h.service
+            .confirmar({ ...CHAVE_5566, ator: 'ana' })
+            .catch((e: unknown) => e);
+        expect(erro).toBeInstanceOf(BoletoSuggestionNotAvailableError);
+        expect((erro as BoletoSuggestionNotAvailableError).userMessage).toMatch(
+            /gaveta do título ou na aba Boletos DDA/,
+        );
+        expect(h.repo.inserirDecisao).not.toHaveBeenCalled();
+    });
+
+    it('S4: gruposPorBoleto devolve o grupo SUGERIDO por ddc:dit, do mesmo cenário em cache', async () => {
+        const h = rhenus();
+        const mapa = await h.service.gruposPorBoleto();
+        expect(mapa.get('165:24398')).toEqual({
+            estado: 'SUGERIDO',
+            filCod: 1,
+            nTitulos: 2,
+            confirmavel: true,
+        });
+        await h.service.listarSugestoes({});
+        expect(h.tituloRepo.listAtivos).toHaveBeenCalledTimes(1);
+    });
+
+    it('S4: grupo CONFIRMADO vira CONFIRMADO com o id e vence a sugestão', async () => {
+        const h = rhenus();
+        h.grupoRepo.listarConfirmados.mockResolvedValue([
+            {
+                id: 'grupo-9',
+                filCod: 1,
+                pesCod: '1550',
+                ddcCod: 165,
+                ditCod: 24398,
+                estado: 'CONFIRMADO',
+                titulos: [
+                    { filCod: 1, docCod: '5541', titCod: '1' },
+                    { filCod: 1, docCod: '5566', titCod: '1' },
+                ],
+            },
+        ]);
+        const mapa = await h.service.gruposPorBoleto();
+        expect(mapa.get('165:24398')).toEqual({
+            estado: 'CONFIRMADO',
+            id: 'grupo-9',
+            filCod: 1,
+            nTitulos: 2,
+            confirmavel: true,
+        });
+    });
+
+    it('falha na leitura das marcas não derruba a listagem (cai no 1:1 de antes, com aviso no log)', async () => {
+        const h = rhenus();
+        h.bloqueioRepo.listAtivos.mockRejectedValue(new Error('banco fora'));
+        const r = await h.service.listarSugestoes({});
+        expect(r.titulos.every((t) => t.situacao !== 'GRUPO_SUGERIDO')).toBe(true);
+        expect(h.logService.warn).toHaveBeenCalled();
+    });
+
+    it('(a) leitura dos lotes comprometidos falha: a listagem funciona sem GRUPO_SUGERIDO, com aviso e o código do driver', async () => {
+        const h = rhenus();
+        h.loteRepo.listTitulosEmLotesComprometidos.mockRejectedValue(
+            Object.assign(new Error('conexão caiu'), { code: '57P01' }),
+        );
+        const r = await h.service.listarSugestoes({});
+        expect(r.titulos).toHaveLength(2);
+        expect(r.titulos.every((t) => t.situacao !== 'GRUPO_SUGERIDO')).toBe(true);
+        expect(h.logService.warn).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: expect.stringMatching(/lotes comprometidos.*desligada/),
+                data: expect.objectContaining({ codigoErro: '57P01' }),
+            }),
+        );
+    });
+
+    it('(b) o motor de grupos lança: a listagem funciona só com o 1:1, com aviso (catch de gruposSugeridos)', async () => {
+        const h = rhenus();
+        const espiao = jest.spyOn(motorGrupo, 'sugerir').mockImplementation(() => {
+            throw Object.assign(new Error('motor quebrou'), { code: 'E_MOTOR' });
+        });
+        try {
+            const r = await h.service.listarSugestoes({});
+            expect(r.titulos).toHaveLength(2);
+            expect(r.titulos.every((t) => t.situacao !== 'GRUPO_SUGERIDO')).toBe(true);
+            expect(h.logService.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    message: expect.stringMatching(/sugestões de grupo/),
+                    data: expect.objectContaining({ codigoErro: 'E_MOTOR' }),
+                }),
+            );
+        } finally {
+            espiao.mockRestore();
+        }
+    });
+
+    it('(c) EM_GRUPO e ORFA mantêm a situação e só ganham o ponteiro', async () => {
+        const grupoConfirmado = {
+            id: 'grupo-1',
+            filCod: 1,
+            pesCod: '1550',
+            ddcCod: 700,
+            ditCod: 9,
+            estado: 'CONFIRMADO',
+            titulos: [{ filCod: 1, docCod: '5566', titCod: '1' }],
+        };
+        const h = montar({ titulos: [T_5541, T_5566], boletos: [B_GRUPO] });
+        h.grupoRepo.listarConfirmados.mockResolvedValue([grupoConfirmado]);
+        // 5566 já está em outro grupo confirmado (EM_GRUPO); o motor de grupos ainda o inclui no ponteiro.
+        const espiao = jest.spyOn(motorGrupo, 'sugerir').mockReturnValue([
+            {
+                filCod: 1,
+                pesCod: '1550',
+                ddcCod: 165,
+                ditCod: 24398,
+                numeroBoleto: '129818',
+                valorBoletoCentavos: 2636985,
+                vencimentoBoleto: '2026-10-29',
+                titulos: [T_5541, T_5566].map((t) => ({
+                    filCod: 1,
+                    docCod: t.docCod,
+                    titCod: '1',
+                    motivos: [],
+                    valorCentavos: Math.round(t.valor * 100),
+                    vencimento: '2026-10-29',
+                })),
+                intercambiavel: false,
+                parVigente: true,
+                confirmavel: true,
+                motivos: [],
+            },
+        ] as never);
+        try {
+            const r = await h.service.listarSugestoes({});
+            const emGrupo = r.titulos.find((t) => t.docCod === '5566');
+            expect(emGrupo?.situacao).toBe('EM_GRUPO');
+            expect(emGrupo?.grupoSugerido?.ditCod).toBe(24398);
+            // ORFA: decisão 1:1 de 5541 cujo boleto saiu do pool.
+            const h2 = montar({
+                titulos: [T_5541, T_5566],
+                boletos: [B_GRUPO],
+                decisoes: [
+                    {
+                        ...DECISAO,
+                        docCod: '5541',
+                        pesCod: '1550',
+                        ddcCod: 999,
+                        ditCod: 999,
+                    },
+                ],
+            });
+            const r2 = await h2.service.listarSugestoes({});
+            const orfa = r2.titulos.find((t) => t.docCod === '5541');
+            expect(orfa?.situacao).toBe('ORFA');
+            expect(orfa?.grupoSugerido?.ditCod).toBe(24398);
+        } finally {
+            espiao.mockRestore();
+        }
+    });
+
+    it('decisão 1:1 já confirmada no boleto: o grupo não é sugerido e nada muda sozinho', async () => {
+        const h = montar({
+            titulos: [T_5541, T_5566],
+            boletos: [B_GRUPO],
+            decisoes: [{ ...DECISAO, ...CHAVE_5566, pesCod: '1550' }],
+        });
+        const r = await h.service.listarSugestoes({});
+        expect(r.titulos.find((t) => t.docCod === '5566')?.situacao).toBe('CONFIRMADA');
+        expect(r.titulos.find((t) => t.docCod === '5541')?.situacao).not.toBe('GRUPO_SUGERIDO');
     });
 });

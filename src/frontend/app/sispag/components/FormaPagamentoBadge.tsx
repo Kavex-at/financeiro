@@ -1,7 +1,9 @@
 import { AlertTriangle, Barcode } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { formaDePagamento, type TituloAPagar } from '@/lib/sispag'
+import { formaDePagamento, type GrupoSugeridoRef, type TituloAPagar } from '@/lib/sispag'
 import {
+  ACAO_VER_GRUPO,
+  descricaoGrupoSugerido,
   ROTULO_AVISO,
   ROTULO_SITUACAO,
   type ResumoDesfecho,
@@ -38,9 +40,11 @@ const LINK_CLASSE =
 function SeloSugestao({
   sugestao,
   onAbrir,
+  onVerGrupo,
 }: {
   sugestao: ResumoDesfecho
   onAbrir: (() => void) | undefined
+  onVerGrupo: ((g: GrupoSugeridoRef) => void) | undefined
 }) {
   const rotulo = ROTULO_SITUACAO[sugestao.situacao]
   const classe = CLASSE_TOM[TOM_SITUACAO[sugestao.situacao]]
@@ -67,6 +71,17 @@ function SeloSugestao({
       ) : (
         <span className={`text-xs ${classe}`}>{rotulo}</span>
       )}
+      {sugestao.grupoSugerido && onVerGrupo ? (
+        <button
+          type="button"
+          onClick={() => sugestao.grupoSugerido && onVerGrupo(sugestao.grupoSugerido)}
+          title={descricaoGrupoSugerido(sugestao.grupoSugerido)}
+          className={`${LINK_CLASSE} text-primary`}
+        >
+          {ACAO_VER_GRUPO}
+          <span className="sr-only"> — {descricaoGrupoSugerido(sugestao.grupoSugerido)}</span>
+        </button>
+      ) : null}
     </>
   )
 }
@@ -79,11 +94,14 @@ export function FormaPagamentoBadge({
   titulo,
   sugestao,
   onAbrirSugestao,
+  onVerGrupo,
 }: {
   titulo: Pick<TituloAPagar, 'formaPagamentoConexos' | 'temBoleto'>
   /** Desfecho do título (ADR-0072) — só aparece em "boleto sem DDA". */
   sugestao?: ResumoDesfecho | undefined
   onAbrirSugestao?: () => void
+  /** I21v: abre a gaveta do título, onde o grupo aparece (a confirmação é lá, não aqui). */
+  onVerGrupo?: (g: GrupoSugeridoRef) => void
 }) {
   const forma = formaDePagamento(titulo)
   if (forma.tom === 'dda') {
@@ -116,7 +134,9 @@ export function FormaPagamentoBadge({
           {forma.rotulo}
           <span className="sr-only"> — {EXPLICACAO.alerta}</span>
         </Badge>
-        {sugestao ? <SeloSugestao sugestao={sugestao} onAbrir={onAbrirSugestao} /> : null}
+        {sugestao ? (
+          <SeloSugestao sugestao={sugestao} onAbrir={onAbrirSugestao} onVerGrupo={onVerGrupo} />
+        ) : null}
       </div>
     )
   }

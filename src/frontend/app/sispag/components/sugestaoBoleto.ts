@@ -3,6 +3,7 @@ import type {
   AvisoVenceAntes,
   CandidatoTituloBoleto,
   DesfechoTituloBoleto,
+  GrupoSugeridoRef,
   SinalSugestaoBoleto,
   SituacaoSugestaoTitulo,
   ModoAjusteCentavos,
@@ -11,6 +12,7 @@ import type {
 } from '@/lib/sispag'
 import { MOTIVO_RECONHECIMENTO_MAX, MOTIVO_RECONHECIMENTO_MIN } from '@/lib/sispag'
 import { formatBRL } from '@/lib/utils'
+import { formatCentavos, rotuloMotivoGrupo } from './grupoBoleto'
 
 const numero = (n: number, casas: number) =>
   new Intl.NumberFormat('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas }).format(n)
@@ -117,6 +119,7 @@ export const resumoDoTitulo = (
 /** Rótulo do link da coluna "Forma de pagamento". Fraco NUNCA diz "sugestão disponível". */
 export const ROTULO_SITUACAO: Record<SituacaoSugestaoTitulo, string> = {
   EM_GRUPO: 'em boleto agrupado',
+  GRUPO_SUGERIDO: 'em grupo sugerido',
   UNICA_SEGURA: 'sugestão disponível',
   SO_ATENCAO: 'ver boleto sugerido',
   AMBIGUA: 'mais de um boleto possível',
@@ -133,6 +136,7 @@ export type TomSituacao = 'acao' | 'aviso' | 'mudo'
 
 export const TOM_SITUACAO: Record<SituacaoSugestaoTitulo, TomSituacao> = {
   EM_GRUPO: 'mudo',
+  GRUPO_SUGERIDO: 'aviso',
   UNICA_SEGURA: 'acao',
   SO_ATENCAO: 'aviso',
   AMBIGUA: 'aviso',
@@ -144,23 +148,47 @@ export const TOM_SITUACAO: Record<SituacaoSugestaoTitulo, TomSituacao> = {
   ORFA: 'aviso',
 }
 
-/** Só `SEM_CANDIDATO` não tem o que mostrar além do texto: não vira botão. */
-export const SITUACAO_SEM_PAINEL: ReadonlySet<SituacaoSugestaoTitulo> = new Set([
-  'SEM_CANDIDATO',
-  // Título dentro de um boleto agrupado confirmado: o boleto é do grupo, não há candidato a ver.
-  'EM_GRUPO',
-])
+/**
+ * Só `SEM_CANDIDATO` não tem o que mostrar além do texto: não vira botão. `EM_GRUPO` e
+ * `GRUPO_SUGERIDO` abrem a gaveta (I21v): é lá que o grupo aparece, com Confirmar ou Anular.
+ */
+export const SITUACAO_SEM_PAINEL: ReadonlySet<SituacaoSugestaoTitulo> = new Set(['SEM_CANDIDATO'])
 
 export interface ResumoDesfecho {
   situacao: SituacaoSugestaoTitulo
   avisoVenceAntes: AvisoVenceAntes
   /** Candidatos dentro do envelope (antes do corte de exibição). */
   total: number
+  /** I21v: a sugestão de grupo a que o título pertence (qualquer situação). */
+  grupoSugerido?: GrupoSugeridoRef | undefined
 }
 
 export const resumoDoDesfecho = (d: DesfechoTituloBoleto | undefined): ResumoDesfecho | undefined =>
   d
-    ? { situacao: d.situacao, avisoVenceAntes: d.avisoVenceAntes, total: d.totalCandidatos }
+    ? {
+        situacao: d.situacao,
+        avisoVenceAntes: d.avisoVenceAntes,
+        total: d.totalCandidatos,
+        ...(d.grupoSugerido ? { grupoSugerido: d.grupoSugerido } : {}),
+      }
+    : undefined
+
+// ── I21v/I21w — título de uma SUGESTÃO de grupo na carteira (ADR-0077, emenda 2026-10-29) ───────
+
+/** Ação do selo: abre a gaveta do título, onde o grupo aparece. Não confirma nada por si (I21w). */
+export const ACAO_VER_GRUPO = 'Ver grupo'
+
+/** `Faz parte de um grupo sugerido: boleto 129818, 2 títulos, R$ 26.369,85.` */
+export const descricaoGrupoSugerido = (g: GrupoSugeridoRef): string => {
+  const boleto = g.numeroBoleto ? `boleto ${g.numeroBoleto}, ` : ''
+  const base = `Faz parte de um grupo sugerido: ${boleto}${g.nTitulos} títulos, ${formatCentavos(g.valorBoletoCentavos)}.`
+  return g.confirmavel || !g.motivo ? base : `${base} Ainda não confirmável: ${rotuloMotivoGrupo(g.motivo)}.`
+}
+
+/** Aviso ao selecionar o título avulso (Q8): confirme o grupo em vez de pagar avulso. */
+export const avisoSelecaoGrupoSugerido = (r: ResumoDesfecho | undefined): string | undefined =>
+  r?.grupoSugerido
+    ? 'Este título faz parte de um grupo sugerido: confirme o grupo na gaveta do título em vez de pagá-lo avulso.'
     : undefined
 
 /** Texto do chip de aviso da grade (caso A = já vencido no débito; caso B = vence antes do título). */

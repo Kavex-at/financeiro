@@ -1528,6 +1528,11 @@ const boletosDdaSchema = z.object({
     situacao: z.enum(SITUACOES_FILTRAVEIS).optional(),
     busca: z.string().trim().max(100).optional(),
     filCod: z.coerce.number().int().positive().optional(),
+    // I21v: só os boletos de grupo (sugerido ou confirmado).
+    emGrupo: z
+        .enum(['true', 'false'])
+        .transform((v) => v === 'true')
+        .optional(),
     pagina: z.coerce.number().int().min(1).default(1),
     tamanho: z.coerce
         .number()
@@ -1541,7 +1546,7 @@ const boletosDdaSchema = z.object({
     vencimentoAte: z.string().regex(DATA_CIVIL_REGEX).optional(),
 });
 
-// GET /sispag/boletos-dda?escopo=&situacao=&busca=&filCod=&vencimentoDe=&vencimentoAte=&pagina=&tamanho=
+// GET /sispag/boletos-dda?escopo=&situacao=&emGrupo=&busca=&filCod=&vencimentoDe=&vencimentoAte=&pagina=&tamanho=
 // Devolve UMA página (≤ 100 linhas) — nunca o pool inteiro (Regis-Review performance-1/security-2).
 router.get(
     '/boletos-dda',

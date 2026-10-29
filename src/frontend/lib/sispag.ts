@@ -38,6 +38,8 @@ export const SUGESTAO_BOLETO_SEM_DDA = {
   CANDIDATO_FRACO: 'CANDIDATO_FRACO',
   SEM_CANDIDATO: 'SEM_CANDIDATO',
   AGUARDANDO_VINCULO: 'AGUARDANDO_VINCULO',
+  /** I21v: há sugestão de grupo; confirmar na gaveta do título ou na aba Boletos DDA. */
+  GRUPO_SUGERIDO: 'GRUPO_SUGERIDO',
 } as const
 export type SugestaoBoletoSemDda =
   (typeof SUGESTAO_BOLETO_SEM_DDA)[keyof typeof SUGESTAO_BOLETO_SEM_DDA]
@@ -1709,9 +1711,24 @@ export interface BoletoDda {
   candidatos: BoletoDdaTitulo[]
   /** Valor igual, data fora do limite seguro: só informação, não conta para a situação. */
   informativos?: BoletoDdaTitulo[]
+  /** I21v: o boleto fecha a soma de um grupo (sugerido ou confirmado); ortogonal à situação. */
+  grupo?: BoletoDdaGrupo
 }
 
-export type BoletoDdaContagem = Record<BoletoDdaSituacao | 'todas', number>
+/** O grupo de títulos que o boleto paga (só o resumo; o detalhe vem dos endpoints de grupos). */
+export interface BoletoDdaGrupo {
+  estado: 'SUGERIDO' | 'CONFIRMADO'
+  /** Só em `CONFIRMADO`. */
+  id?: string
+  filCod: number
+  nTitulos: number
+  confirmavel: boolean
+}
+
+export type BoletoDdaContagem = Record<BoletoDdaSituacao | 'todas', number> & {
+  /** Boletos de grupo (sugerido ou confirmado), depois de filial + busca (I21v). */
+  emGrupo: number
+}
 
 /** Uma PÁGINA da aba — o backend filtra e pagina; o pool inteiro nunca vem ao navegador. */
 export interface BoletosDdaResposta {
@@ -1731,6 +1748,8 @@ export interface BoletosDdaResposta {
 export interface FiltroBoletosDda {
   escopo: BoletoDdaEscopo
   situacao?: BoletoDdaSituacao
+  /** I21v: só os boletos de grupo (ortogonal à situação). */
+  emGrupo?: boolean
   busca?: string
   filCod?: number
   /** Vencimento do boleto de/até, `YYYY-MM-DD`, inclusivo (filtrado no servidor). */
@@ -1758,6 +1777,7 @@ export class SincronizacaoDdaEmAndamentoError extends Error {
 export async function fetchBoletosDda(filtro: FiltroBoletosDda): Promise<BoletosDdaResposta> {
   const qs = new URLSearchParams({ escopo: filtro.escopo, pagina: String(filtro.pagina) })
   if (filtro.situacao) qs.set('situacao', filtro.situacao)
+  if (filtro.emGrupo) qs.set('emGrupo', 'true')
   if (filtro.busca?.trim()) qs.set('busca', filtro.busca.trim())
   if (filtro.filCod != null) qs.set('filCod', String(filtro.filCod))
   if (filtro.vencimentoDe) qs.set('vencimentoDe', filtro.vencimentoDe)
@@ -2399,6 +2419,8 @@ export type SugestaoBoleto = z.infer<typeof sugestaoBoletoSchema>
 export const SITUACOES_SUGESTAO_TITULO = [
   /** O título está num boleto agrupado confirmado (I15q): só informativo. */
   'EM_GRUPO',
+  /** O título é de uma SUGESTÃO de grupo (I21v): o boleto dela não é candidato 1:1. */
+  'GRUPO_SUGERIDO',
   'UNICA_SEGURA',
   'AMBIGUA',
   'SO_ATENCAO',
@@ -2441,6 +2463,19 @@ export const candidatoTituloSchema = z.object({
 })
 export type CandidatoTituloBoleto = z.infer<typeof candidatoTituloSchema>
 
+/** Ponteiro para a SUGESTÃO de grupo a que o título pertence (I21v). Só leitura de tela. */
+export const grupoSugeridoRefSchema = z.object({
+  ddcCod: z.number(),
+  ditCod: z.number(),
+  numeroBoleto: z.string().optional(),
+  nTitulos: z.number(),
+  valorBoletoCentavos: z.number(),
+  /** A sugestão de grupo é confirmável hoje; senão `motivo` (código do motivo de inelegibilidade). */
+  confirmavel: z.boolean(),
+  motivo: z.string().optional(),
+})
+export type GrupoSugeridoRef = z.infer<typeof grupoSugeridoRefSchema>
+
 export const desfechoTituloSchema = z.object({
   filCod: z.number(),
   docCod: z.string(),
@@ -2460,6 +2495,8 @@ export const desfechoTituloSchema = z.object({
   motivoOrfa: z.string().optional(),
   avisoVenceAntes: z.enum(AVISOS_VENCE_ANTES),
   diasVencidoNoDebito: z.number(),
+  /** I21v: a sugestão de grupo que contém o título (situação `GRUPO_SUGERIDO` ou só o ponteiro). */
+  grupoSugerido: grupoSugeridoRefSchema.optional(),
 })
 export type DesfechoTituloBoleto = z.infer<typeof desfechoTituloSchema>
 
@@ -3020,6 +3057,8 @@ export const sugestaoGrupoBoletoSchema = z.object({
   confirmavel: z.boolean(),
   motivo: z.string().optional(),
   motivos: z.array(z.string()),
+  /** Avisos que exigem reconhecimento antes de confirmar (I21i); hoje só a composição manual os gera. */
+  avisos: z.array(z.string()).default([]),
 })
 export type SugestaoGrupoBoleto = z.infer<typeof sugestaoGrupoBoletoSchema>
 

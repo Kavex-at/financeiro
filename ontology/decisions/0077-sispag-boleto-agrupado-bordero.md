@@ -165,6 +165,28 @@ Plano e critérios: `_inbox/sispag-boleto-agrupado-reenvio-rejeitado-plano.md`. 
 `_inbox/sispag-boleto-agrupado-reenvio-rejeitado-exploracao.md`. A prova HML da nova guarda permanece
 obrigatória na Task 21; testes locais não aprovam a V7. Nenhuma escrita em HML/PRD nesta implementação.
 
+## Emenda 2026-10-29 — sugestão de grupo na carteira (I21v, I21w)
+
+O motor 1:1 e o de grupos eram cegos um ao outro: um boleto que fecha exatamente a soma de um conjunto de
+títulos (I21e) continuava sendo oferecido como candidato 1:1, confirmável, a um dos títulos (PRD 2026-10-29:
+RHENUS, boleto 129818 de R$ 26.369,85 oferecido a 5566, R$ 434,38 acima do título; 5541 aparecia como
+`SO_FRACA`). Confirmar o 1:1 consome o boleto (I15q) e desfaz o grupo. Decidido (entrevista de 2026-10-29,
+defaults aceitos por Yuri): a sugestão **única** de grupo (I21e, já sem ambiguidade G6), confirmável ou não, entra
+como insumo do desfecho 1:1 dentro do MESMO cenário em cache; o boleto dela deixa de ser candidato confirmável e os
+títulos dela mostram o grupo sugerido (selo "Grupo sugerido" e ação "Ver grupo"). 1:1 forte e decisões já tomadas
+mantêm a situação. Continua sem escrita, sem Conexos e sem persistência (I-DDA1). Sem migration.
+
+**Complemento (2026-10-29, tarde — UI).** Yuri experimentou a versão local e decidiu que **a confirmação e a anulação
+do grupo passam a ser feitas na gaveta do título** (o grupo aparece inline: boleto, todos os títulos com o atual
+destacado, soma contra o boleto, avisos da I21i para reconhecer ou o motivo de não confirmável; grupo confirmado mostra
+Anular grupo) **e na linha do boleto da aba Boletos DDA** (cartão "Pagam vários títulos", filtro "Em grupo", linha
+expansível, "Compor com títulos"). **A aba Boletos agrupados deixa de existir.** Os endpoints, o ator do JWT, o
+reconhecimento dos avisos e a reavaliação no servidor são os de antes: muda onde a analista age, não a regra. Isto
+reverte a decisão anterior desta emenda de que a carteira não teria botão de confirmar: a tabela de títulos e o selo
+continuam sem botão; a confirmação fica na gaveta e na linha do boleto, ações explícitas da pessoa (I21w reescrita).
+O link "Ver grupo" abre a gaveta. Detalhe em `ontology/_inbox/sispag-grupo-na-carteira-interview.md` (adendo) e no
+diff de ontologia.
+
 ## Rejeitado
 
 - **`fin146` (Baixa Agrupada)** — REJECT-WORKAROUND: baixa os títulos ao finalizar, antes de o banco pagar

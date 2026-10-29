@@ -115,10 +115,10 @@ import {
   ComporGrupoBoletoDialog,
   type TituloParaComposicao,
 } from './components/ComporGrupoBoletoDialog'
-import { GrupoBoletoPainel } from './components/GrupoBoletoPainel'
 import { chavesDeTitulosEmGrupo } from './components/grupoBoleto'
 import {
   agruparPorTitulo,
+  avisoSelecaoGrupoSugerido,
   chaveTitulo,
   desfechoPorTitulo,
   desfechosDeSugestoesLegadas,
@@ -675,8 +675,22 @@ function SispagPanel() {
   }
 
   const trocarAba = (valor: string) => {
-    setAba(valor)
+    // S8: a aba Boletos agrupados foi absorvida pela Boletos DDA; o valor antigo cai nela.
+    setAba(valor === 'boletos-agrupados' ? 'boletos-dda' : valor)
     if (valor !== 'lotes-candidatos') setLoteEmFoco(null)
+  }
+
+  /**
+   * I21v: depois de confirmar ou anular um grupo na gaveta ou na linha do boleto, relê a carteira,
+   * os lotes, os grupos e as sugestões (o selo e a situação mudam).
+   */
+  const aoAlterarGrupo = async () => {
+    await Promise.all([
+      recarregarLotes(),
+      recarregarPainel(),
+      recarregarGrupos(),
+      carregarSugestoes(),
+    ])
   }
 
   /** Abre os boletos DDA/sugestão do título (a mesma ação da coluna Forma de pagamento). */
@@ -757,6 +771,11 @@ function SispagPanel() {
     // ADR-0064: título em lote RASCUNHO pode ser selecionado (ele se move para o lote novo);
     // em lote finalizado ou com remessa gerada, não.
     if (!podeSelecionar(t, emGrupo)) return
+    // I21v (Q8): selecionar avulso um título de grupo sugerido avisa; não bloqueia.
+    if (!selecionados.has(keyOf(t))) {
+      const aviso = avisoSelecaoGrupoSugerido(resumoDoDesfecho(desfechosPorTitulo.get(chaveTitulo(t))))
+      if (aviso) toast.warning('Título de grupo sugerido', { description: aviso })
+    }
     setSelecionados((prev) => {
       const next = new Set(prev)
       const k = keyOf(t)
@@ -1156,24 +1175,13 @@ function SispagPanel() {
               <TabsTrigger value="lotes">Lançamento Lote (REM) - Conexos</TabsTrigger>
               <TabsTrigger value="retornos">Retorno Lote (RET) - Conexos</TabsTrigger>
               <TabsTrigger value="boletos-dda">Boletos DDA (fin124)</TabsTrigger>
-              <TabsTrigger value="boletos-agrupados">Boletos agrupados</TabsTrigger>
             </TabsList>
 
             {/* ---- Boletos DDA (fin124) — carrega ao abrir a aba; basta `sispag:ver` ---- */}
             <TabsContent value="boletos-dda">
               <BoletosDdaTab
                 {...(podeExecutar ? { onCompor: (b: BoletoDda) => abrirComposicao(b) } : {})}
-              />
-            </TabsContent>
-
-            {/* ---- Boletos agrupados (ADR-0077) — ver lê; executar confirma, anula e compõe ---- */}
-            <TabsContent value="boletos-agrupados">
-              <GrupoBoletoPainel
-                podeExecutar={podeExecutar}
-                onAlterado={async () => {
-                  await Promise.all([recarregarLotes(), recarregarPainel(), recarregarGrupos()])
-                }}
-                onCompor={() => setAba('boletos-dda')}
+                onGrupoAlterado={aoAlterarGrupo}
               />
             </TabsContent>
 
@@ -1529,6 +1537,7 @@ function SispagPanel() {
                                 desfechosPorTitulo.get(chaveTitulo(t)),
                               )}
                               onAbrirSugestao={() => abrirSugestaoDoTitulo(t)}
+                              onVerGrupo={() => abrirSugestaoDoTitulo(t)}
                             />
                           </TableCell>
                           <TableCell className={layoutGaveta.ocultar}>
@@ -1997,6 +2006,7 @@ function SispagPanel() {
               setTituloDda(null)
               setAba('boletos-dda')
             }}
+            onGrupoAlterado={aoAlterarGrupo}
             podeExecutar={podeExecutar}
             podeCopiar={podeVer}
             ddaDefasadoHoras={sugestoes?.ddaDefasadoHoras}

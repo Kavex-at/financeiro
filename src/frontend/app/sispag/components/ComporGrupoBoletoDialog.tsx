@@ -22,7 +22,7 @@ import {
   formatCentavos,
   somarComposicao,
 } from './grupoBoleto'
-import { ReconhecerAvisoDialog } from './ReconhecerAvisoDialog'
+import { ReconhecerAvisosGrupo } from './ReconhecerAvisosGrupo'
 
 /** O boleto escolhido (do pool DDA) para o qual a analista compõe o grupo. */
 export interface BoletoParaComposicao {
@@ -49,8 +49,6 @@ export interface TituloParaComposicao {
 const chave = (t: { filCod: number; docCod: string; titCod: string }): string =>
   `${t.filCod}:${t.docCod}:${t.titCod}`
 
-const TEXTO_RECONHECIMENTO_TITULO_ANTES =
-  'Entendo que um título vence antes do boleto e que pagar na data do boleto pode gerar atraso, juros e multa.'
 
 /**
  * Composição manual do boleto agrupado (ADR-0077, I21g): a analista escolhe os títulos de UM
@@ -246,17 +244,17 @@ export function ComporGrupoBoletoDialog({
         </DialogContent>
       </Dialog>
       {reconhecendo ? (
-        <ReconhecerAvisoDialog
-          titulo="Título vence antes do boleto"
-          textoReconhecimento={TEXTO_RECONHECIMENTO_TITULO_ANTES}
-          rotuloDeltaValor="Soma dos títulos − boleto"
-          rotuloDeltaDias="Maior antecedência do título"
-          mensagem={`${antesDoBoleto.length} título(s) vencem antes do boleto (${formatDate(boleto.vencimentoBoleto)}).`}
-          deltaValor={formatCentavos(soma.diferencaCentavos)}
-          deltaDias={`${maiorAntecedencia} dias`}
+        <ReconhecerAvisosGrupo
+          avisos={[AVISO_TITULO_VENCE_ANTES_DO_BOLETO]}
+          resumo={{
+            quantidadeTitulosAntes: antesDoBoleto.length,
+            vencimentoBoleto: boleto.vencimentoBoleto,
+            diferencaCentavos: soma.diferencaCentavos,
+            maiorAntecedenciaDias: maiorAntecedencia,
+          }}
           onFechar={() => setReconhecendo(false)}
-          onConfirmar={async () => {
-            await enviar([AVISO_TITULO_VENCE_ANTES_DO_BOLETO])
+          onConfirmar={async (reconhecidos) => {
+            await enviar(reconhecidos)
             setReconhecendo(false)
           }}
         />

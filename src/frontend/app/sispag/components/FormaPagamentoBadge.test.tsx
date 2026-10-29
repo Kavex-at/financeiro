@@ -147,4 +147,60 @@ describe('FormaPagamentoBadge', () => {
       expect(screen.queryByText(/vence antes do título/)).not.toBeInTheDocument()
     })
   })
+
+  describe('grupo sugerido (I21v)', () => {
+    const grupo = {
+      ddcCod: 165,
+      ditCod: 24398,
+      numeroBoleto: '129818',
+      nTitulos: 2,
+      valorBoletoCentavos: 2636985,
+      confirmavel: true,
+    }
+
+    it('GRUPO_SUGERIDO: o rótulo e "Ver grupo" abrem a gaveta do título', () => {
+      const verGrupo = jest.fn()
+      const abrir = jest.fn()
+      render(
+        <FormaPagamentoBadge
+          titulo={{ formaPagamentoConexos: 6, temBoleto: false }}
+          sugestao={resumo({ situacao: 'GRUPO_SUGERIDO', total: 0, grupoSugerido: grupo })}
+          onAbrirSugestao={abrir}
+          onVerGrupo={verGrupo}
+        />,
+      )
+      // I21v: o rótulo abre a gaveta (onde o grupo se confirma) e "Ver grupo" também.
+      fireEvent.click(screen.getByRole('button', { name: 'em grupo sugerido' }))
+      expect(abrir).toHaveBeenCalledTimes(1)
+      fireEvent.click(screen.getByRole('button', { name: /Ver grupo/ }))
+      expect(verGrupo).toHaveBeenCalledWith(grupo)
+    })
+
+    it('1:1 forte com ponteiro: mantém o rótulo do 1:1 e ganha o "Ver grupo"', () => {
+      const verGrupo = jest.fn()
+      render(
+        <FormaPagamentoBadge
+          titulo={{ formaPagamentoConexos: 6, temBoleto: false }}
+          sugestao={resumo({ situacao: 'UNICA_SEGURA', grupoSugerido: grupo })}
+          onAbrirSugestao={jest.fn()}
+          onVerGrupo={verGrupo}
+        />,
+      )
+      expect(screen.getByRole('button', { name: 'sugestão disponível' })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: /Ver grupo/ }))
+      expect(verGrupo).toHaveBeenCalledWith(grupo)
+    })
+
+    it('sem o ponteiro, nenhum "Ver grupo"', () => {
+      render(
+        <FormaPagamentoBadge
+          titulo={{ formaPagamentoConexos: 6, temBoleto: false }}
+          sugestao={resumo()}
+          onAbrirSugestao={jest.fn()}
+          onVerGrupo={jest.fn()}
+        />,
+      )
+      expect(screen.queryByRole('button', { name: /Ver grupo/ })).not.toBeInTheDocument()
+    })
+  })
 })

@@ -117,3 +117,14 @@ já decidido, anular a decisão antes (I15l). Ver `entities/grupo-boleto.md`.
 > **Nota (ADR-0080, `implemented`):** decisão confirmada em conjunto (I15t) é uma decisão comum; o
 > vínculo com o conjunto fica só no evento `DECISAO_CONFIRMADA` (`detalhe.conjunto = { id,
 > tituloOrigem }`), sem coluna nova.
+**Sugestão de grupo na carteira (emenda 2026-10-29 da ADR-0077, I21v/I21w) — derivado, não persistido:**
+`SituacaoSugestaoTitulo` ganha **`GRUPO_SUGERIDO`** (ao lado de `UNICA_SEGURA`, `AMBIGUA`, `SO_ATENCAO`, `SO_FRACA`,
+`SO_VENCIDA`, `DISPUTADA`, `SEM_CANDIDATO`, `CONFIRMADA`, `ORFA`, `EM_GRUPO`) e o desfecho do título ganha o ponteiro
+opcional **`grupoSugerido {ddcCod, ditCod, numeroBoleto?, nTitulos, valorBoletoCentavos, confirmavel, motivo?}`**.
+O título de uma **sugestão** de grupo (confirmável ou não) mostra o ponteiro; vira `GRUPO_SUGERIDO` quando o 1:1 não
+é forte (`AMBIGUA`, `SO_ATENCAO`, `SO_FRACA`, `SO_VENCIDA`, `DISPUTADA`, `SEM_CANDIDATO`); `UNICA_SEGURA`,
+`CONFIRMADA`, `ORFA` e `EM_GRUPO` mantêm a situação. O boleto da sugestão não é candidato 1:1 (nem confirmável) e o
+título dele só reserva boleto na camada dos seguros. **Exceção:** se um título de fora do grupo já tem esse boleto como
+candidato seguro, a sugestão não é aplicada ao 1:1 (não se perde o 1:1 dele em silêncio). Decisão `CONFIRMADA` no
+boleto do grupo segue valendo (I15g). Nada é gravado em `decisao`; confirmar o grupo é na gaveta do título ou na linha
+do boleto da aba Boletos DDA (I21i). **Não existe** estado `GRUPO_SUGERIDO` em `decisao`.

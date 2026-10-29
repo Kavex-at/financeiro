@@ -1,3 +1,4 @@
+import type { ChaveTituloGrupo, GrupoBoletoListado, SugestaoGrupoBoleto } from '@/lib/sispag'
 import { formatBRL } from '@/lib/utils'
 
 /**
@@ -156,3 +157,46 @@ export const tituloEmGrupo = (
   chaves: ReadonlySet<string>,
   t: { filCod: number; docCod: string; titCod: string },
 ): boolean => chaves.has(chaveDoTitulo(t))
+
+
+// ── I21v — o grupo de um título ou de um boleto (gaveta e aba Boletos DDA) ───────────────────
+
+/** O que a filial tem: sugestões calculadas e grupos confirmados. */
+export interface GruposDaFilial {
+  sugestoes: SugestaoGrupoBoleto[]
+  grupos: GrupoBoletoListado[]
+}
+
+export type GrupoEncontrado =
+  | { tipo: 'SUGERIDO'; sugestao: SugestaoGrupoBoleto }
+  | { tipo: 'CONFIRMADO'; grupo: GrupoBoletoListado }
+
+const mesmoTitulo = (a: ChaveTituloGrupo, b: ChaveTituloGrupo): boolean =>
+  a.filCod === b.filCod && a.docCod === b.docCod && a.titCod === b.titCod
+
+/** Grupo `CONFIRMADO` que contém o título; senão a sugestão que o contém. O confirmado vence. */
+export const grupoDoTitulo = (
+  g: GruposDaFilial,
+  chave: ChaveTituloGrupo,
+): GrupoEncontrado | undefined => {
+  const grupo = g.grupos.find(
+    (x) => x.estado === 'CONFIRMADO' && x.titulos.some((t) => mesmoTitulo(t, chave)),
+  )
+  if (grupo) return { tipo: 'CONFIRMADO', grupo }
+  const sugestao = g.sugestoes.find((x) => x.titulos.some((t) => mesmoTitulo(t, chave)))
+  return sugestao ? { tipo: 'SUGERIDO', sugestao } : undefined
+}
+
+/** Grupo do boleto (`ddcCod`+`ditCod`): o confirmado vence a sugestão. */
+export const grupoDoBoleto = (
+  g: GruposDaFilial,
+  ddcCod: number,
+  ditCod: number,
+): GrupoEncontrado | undefined => {
+  const grupo = g.grupos.find(
+    (x) => x.estado === 'CONFIRMADO' && x.ddcCod === ddcCod && x.ditCod === ditCod,
+  )
+  if (grupo) return { tipo: 'CONFIRMADO', grupo }
+  const sugestao = g.sugestoes.find((x) => x.ddcCod === ddcCod && x.ditCod === ditCod)
+  return sugestao ? { tipo: 'SUGERIDO', sugestao } : undefined
+}

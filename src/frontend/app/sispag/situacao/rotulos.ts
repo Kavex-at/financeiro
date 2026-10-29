@@ -37,6 +37,7 @@ export const ROTULO_SUGESTAO_BOLETO: Readonly<Record<SugestaoBoletoSemDda, strin
   [SUGESTAO_BOLETO_SEM_DDA.CANDIDATO_FRACO]: 'Só candidato fraco',
   [SUGESTAO_BOLETO_SEM_DDA.SEM_CANDIDATO]: 'Sem boleto no DDA',
   [SUGESTAO_BOLETO_SEM_DDA.AGUARDANDO_VINCULO]: 'Confirmado, aguardando vínculo',
+  [SUGESTAO_BOLETO_SEM_DDA.GRUPO_SUGERIDO]: 'Grupo de boleto sugerido',
 }
 
 export const ROTULO_DONO: Readonly<Record<DonoPagamento, string>> = {
