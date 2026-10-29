@@ -1,5 +1,22 @@
 # Columbia Financeiro — Changelog
 
+## v0.79.0 (2026-10-29) — SISPAG: o boleto que paga vários títulos aparece na gaveta e na aba Boletos DDA
+
+- **O boleto do grupo deixa de ser oferecido a um título só.** Quando um único boleto fecha a soma de
+  títulos do mesmo credor e vencimento (ex.: RHENUS 5541/1 + 5566/1 = boleto 129818, R$ 26.369,85), ele
+  não aparece mais como candidato confirmável de um deles. Confirmar o boleto para um título só gastava o
+  boleto, o grupo sumia e o outro título ficava sem boleto. A tentativa agora é recusada com o motivo.
+- **Situação nova "Em grupo sugerido".** Os títulos do grupo ganham o selo, entram no filtro e na contagem
+  por situação, e a faixa "vencem hoje" mostra "Ver grupo sugerido". Título com sugestão individual forte
+  continua com ela e só ganha a indicação do grupo. Selecionar um deles avulso para o lote mostra um aviso.
+- **O grupo na gaveta do título.** A gaveta mostra o boleto, todos os títulos que ele paga (com este título
+  destacado) e a soma contra o valor do boleto, com "Confirmar grupo" (e os avisos a reconhecer, quando
+  houver) e "Anular grupo" no grupo confirmado.
+- **A aba Boletos agrupados saiu; tudo está em Boletos DDA.** Novo cartão "Pagam vários títulos", filtro
+  "Em grupo" e linhas expansíveis com os títulos de cada boleto, "Confirmar grupo" e "Anular". A composição
+  manual virou "Compor com títulos" na linha do boleto.
+- Nada é escrito no Conexos: confirmar continua registrando só a decisão; o borderô nasce na remessa.
+
 ## v0.78.0 (2026-10-29) — SISPAG: confirmar de uma vez os títulos irmãos na gaveta do boleto
 
 - **Confirmação em conjunto.** Na gaveta de um título aparece "Outros títulos deste fornecedor com
