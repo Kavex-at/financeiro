@@ -1,5 +1,19 @@
 # Columbia Financeiro — Changelog
 
+## v0.81.0 (2026-10-30) — SISPAG: aba Boletos DDA igual à de Títulos a pagar e DDA sempre em dia
+
+- **Aba Boletos DDA no padrão de Títulos a pagar.** Cards com quantidade e R$, segmentos por situação,
+  filtros por coluna, pílulas de filtro ativo, paginação e a faixa "vencem hoje". A aba recarrega sozinha
+  quando a ingestão termina, então o aviso "DDA parado há X h" não fica mais preso na tela.
+- **DDA conferido ao abrir a tela.** A cada 10 minutos, a abertura confere a lista de arquivos DDA no
+  Conexos: arquivo novo entra na hora; se nada mudou, só registra a conferência. Arquivo vazio vindo do
+  Conexos nunca apaga os boletos que já temos.
+- **Aviso de DDA parado mais justo.** Conta a partir da última conferência com o Conexos e fica quieto
+  enquanto a tela atualiza ao abrir.
+- **Crons mais confiáveis e formação de lotes pela manhã.** Os horários saíram da hora cheia (05:07,
+  07:07, 12:13 e 16:13), onde o GitHub mais atrasava: a formação das 07h vinha saindo por volta das 13h20.
+  A formação automática roda no máximo uma vez por dia útil e nunca antes das 06:30; a manual segue livre.
+
 ## v0.80.1 (2026-10-30) — SISPAG: confirmação em conjunto não promete renegociação em simulação
 
 - **Sem promessa falsa.** O diálogo de confirmar títulos irmãos juntos contava "N títulos terão o ajuste
