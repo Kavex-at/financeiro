@@ -23,11 +23,13 @@ import {
 import { formatBRL } from '@/lib/utils'
 import { AjusteCentavosSelo } from './AjusteCentavosSelo'
 import { fmtCivil } from './CandidatosBoletoDialog'
+import { ConfirmarAcaoDialog } from './ConfirmarAcaoDialog'
 import { MotivoDecisaoDialog } from './MotivoDecisaoDialog'
 import { ReconhecerAvisoDialog } from './ReconhecerAvisoDialog'
 import { ReconhecerDivergenciaDialog } from './ReconhecerDivergenciaDialog'
 import {
   candidatoComoSugestao,
+  confirmarRenegocia,
   exigeReconhecimento,
   exigeReconhecimentoTipado,
   mensagemDivergenciaData,
@@ -92,9 +94,18 @@ function Delta({ rotulo, valor, destaque }: { rotulo: string; valor: string; des
 
 type Aviso = { tipo: 'ok' | 'erro'; texto: string }
 type Dialogo = {
-  tipo: 'rejeitar' | 'revogar' | 'anular' | 'reconhecer' | 'reconhecer-divergencia'
+  tipo:
+    | 'rejeitar'
+    | 'revogar'
+    | 'anular'
+    | 'reconhecer'
+    | 'reconhecer-divergencia'
+    | 'renegociar'
   sugestao: SugestaoBoleto
 }
+
+const TEXTO_CONFIRMADO = 'Boleto confirmado para este título. Nada foi gravado no Conexos.'
+const TEXTO_CONFIRMADO_RENEGOCIANDO = 'Boleto confirmado. Renegociando o título no Conexos…'
 
 /** Candidato do desfecho que corresponde ao item (para o que a sugestão legada não carrega). */
 const candidatoDe = (d: DesfechoTituloBoleto | undefined, s: SugestaoBoleto) =>
@@ -130,7 +141,16 @@ export function SugestaoBoletoPainel({
   itemVinculadoEmLoteVivo = false,
   ajusteCentavos,
   modoAjusteCentavos,
+  onRenegociacaoIniciada,
+  acompanhandoAjuste = false,
 }: {
+  /**
+   * Chamado depois de uma confirmação que deve renegociar o título no Conexos (ajuste de centavos
+   * assíncrono, ADR-0074): quem abriu o painel acompanha o ajuste até o fim.
+   */
+  onRenegociacaoIniciada?: ((s: SugestaoBoleto) => void) | undefined
+  /** O ajuste deste título está sendo acompanhado: esconde "Tentar de novo" para não duplicar. */
+  acompanhandoAjuste?: boolean
   /** Estado do ajuste de centavos deste título (ledger, ADR-0074), quando houver. */
   ajusteCentavos?: AjusteCentavos | undefined
   /** Modo efetivo do ajuste na filial (`off` por default). */
@@ -170,16 +190,31 @@ export function SugestaoBoletoPainel({
     [desfecho, sugestoesLegadas],
   )
 
+  const renegocia = (s: SugestaoBoleto) =>
+    confirmarRenegocia({ sugestao: s, modo: modoAjusteCentavos })
+
+  /** Depois de qualquer confirmação aceita: aviso certo, acompanhamento do ajuste e releitura. */
+  const aposConfirmar = async (s: SugestaoBoleto) => {
+    const ajusta = renegocia(s)
+    setAviso({ tipo: 'ok', texto: ajusta ? TEXTO_CONFIRMADO_RENEGOCIANDO : TEXTO_CONFIRMADO })
+    if (ajusta) onRenegociacaoIniciada?.(s)
+    await onDecidido()
+  }
+
+  /** Aviso de vence-antes (I15o) ou ack tipado de data divergente (I15r). */
+  const dialogoDeReconhecimento = (s: SugestaoBoleto): Dialogo => ({
+    tipo: exigeReconhecimentoTipado({ avaliacao: s.avaliacao })
+      ? 'reconhecer-divergencia'
+      : 'reconhecer',
+    sugestao: s,
+  })
+
   const confirmar = async (s: SugestaoBoleto) => {
     setOcupado(idItem(s))
     setAviso(null)
     try {
       await confirmarSugestaoBoleto(chaveDe(s))
-      setAviso({
-        tipo: 'ok',
-        texto: 'Boleto confirmado para este título. Nada foi gravado no Conexos.',
-      })
-      await onDecidido()
+      await aposConfirmar(s)
     } catch (e) {
       setAviso({ tipo: 'erro', texto: mensagemDe(e, 'Não foi possível confirmar a sugestão.') })
       if (ehSugestaoVelha(e)) await onDecidido()
@@ -241,6 +276,10 @@ export function SugestaoBoletoPainel({
     await onDecidido()
   }
 
+  const podeConfirmarItem = (s: SugestaoBoleto) =>
+    s.avaliacao.confirmavel && s.confirmavel && s.estado !== 'CONFIRMADA'
+  const algumRenegocia = sugestoes.some((s) => podeConfirmarItem(s) && renegocia(s))
+
   return (
     <section aria-labelledby={titleId} className="flex flex-col gap-3">
       <h3 id={titleId} className="text-sm font-medium">
@@ -254,11 +293,24 @@ export function SugestaoBoletoPainel({
             : ''}
         </p>
       ) : null}
-      <p className="text-xs text-muted-foreground">
-        É uma indicação para você conferir; o Conexos continua sem associar o boleto a este título.
-        Confirmar aqui registra a sua decisão e <strong>não grava nada no Conexos</strong>: a
-        remessa segue bloqueada até o boleto ser associado no ERP.
-      </p>
+      {algumRenegocia ? (
+        <p className="text-xs text-muted-foreground" data-testid="texto-confirmar">
+          É uma indicação para você conferir; o Conexos continua sem associar o boleto a este título.
+          Confirmar aqui registra a sua decisão e,{' '}
+          <strong>
+            quando o boleto difere do título em até R$ 0,05 com o mesmo vencimento, o sistema
+            renegocia o título no Conexos
+          </strong>{' '}
+          para o valor do boleto, se o título continuar elegível. A remessa segue bloqueada até o
+          boleto ser associado no ERP.
+        </p>
+      ) : (
+        <p className="text-xs text-muted-foreground" data-testid="texto-confirmar">
+          É uma indicação para você conferir; o Conexos continua sem associar o boleto a este título.
+          Confirmar aqui registra a sua decisão e <strong>não grava nada no Conexos</strong>: a
+          remessa segue bloqueada até o boleto ser associado no ERP.
+        </p>
+      )}
       {ddaDefasadoHoras !== undefined ? (
         <p className="flex items-start gap-2 text-xs text-warning-foreground">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
@@ -415,7 +467,7 @@ export function SugestaoBoletoPainel({
                 </p>
               ) : null}
               {confirmada ? <AjusteCentavosSelo selo={seloAjuste} /> : null}
-              {confirmada && podeExecutar && seloAjuste?.retomavel ? (
+              {confirmada && podeExecutar && seloAjuste?.retomavel && !acompanhandoAjuste ? (
                 <Button
                   size="sm"
                   variant="outline"
@@ -458,15 +510,13 @@ export function SugestaoBoletoPainel({
                     disabled={ocup}
                     aria-label={`Confirmar boleto ${nome}`}
                     onClick={() =>
-                      pedeReconhecimento
-                        ? setDialogo({
-                            // Valor igual + data divergente (I15r): ack tipado; senão o aviso simples.
-                            tipo: exigeReconhecimentoTipado({ avaliacao: a })
-                              ? 'reconhecer-divergencia'
-                              : 'reconhecer',
-                            sugestao: s,
-                          })
-                        : void confirmar(s)
+                      // Renegociação no Conexos primeiro (consentimento explícito); o
+                      // reconhecimento, se também for exigido, vem encadeado depois dele.
+                      renegocia(s)
+                        ? setDialogo({ tipo: 'renegociar', sugestao: s })
+                        : pedeReconhecimento
+                          ? setDialogo(dialogoDeReconhecimento(s))
+                          : void confirmar(s)
                     }
                   >
                     Confirmar
@@ -527,6 +577,40 @@ export function SugestaoBoletoPainel({
           )
         })}
       </ul>
+      {dialogo?.tipo === 'renegociar' ? (
+        <ConfirmarAcaoDialog
+          open
+          onOpenChange={(aberto) => (!aberto ? setDialogo(null) : undefined)}
+          busy={ocupado !== null}
+          titulo="Confirmar e renegociar no Conexos"
+          descricao={`Título ${dialogo.sugestao.docCod}/${dialogo.sugestao.titCod} · boleto ${String(dialogo.sugestao.numeroBoleto ?? dialogo.sugestao.ditCod)}`}
+          rotuloConfirmar="Confirmar e renegociar"
+          onConfirmar={() => {
+            const s = dialogo.sugestao
+            if (exigeReconhecimento({ avaliacao: s.avaliacao })) setDialogo(dialogoDeReconhecimento(s))
+            else void confirmar(s)
+          }}
+        >
+          <p
+            role="alert"
+            className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-subtle/40 p-3 text-warning-foreground"
+          >
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <span>
+              Confirmar este boleto <strong>renegocia o título no Conexos</strong>: o título{' '}
+              {dialogo.sugestao.docCod}/{dialogo.sugestao.titCod} de{' '}
+              {formatBRL(desfecho?.valorTitulo ?? dialogo.sugestao.valorTitulo)} é substituído por
+              uma nova parcela de {formatBRL(dialogo.sugestao.valorBoleto)} (valor do boleto), com
+              o mesmo vencimento. O título original sai da carteira.
+            </span>
+          </p>
+          <p>
+            O sistema faz a renegociação logo depois da confirmação, se o título continuar
+            elegível (aprovação, pagamento parcial, estado do lote). Se não estiver, a confirmação
+            fica registrada e o título não muda.
+          </p>
+        </ConfirmarAcaoDialog>
+      ) : null}
       {dialogo?.tipo === 'reconhecer' ? (
         <ReconhecerAvisoDialog
           mensagem={
@@ -547,9 +631,8 @@ export function SugestaoBoletoPainel({
             } catch (e) {
               throw new Error(mensagemDe(e, 'Não foi possível confirmar a sugestão.'))
             }
-            await concluirDialogo(
-              'Boleto confirmado para este título. Nada foi gravado no Conexos.',
-            )
+            setDialogo(null)
+            await aposConfirmar(dialogo.sugestao)
           }}
         />
       ) : null}
@@ -580,9 +663,8 @@ export function SugestaoBoletoPainel({
               }
               throw new Error(mensagemDe(e, 'Não foi possível confirmar a sugestão.'))
             }
-            await concluirDialogo(
-              'Boleto confirmado para este título. Nada foi gravado no Conexos.',
-            )
+            setDialogo(null)
+            await aposConfirmar(dialogo.sugestao)
           }}
         />
       ) : null}

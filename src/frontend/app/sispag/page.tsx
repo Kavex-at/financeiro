@@ -75,6 +75,7 @@ import {
   runIngestaoPagamentos,
   type LotePagamento,
   type SispagPainel,
+  type AjusteCentavos,
   type TituloAPagar,
   type TituloRetidoPorCodigoBarras,
 } from '@/lib/sispag'
@@ -367,13 +368,20 @@ function SispagPanel() {
 
   // Relê só o painel, sem o spinner de página inteira do `carregar` — a analista continua na
   // aba em que estava depois de retirar um título do lote.
-  const recarregarPainel = React.useCallback(async () => {
+  // Devolve o painel lido (ou `undefined` na falha) para quem precisa dele logo em seguida.
+  const lerPainel = React.useCallback(async (): Promise<SispagPainel | undefined> => {
     try {
-      setPainel(await fetchSispagPainel())
+      const p = await fetchSispagPainel()
+      setPainel(p)
+      return p
     } catch {
       /* mantém o painel anterior */
+      return undefined
     }
   }, [])
+  const recarregarPainel = React.useCallback(async () => {
+    await lerPainel()
+  }, [lerPainel])
 
   const carregarRuns = React.useCallback(async () => {
     setRunsLoading(true)
@@ -693,19 +701,49 @@ function SispagPanel() {
     ])
   }
 
+  /** O título da gaveta de boletos DDA a partir da linha do painel. */
+  const tituloDdaDe = (t: TituloAPagar): TituloSemBoleto => ({
+    filCod: t.filCod,
+    docCod: t.docCod,
+    titCod: t.titCod,
+    ...(t.credor ? { credor: t.credor } : {}),
+    valor: t.valor,
+    ...(t.vencimento != null
+      ? { vencimento: new Date(t.vencimento).toISOString().slice(0, 10) }
+      : {}),
+    ...(t.numeroDocumento ? { numeroDocumento: t.numeroDocumento } : {}),
+  })
+
   /** Abre os boletos DDA/sugestão do título (a mesma ação da coluna Forma de pagamento). */
-  const abrirSugestaoDoTitulo = (t: TituloAPagar) =>
-    setTituloDda({
-      filCod: t.filCod,
-      docCod: t.docCod,
-      titCod: t.titCod,
-      ...(t.credor ? { credor: t.credor } : {}),
-      valor: t.valor,
-      ...(t.vencimento != null
-        ? { vencimento: new Date(t.vencimento).toISOString().slice(0, 10) }
-        : {}),
-      ...(t.numeroDocumento ? { numeroDocumento: t.numeroDocumento } : {}),
-    })
+  const abrirSugestaoDoTitulo = (t: TituloAPagar) => setTituloDda(tituloDdaDe(t))
+
+  /** Qualquer decisão na gaveta: a linha do título (painel) e a sugestão relidas juntas. */
+  const aoDecidirNaGaveta = async () => {
+    await Promise.all([carregarSugestoes(), recarregarPainel()])
+  }
+
+  /**
+   * O ajuste de centavos acompanhado pela gaveta terminou (ADR-0074). Relê painel e sugestões;
+   * concluído com título novo leva a gaveta até ele (o original saiu da carteira). Sem o novo no
+   * painel relido, a gaveta fica no original com o selo de concluído.
+   */
+  const aoFinalizarAjuste = async (a: AjusteCentavos) => {
+    const [novoPainel] = await Promise.all([lerPainel(), carregarSugestoes()])
+    const concluido = a.etapa === 'concluido' || a.etapa === 'concluido_sem_decisao'
+    if (!concluido || !a.titCodNovo) return
+    const novo = novoPainel?.titulos.find(
+      (t) => t.filCod === a.filCod && t.docCod === a.docCod && t.titCod === a.titCodNovo,
+    )
+    if (!novo) return
+    setTituloDda((atual) =>
+      atual !== null &&
+      atual.filCod === a.filCod &&
+      atual.docCod === a.docCod &&
+      atual.titCod === a.titCodOrigem
+        ? comNumeroDocumento(tituloDdaDe(novo))
+        : atual,
+    )
+  }
 
   const chaveDe = (t: TituloAPagar) => ({ filCod: t.filCod, docCod: t.docCod, titCod: t.titCod })
 
@@ -2010,7 +2048,8 @@ function SispagPanel() {
             podeExecutar={podeExecutar}
             podeCopiar={podeVer}
             ddaDefasadoHoras={sugestoes?.ddaDefasadoHoras}
-            onDecidido={carregarSugestoes}
+            onDecidido={aoDecidirNaGaveta}
+            onAjusteFinalizado={aoFinalizarAjuste}
             vinculadoEmLoteVivo={
               tituloDda !== null &&
               lotes.some(

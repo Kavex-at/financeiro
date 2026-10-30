@@ -74,12 +74,18 @@ export function ConfirmacaoEmConjuntoSecao({
   origem,
   podeExecutar,
   versao = 0,
+  onConfirmados,
   onDecidido,
 }: {
   origem: ChaveAnulacaoBoleto
   podeExecutar: boolean
   /** Muda quando outra ação da gaveta decide algo: a lista é relida. */
   versao?: number
+  /**
+   * As linhas que esta confirmação acabou de confirmar (status `CONFIRMADA`; as já confirmadas
+   * antes ficam de fora). Chamado antes de `onDecidido`.
+   */
+  onConfirmados?: (linhas: readonly IrmaoConjunto[]) => void
   onDecidido?: () => void | Promise<void>
 }) {
   const chaveOrigem = `${origem.filCod}:${origem.docCod}:${origem.titCod}`
@@ -161,6 +167,10 @@ export function ConfirmacaoEmConjuntoSecao({
     setMarcadas({ chave: chaveOrigem, linhas: new Set() })
     setConfirmando(false)
     setReleitura((n) => n + 1)
+    const novas = new Set(
+      r.resultados.filter((x) => x.status === 'CONFIRMADA').map((x) => chaveDaLinha(x.chave)),
+    )
+    onConfirmados?.(selecionadas.filter((l) => novas.has(chaveDaLinha(l))))
     await onDecidido?.()
   }
 
