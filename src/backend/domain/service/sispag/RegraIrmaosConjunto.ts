@@ -16,6 +16,7 @@ import {
     TIER_SUGESTAO,
 } from '../../interface/sispag/SugestaoBoleto.js';
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
+import { MODO_AJUSTE, type ModoAjuste } from '../../libs/boleto/ModoAjusteCentavos.js';
 import { LIMITE_VALOR_MESMO_DIA } from './RegraSugestaoBoleto.js';
 
 const SITUACOES_ELEGIVEIS: ReadonlySet<string> = new Set([
@@ -43,6 +44,11 @@ export interface EntradaIrmaosConjunto {
     emLoteFinalizado: ReadonlySet<string>;
     /** Pool DDA inteiro, para o aviso de boletos idênticos (I15t(5)). */
     pool: BoletoDda[];
+    /**
+     * Modo efetivo do ajuste de centavos (ADR-0074), resolvido uma vez pelo serviço. Só em `on` a
+     * linha promete o ajuste automático: em `shadow` nada é escrito no Conexos.
+     */
+    modoAjuste: ModoAjuste;
 }
 
 /**
@@ -97,7 +103,7 @@ export default class RegraIrmaosConjunto {
         for (const d of e.desfechos) {
             const c = this.escolhido(d, e);
             if (!c) continue;
-            linhas.push(this.linha(d, c, e.origem, identicos, codbarPorBoleto));
+            linhas.push(this.linha(d, c, e, identicos, codbarPorBoleto));
         }
         return linhas.sort(
             (a, b) =>
@@ -127,7 +133,7 @@ export default class RegraIrmaosConjunto {
     private linha = (
         d: DesfechoTitulo,
         c: CandidatoTitulo,
-        origem: OrigemConjunto,
+        e: EntradaIrmaosConjunto,
         identicos: Map<string, Set<string>>,
         codbarPorBoleto: Map<string, string | undefined>,
     ): IrmaoConjunto => {
@@ -150,7 +156,7 @@ export default class RegraIrmaosConjunto {
             titCod: d.titCod,
             ddcCod: c.ddcCod,
             ditCod: c.ditCod,
-            origem: mesmoTitulo(d, origem),
+            origem: mesmoTitulo(d, e.origem),
             ...(d.numeroDocumento ? { numeroDocumento: d.numeroDocumento } : {}),
             ...(c.numeroBoleto ? { numeroBoleto: c.numeroBoleto } : {}),
             valorTitulo: d.valorTitulo,
@@ -171,7 +177,10 @@ export default class RegraIrmaosConjunto {
                 : {}),
             avisos,
             ajusteAutomatico:
-                deltaDias === 0 && delta > 0 && delta <= centavos(LIMITE_VALOR_MESMO_DIA),
+                e.modoAjuste === MODO_AJUSTE.ON &&
+                deltaDias === 0 &&
+                delta > 0 &&
+                delta <= centavos(LIMITE_VALOR_MESMO_DIA),
         };
     };
 

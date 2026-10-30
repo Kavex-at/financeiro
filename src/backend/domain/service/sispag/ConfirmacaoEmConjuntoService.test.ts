@@ -59,8 +59,12 @@ const montar = () => {
         ),
     };
     const boletoRepo = { listBoletos: jest.fn(async () => []) };
-    const ajuste = { agendarEmSequencia: jest.fn() };
+    const ajuste = {
+        agendarEmSequencia: jest.fn(),
+        resolverModo: jest.fn(async () => ({ modo: 'on', avisos: [] as string[] })),
+    };
     const logService = {
+        warn: jest.fn().mockResolvedValue(undefined),
         info: jest.fn().mockResolvedValue(undefined),
         error: jest.fn().mockResolvedValue(undefined),
     };
@@ -284,6 +288,36 @@ describe('ConfirmacaoEmConjuntoService.listarIrmaos (I15t(1))', () => {
         expect([...(entrada.emLoteFinalizado as Set<string>)]).toEqual(['2:40107:1']);
         expect(entrada.origem).toEqual({ ...ORIGEM, pesCod: '387' });
         expect(h.boletoRepo.listBoletos).toHaveBeenCalledWith({ vencimentoDesde: '2026-10-25' });
+    });
+
+    const comIrmao = (h: ReturnType<typeof montar>) =>
+        h.sugestoes.desfechosEmCache.mockResolvedValue([desfecho('40100')]);
+    const modoEntregue = (h: ReturnType<typeof montar>): unknown =>
+        (h.regra.irmaos.mock.calls[0] as unknown as [Record<string, unknown>])[0].modoAjuste;
+
+    it('entrega à regra o modo efetivo do ajuste de centavos (on), resolvido uma vez', async () => {
+        const h = montar();
+        comIrmao(h);
+        await h.service.listarIrmaos(ORIGEM);
+        expect(h.ajuste.resolverModo).toHaveBeenCalledTimes(1);
+        expect(modoEntregue(h)).toBe('on');
+    });
+
+    it('em shadow, a regra recebe shadow (ajuste automático não é prometido)', async () => {
+        const h = montar();
+        comIrmao(h);
+        h.ajuste.resolverModo.mockResolvedValueOnce({ modo: 'shadow', avisos: ['x'] });
+        await h.service.listarIrmaos(ORIGEM);
+        expect(modoEntregue(h)).toBe('shadow');
+    });
+
+    it('falha ao ler o modo: fail-closed em shadow, com warn, e a lista segue', async () => {
+        const h = montar();
+        comIrmao(h);
+        h.ajuste.resolverModo.mockRejectedValueOnce(new Error('ssm timeout'));
+        await h.service.listarIrmaos(ORIGEM);
+        expect(modoEntregue(h)).toBe('shadow');
+        expect(h.logService.warn).toHaveBeenCalledTimes(1);
     });
 
     it('origem sem credor identificado: lista vazia', async () => {

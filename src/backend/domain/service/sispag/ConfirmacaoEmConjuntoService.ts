@@ -14,6 +14,7 @@ import {
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import { LOTE_STATUS } from '../../interface/sispag/SispagInterface.js';
 import type { ChaveTitulo } from '../../interface/sispag/SugestaoBoleto.js';
+import { MODO_AJUSTE, type ModoAjuste } from '../../libs/boleto/ModoAjusteCentavos.js';
 import { isHandlerError } from '../../libs/handler/HandlerError.js';
 import BoletoDdaRepository from '../../repository/sispag/BoletoDdaRepository.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
@@ -69,9 +70,10 @@ export default class ConfirmacaoEmConjuntoService {
         const desde = doCredor
             .flatMap((d) => d.candidatos.map((c) => c.vencimentoBoleto))
             .sort()[0];
-        const [emLotes, pool] = await Promise.all([
+        const [emLotes, pool, modoAjuste] = await Promise.all([
             this.loteRepo.listTitulosEmLotesAbertos(),
             desde ? this.boletoRepo.listBoletos({ vencimentoDesde: desde }) : Promise.resolve([]),
+            this.modoAjusteOuShadow(),
         ]);
         const emLoteFinalizado = new Set(
             emLotes.filter((i) => LOTES_FINALIZADOS.has(i.status)).map(chaveDoTitulo),
@@ -83,6 +85,7 @@ export default class ConfirmacaoEmConjuntoService {
                 desfechos: doCredor,
                 emLoteFinalizado,
                 pool,
+                modoAjuste,
             }),
         };
     };
@@ -197,6 +200,25 @@ export default class ConfirmacaoEmConjuntoService {
                 },
             });
             return recusa(MOTIVO_INESPERADO);
+        }
+    };
+
+    /**
+     * Modo efetivo do ajuste de centavos (ADR-0074) para a listagem. Fail-closed: se não der para
+     * ler, `shadow` — a lista nunca promete uma renegociação no Conexos que não vai acontecer.
+     */
+    private modoAjusteOuShadow = async (): Promise<ModoAjuste> => {
+        try {
+            const { modo } = await this.ajusteCentavos.resolverModo();
+            return modo;
+        } catch (err) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'confirmação em conjunto: não foi possível ler o modo do ajuste de centavos — tratado como shadow',
+                data: { erro: err instanceof Error ? err.message : String(err) },
+            });
+            return MODO_AJUSTE.SHADOW;
         }
     };
 
