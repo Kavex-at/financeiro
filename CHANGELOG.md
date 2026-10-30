@@ -1,5 +1,11 @@
 # Columbia Financeiro — Changelog
 
+## v0.80.1 (2026-10-30) — SISPAG: confirmação em conjunto não promete renegociação em simulação
+
+- **Sem promessa falsa.** O diálogo de confirmar títulos irmãos juntos contava "N títulos terão o ajuste
+  automático de centavos (renegociação no Conexos)" mesmo com o ajuste em simulação, quando nada é gravado.
+  Agora só conta quando o ajuste está ligado; se o modo não puder ser lido, vale simulação.
+
 ## v0.80.0 (2026-10-30) — SISPAG: confirmar boleto que renegocia o título, direto na gaveta
 
 - **A tela avisa antes de confirmar.** Quando confirmar o boleto fará o sistema renegociar o título no
