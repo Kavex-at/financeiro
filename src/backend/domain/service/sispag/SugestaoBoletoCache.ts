@@ -71,6 +71,12 @@ export default class SugestaoBoletoCache {
         }
     };
 
+    /**
+     * Muda a cada invalidação (decisão sobre sugestão ou grupo, fim de sync do DDA). Quem guarda
+     * algo derivado do cenário (a lista da aba DDA) põe isto na chave.
+     */
+    public versao = (): number => this.geracao;
+
     /** Descarta o cenário e solta a execução em voo (a próxima chamada recalcula). */
     public invalidar = (): void => {
         this.geracao += 1;

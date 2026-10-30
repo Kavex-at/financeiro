@@ -193,6 +193,19 @@ describe('IngestaoPagamentosService', () => {
             expect(fin.errorMessage).toBeUndefined();
         });
 
+        it('fault-tolerance-1: arquivo vazio do fin124 aparece na run com o código DDA_FILE_EMPTY', async () => {
+            const { service, runRepo } = make({
+                sincronizarDda: jest
+                    .fn()
+                    .mockResolvedValue({ ...DDA_OK, falhas: 1, arquivosVazios: 1 }),
+            });
+            const r = await service.executar({ triggeredBy: 'cron' });
+            expect(r.dda).toMatchObject({ estado: 'parcial', falhas: 1, arquivosVazios: 1 });
+            const fin = runRepo.finishRun.mock.calls[0]?.[0] as { errorMessage?: string };
+            expect(fin.errorMessage).toContain('pool DDA parcial');
+            expect(fin.errorMessage).toContain('1 arquivo(s) vazio(s) no fin124 (DDA_FILE_EMPTY)');
+        });
+
         it('arquivos adiados pelo prazo viram "parcial" e ficam registrados na run', async () => {
             const { service, runRepo } = make({
                 sincronizarDda: jest.fn().mockResolvedValue({ ...DDA_OK, arquivosAdiados: 12 }),

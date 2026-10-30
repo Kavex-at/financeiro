@@ -233,6 +233,11 @@ export default class EnvironmentVars {
     public sispagLotesSyncTtlMin: number;
     public sispagLotesSyncCooldownMin: number;
     /**
+     * Conferência rápida do DDA ao abrir a tela (I-DDA6, `SISPAG_DDA_CONFERENCIA_MIN`, default 10):
+     * com a carteira recente, só lista o `fin124` se a última conferência tem mais que isto.
+     */
+    public sispagDdaConferenciaMin: number;
+    /**
      * Prazo de uma passada completa de L11 (`SISPAG_LOTES_SYNC_PRAZO_SEG`, default 120; a passada
      * leva ~25 s). Estourado, a run fecha em `error` e a trava é solta — uma leitura pendurada no
      * Conexos não pode prender a trava e deixar abertura e cron em "em andamento" para sempre.
@@ -350,6 +355,7 @@ export default class EnvironmentVars {
         sispagCarteiraCooldownMin,
         sispagLotesSyncTtlMin,
         sispagLotesSyncCooldownMin,
+        sispagDdaConferenciaMin,
         sispagLotesSyncPrazoSeg,
         sispagVerificacao,
         solicitacaoNumerarioGcdCod,
@@ -401,6 +407,7 @@ export default class EnvironmentVars {
         sispagCarteiraCooldownMin?: number;
         sispagLotesSyncTtlMin?: number;
         sispagLotesSyncCooldownMin?: number;
+        sispagDdaConferenciaMin?: number;
         sispagLotesSyncPrazoSeg?: number;
         sispagVerificacao?: SispagVerificacaoConfig;
         solicitacaoNumerarioGcdCod: number;
@@ -454,6 +461,7 @@ export default class EnvironmentVars {
         this.sispagCarteiraCooldownMin = sispagCarteiraCooldownMin ?? 5;
         this.sispagLotesSyncTtlMin = sispagLotesSyncTtlMin ?? 30;
         this.sispagLotesSyncCooldownMin = sispagLotesSyncCooldownMin ?? 5;
+        this.sispagDdaConferenciaMin = sispagDdaConferenciaMin ?? 10;
         this.sispagLotesSyncPrazoSeg = sispagLotesSyncPrazoSeg ?? 120;
         this.sispagVerificacao = sispagVerificacao ?? { ...SISPAG_VERIFICACAO_DEFAULT };
         this.solicitacaoNumerarioGcdCod = solicitacaoNumerarioGcdCod;

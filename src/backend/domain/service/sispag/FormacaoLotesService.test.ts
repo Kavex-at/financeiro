@@ -7,13 +7,14 @@ import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoR
 import type GrupoBoletoRepository from '../../repository/sispag/GrupoBoletoRepository.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import type { GrupoParaFormacao } from '../../repository/sispag/TituloAPagarRepository.js';
+import type JobExecucaoRepository from '../../repository/operacao/JobExecucaoRepository.js';
 import type LeituraGrupoBoleto from './LeituraGrupoBoleto.js';
 import type LogService from '../LogService.js';
 import type ContaPagadoraResolver from './ContaPagadoraResolver.js';
 import type SituacaoPagamentoService from './SituacaoPagamentoService.js';
 import type AjusteCentavosExecucaoRepository from '../../repository/sispag/AjusteCentavosExecucaoRepository.js';
 import type SugestaoBoletoRepository from '../../repository/sispag/SugestaoBoletoRepository.js';
-import FormacaoLotesService from './FormacaoLotesService.js';
+import FormacaoLotesService, { PIPELINE_FORMACAO_LOTES } from './FormacaoLotesService.js';
 import PreSelecaoItemLote from './PreSelecaoItemLote.js';
 
 const titulo = (over: Partial<TituloAPagar> = {}): TituloAPagar => ({
@@ -48,6 +49,8 @@ const make = (
         confirmados?: string[];
         /** Líquido do ledger do ajuste de centavos, em centavos, por chave do título novo. */
         liquidos?: Record<string, number>;
+        /** Já existe formação concluída hoje (trilha `job_execucao`). */
+        jaFormouHoje?: boolean;
     } = {},
 ) => {
     const resolverPadrao = jest
@@ -102,6 +105,11 @@ const make = (
             return mapa;
         });
     const log = buildLog();
+    const jobRuns = {
+        createRun: jest.fn().mockResolvedValue('run-1'),
+        finishRun: jest.fn().mockResolvedValue(undefined),
+        existeConcluidaDesde: jest.fn().mockResolvedValue(over.jaFormouHoje ?? false),
+    };
     const service = new FormacaoLotesService(
         tituloRepo as unknown as TituloAPagarRepository,
         loteRepo as unknown as LotePagamentoRepository,
@@ -124,8 +132,10 @@ const make = (
                     .mockResolvedValue(new Map(Object.entries(over.liquidos ?? {}))),
             } as unknown as AjusteCentavosExecucaoRepository,
         ),
+        jobRuns as unknown as JobExecucaoRepository,
     );
     return {
+        jobRuns,
         service,
         tituloRepo,
         loteRepo,
@@ -651,5 +661,134 @@ describe('FormacaoLotesService — grupo anulado durante a rodada', () => {
         await m.service.formar({ triggeredBy: 'cron' });
         expect(m.loteRepo.adicionarGrupo).not.toHaveBeenCalled();
         expect(m.loteRepo.adicionarItens).toHaveBeenCalledTimes(1);
+    });
+});
+
+/**
+ * Formação AUTOMÁTICA (cron): dia útil, nunca antes das 06:30 BRT, no máximo uma rodada concluída
+ * por dia de Brasília — conferida dentro do lock (v0.53.0, Gabriel 2026-10-30). Manual sem trava.
+ */
+describe('FormacaoLotesService — uma formação automática por dia útil (v0.53.0)', () => {
+    // 2026-10-30 é sexta-feira (dia útil); 31/10 é sábado.
+    const em = (iso: string) => BankingCalendar.withClock(() => new Date(iso));
+
+    it('automática às 07:07 BRT de dia útil, sem formação hoje: forma e grava trilha', async () => {
+        const { service, loteRepo, jobRuns } = make({
+            elegiveis: [titulo()],
+            calendar: em('2026-10-30T10:07:00Z'),
+        });
+        const r = await service.formar({ triggeredBy: 'cron', automatica: true });
+        expect(r.pulado).toBeUndefined();
+        expect(loteRepo.criarLote).toHaveBeenCalledTimes(1);
+        expect(jobRuns.existeConcluidaDesde).toHaveBeenCalledWith(
+            PIPELINE_FORMACAO_LOTES,
+            new Date('2026-10-30T03:00:00Z'),
+        );
+        expect(jobRuns.createRun).toHaveBeenCalledWith({
+            pipeline: PIPELINE_FORMACAO_LOTES,
+            triggeredBy: 'cron',
+        });
+        expect(jobRuns.finishRun).toHaveBeenCalledWith(
+            expect.objectContaining({
+                runId: 'run-1',
+                status: 'success',
+                metricas: expect.objectContaining({ lotesFormados: 1, titulosLotados: 1 }),
+            }),
+        );
+    });
+
+    it('já formou hoje: pula sem tocar lote nem gravar trilha', async () => {
+        const { service, loteRepo, jobRuns } = make({
+            elegiveis: [titulo()],
+            calendar: em('2026-10-30T15:13:00Z'),
+            jaFormouHoje: true,
+        });
+        const r = await service.formar({ triggeredBy: 'cron', automatica: true });
+        expect(r).toEqual({
+            lotesFormados: 0,
+            titulosLotados: 0,
+            lotesDesfeitos: 0,
+            pulado: 'ja_formado_hoje',
+        });
+        expect(loteRepo.desfazerAutomaticosVencidos).not.toHaveBeenCalled();
+        expect(loteRepo.criarLote).not.toHaveBeenCalled();
+        expect(jobRuns.createRun).not.toHaveBeenCalled();
+    });
+
+    it('antes das 06:30 BRT (slot das 05:07): não forma; 06:30 em ponto já forma', async () => {
+        const cedo = make({ elegiveis: [titulo()], calendar: em('2026-10-30T09:29:59Z') });
+        expect((await cedo.service.formar({ triggeredBy: 'cron', automatica: true })).pulado).toBe(
+            'antes_das_0630',
+        );
+        expect(cedo.loteRepo.criarLote).not.toHaveBeenCalled();
+        expect(cedo.jobRuns.existeConcluidaDesde).not.toHaveBeenCalled();
+
+        const hora = make({ elegiveis: [titulo()], calendar: em('2026-10-30T09:30:00Z') });
+        expect(
+            (await hora.service.formar({ triggeredBy: 'cron', automatica: true })).pulado,
+        ).toBeUndefined();
+    });
+
+    it('fim de semana: nenhuma formação automática', async () => {
+        const { service, loteRepo } = make({
+            elegiveis: [titulo()],
+            calendar: em('2026-10-31T10:07:00Z'),
+        });
+        expect((await service.formar({ triggeredBy: 'cron', automatica: true })).pulado).toBe(
+            'dia_nao_util',
+        );
+        expect(loteRepo.criarLote).not.toHaveBeenCalled();
+    });
+
+    it('fronteira do dia é Brasília: 23:30 BRT de ontem é "ontem" (início do dia = 03:00Z)', async () => {
+        const { service, jobRuns } = make({ calendar: em('2026-10-30T02:30:00Z') });
+        // 02:30Z de 30/10 = 23:30 BRT de 29/10 (quinta, útil, depois das 06:30).
+        await service.formar({ triggeredBy: 'cron', automatica: true });
+        expect(jobRuns.existeConcluidaDesde).toHaveBeenCalledWith(
+            PIPELINE_FORMACAO_LOTES,
+            new Date('2026-10-29T03:00:00Z'),
+        );
+    });
+
+    it('manual não tem trava: forma mesmo com formação hoje, de madrugada ou no sábado', async () => {
+        const { service, loteRepo, jobRuns } = make({
+            elegiveis: [titulo()],
+            calendar: em('2026-10-31T08:00:00Z'),
+            jaFormouHoje: true,
+        });
+        const r = await service.formar({ triggeredBy: 'admin@kavex' });
+        expect(r.pulado).toBeUndefined();
+        expect(loteRepo.criarLote).toHaveBeenCalledTimes(1);
+        expect(jobRuns.existeConcluidaDesde).not.toHaveBeenCalled();
+        expect(jobRuns.createRun).toHaveBeenCalledWith({
+            pipeline: PIPELINE_FORMACAO_LOTES,
+            triggeredBy: 'admin@kavex',
+        });
+    });
+
+    it('a checagem acontece DENTRO do lock: lock ocupado nem consulta a trilha', async () => {
+        const { service, jobRuns } = make({ acquire: false, calendar: em('2026-10-30T10:07:00Z') });
+        await expect(
+            service.formar({ triggeredBy: 'cron', automatica: true }),
+        ).rejects.toBeInstanceOf(IngestLockBusyError);
+        expect(jobRuns.existeConcluidaDesde).not.toHaveBeenCalled();
+    });
+
+    it('falha na formação fecha a trilha como error e propaga', async () => {
+        const { service, loteRepo, jobRuns } = make({
+            elegiveis: [titulo()],
+            calendar: em('2026-10-30T10:07:00Z'),
+        });
+        loteRepo.desfazerAutomaticosVencidos.mockRejectedValueOnce(new Error('banco fora'));
+        await expect(service.formar({ triggeredBy: 'cron', automatica: true })).rejects.toThrow(
+            'banco fora',
+        );
+        expect(jobRuns.finishRun).toHaveBeenCalledWith(
+            expect.objectContaining({
+                runId: 'run-1',
+                status: 'error',
+                errorMessage: 'banco fora',
+            }),
+        );
     });
 });

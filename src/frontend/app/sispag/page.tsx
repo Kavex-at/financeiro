@@ -1220,6 +1220,8 @@ function SispagPanel() {
               <BoletosDdaTab
                 {...(podeExecutar ? { onCompor: (b: BoletoDda) => abrirComposicao(b) } : {})}
                 onGrupoAlterado={aoAlterarGrupo}
+                versaoCarteira={painel.ingestao.ultimaRunEm}
+                atualizandoCarteira={refresh === 'atualizando'}
               />
             </TabsContent>
 

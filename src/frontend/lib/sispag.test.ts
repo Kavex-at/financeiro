@@ -9,6 +9,7 @@ import {
   diasEntre,
   tituloDeItem,
   fetchBoletosDda,
+  sincronizarBoletosDda,
   DebitDateFrozenError,
   DebitDateOutsideWindowError,
   fetchJanelaDataDebito,
@@ -387,6 +388,66 @@ describe('fetchBoletosDda — filtros e página vão na query', () => {
   it('erro do backend vira Error com a mensagem dele', async () => {
     mockApiFetch.mockResolvedValueOnce(respostaJson(400, { error: 'invalid query' }))
     await expect(fetchBoletosDda({ escopo: 'todos', pagina: 1 })).rejects.toThrow('invalid query')
+  })
+})
+
+describe('fetchBoletosDda — filtros de coluna (sispag-dda-paridade)', () => {
+  beforeEach(() => mockApiFetch.mockReset())
+
+  it('listas viram vírgula, ordem vira coluna:direção e o signal vai junto', async () => {
+    mockApiFetch.mockResolvedValueOnce(respostaJson(200, { boletos: [] }))
+    const ctrl = new AbortController()
+    await fetchBoletosDda(
+      {
+        escopo: 'todos',
+        pagina: 1,
+        situacoes: ['CANDIDATO', 'AMBIGUO'],
+        filiais: [1, 'sem'],
+        bancos: ['341'],
+        faixas: ['HOJE', '1-2'],
+        valorMin: 0,
+        valorMax: 99.5,
+        numero: ' 123 ',
+        titulo: 'adp',
+        ordem: { coluna: 'valor', direcao: -1 },
+      },
+      { signal: ctrl.signal },
+    )
+    const [url, init] = mockApiFetch.mock.calls.at(-1) ?? []
+    expect(Object.fromEntries(new URL(String(url)).searchParams)).toEqual({
+      escopo: 'todos',
+      pagina: '1',
+      situacoes: 'CANDIDATO,AMBIGUO',
+      filiais: '1,sem',
+      bancos: '341',
+      faixas: 'HOJE,1-2',
+      valorMin: '0',
+      valorMax: '99.5',
+      numero: '123',
+      titulo: 'adp',
+      ordem: 'valor:desc',
+    })
+    expect((init as RequestInit).signal).toBe(ctrl.signal)
+  })
+})
+
+describe('sincronizarBoletosDda — erro com a mensagem do servidor (F2)', () => {
+  beforeEach(() => mockApiFetch.mockReset())
+
+  it('500 com corpo vira a mensagem do corpo, não "API 500"', async () => {
+    mockApiFetch.mockResolvedValueOnce(respostaJson(500, { error: 'Conexos fora do ar' }))
+    await expect(sincronizarBoletosDda()).rejects.toThrow('Conexos fora do ar')
+  })
+
+  it('sem corpo legível, cai em "API <status>"', async () => {
+    mockApiFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      json: async () => {
+        throw new Error('html')
+      },
+    } as unknown as Response)
+    await expect(sincronizarBoletosDda()).rejects.toThrow('API 502')
   })
 })
 

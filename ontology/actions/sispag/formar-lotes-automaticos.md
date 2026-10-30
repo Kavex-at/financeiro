@@ -12,14 +12,18 @@ related_files:
   - src/backend/domain/repository/sispag/LotePagamentoRepository.ts
   - src/backend/domain/repository/sispag/TituloAPagarRepository.ts
   - src/backend/jobs/formar-lotes.ts
+  - src/backend/domain/repository/operacao/JobExecucaoRepository.ts
+  - .github/workflows/ingest-sispag.yml
   - src/backend/routes/sispag.ts
   - src/frontend/app/sispag/page.tsx
-last_review: 2026-10-20
+last_review: 2026-10-30
 preconditions:
   - "Carteira de títulos a pagar já ingerida/persistida (titulo_a_pagar) — roda logo APÓS o cron de ingestão."
   - "Mutações via cron ('cron', job:formar-lotes) ou trigger manual autenticado (POST /sispag/lotes/formar) — requireRole('admin') no manual."
   - "Advisory lock (FORMACAO_LOCK_KEY) livre — uma rodada de formação por vez (contenção → rodada em andamento vence)."
+  - "Gatilho AUTOMÁTICO (cron, v0.53.0, Gabriel 2026-10-30): só em DIA ÚTIL (BankingCalendar), nunca antes das 06:30 BRT, e no máximo UMA rodada concluída (success/partial, manual ou automática) por dia de Brasília, conferida DENTRO do advisory lock na trilha job_execucao (pipeline sispag-formacao-lotes). Fora disso a rodada termina pulada (dia_nao_util / antes_das_0630 / ja_formado_hoje) sem tocar lote. Gatilho MANUAL (POST /sispag/lotes/formar e workflow_dispatch) não tem trava."
 postconditions:
+  - "Toda rodada que forma grava trilha em job_execucao (pipeline sispag-formacao-lotes; métricas lotes/títulos/desfeitos/grupos; error na exceção). Rodada pulada não grava linha (só log)."
   - "Lotes automáticos RASCUNHO com ≥1 título VENCIDO são DESFEITOS (deletados) e seus títulos LIBERADOS (só a-vencer é elegível) — desfazerAutomaticosVencidos."
   - "Novos lotes automáticos RASCUNHO criados (criarLote(automatico=true)) agrupando títulos elegíveis por FILIAL (I4) — internacional fora do escopo (ADR-0021), sem divisão por classe."
   - "Só entram títulos A VENCER ≤ maxDias (7) — vencidos excluídos — e ainda não presentes em NENHUM lote RASCUNHO (anti-join)."
@@ -144,3 +148,12 @@ desfazer o que venceu, anti-join contra o que já está em rascunho, nascer RASC
 domínio; os **valores** (janela de 7 dias, cadência do cron, dimensões de agrupamento efetivas) são
 config do tenant. Estende `gerenciarLoteCandidato` (montagem manual) com a montagem assistida — não
 reinventa o agregado nem as invariantes.
+
+## Emenda v0.53.0 (2026-10-30, feature `sispag-dda-paridade`, aprovada por Gabriel) — uma por dia útil
+
+Duas rodadas automáticas no mesmo dia criam um segundo lote por filial com os títulos que ficaram
+elegíveis no intervalo: o anti-join impede duplicar título, não impede **fragmentar**. A trava saiu do
+workflow (`github.event.schedule == '0 10 * * *'`), que deixou de servir com mais de um slot de manhã,
+e foi para o serviço: dia útil, a partir das 06:30 BRT, uma rodada concluída por dia (contando também a
+manual). O workflow chama a formação nos slots 05:07, 07:07 e 12:13 BRT; quem decide é o serviço. Fim
+de semana e feriado: nenhuma formação automática (o cron das 07:07 continua ingerindo todo dia).

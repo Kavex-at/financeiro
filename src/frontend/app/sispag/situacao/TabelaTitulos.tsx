@@ -36,6 +36,8 @@ import {
   rotuloSituacao,
 } from './situacaoTitulos'
 import type { TabelaTitulosEstado } from './useTabelaTitulos'
+import { PaginacaoTabela } from '../components/filtros/PaginacaoTabela'
+import { PilulasFiltroAtivo } from '../components/filtros/PilulasFiltroAtivo'
 import { VencimentoCelula } from './VencimentoCelula'
 
 /**
@@ -111,21 +113,13 @@ export function TabelaTitulos({
           </Button>
         ) : null}
       </div>
-      {etiquetas.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5" aria-label="Filtros ativos">
-          {etiquetas.map((e) => (
-            <button
-              key={e.id}
-              type="button"
-              aria-label={`Remover filtro: ${e.texto}`}
-              onClick={() => tabela.atualizar(e.remover)}
-              className="inline-flex items-center gap-1 rounded-full bg-info-subtle px-2.5 py-1 text-xs text-info-foreground outline-none hover:opacity-80 focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-            >
-              {e.texto} <span aria-hidden>×</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
+      <PilulasFiltroAtivo
+        etiquetas={etiquetas}
+        onRemover={(id) => {
+          const e = etiquetas.find((x) => x.id === id)
+          if (e) tabela.atualizar(e.remover)
+        }}
+      />
 
       {filtrados.length === 0 ? (
         <div role="status" className="rounded-lg border px-4 py-10 text-center text-sm text-muted-foreground">
@@ -443,37 +437,12 @@ export function TabelaTitulos({
         </div>
       )}
 
-      {filtrados.length > 0 ? (
-        <div className="flex flex-col gap-2 pt-1 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-          <span>
-            Mostrando {(tabela.pagina - 1) * tabela.pageSize + 1}–
-            {Math.min(tabela.pagina * tabela.pageSize, filtrados.length)} de {filtrados.length}
-          </span>
-          {tabela.totalPaginas > 1 ? (
-            <div className="flex items-center gap-2">
-              <span>
-                Página {tabela.pagina} de {tabela.totalPaginas}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={tabela.pagina <= 1}
-                onClick={() => tabela.setPagina((p) => Math.max(1, p - 1))}
-              >
-                Anterior
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={tabela.pagina >= tabela.totalPaginas}
-                onClick={() => tabela.setPagina((p) => Math.min(tabela.totalPaginas, p + 1))}
-              >
-                Próxima
-              </Button>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      <PaginacaoTabela
+        pagina={tabela.pagina}
+        pageSize={tabela.pageSize}
+        total={filtrados.length}
+        onPagina={tabela.setPagina}
+      />
     </div>
   )
 }

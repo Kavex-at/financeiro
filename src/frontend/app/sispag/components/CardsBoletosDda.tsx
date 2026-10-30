@@ -1,142 +1,146 @@
 'use client'
 
+import type * as React from 'react'
 import { Button } from '@/components/ui/button'
 import { KPIGrid, SimpleKPI } from '@/components/ui/kpi-card'
-import type { BoletoDdaContagem, BoletoDdaSituacao } from '@/lib/sispag'
+import { Skeleton } from '@/components/ui/skeleton'
+import { formatBRL } from '@/lib/utils'
+import type { BoletosDdaResposta } from '@/lib/sispag'
+import { somaTotais, type TotalDda, totalDe } from '../boletos-dda/filtrosBoletosDda'
+import { BOTAO_ALERTA, BOTAO_PERIGO, BOTAO_PRIMARIO } from './filtros/botoesDeCard'
 
-export type FiltroSituacaoDda = 'todas' | BoletoDdaSituacao
-
-const fmt = (n: number | undefined) => (n === undefined ? '—' : n.toLocaleString('pt-BR'))
+const qtd = (t: TotalDda) => (t.qtd === undefined ? '—' : t.qtd.toLocaleString('pt-BR'))
+const reais = (t: TotalDda) => (t.valor === undefined ? '—' : formatBRL(t.valor))
 
 /**
- * Cards-resumo da aba "Boletos DDA". Cada card é um atalho para o filtro de situação (o mesmo da
- * barra de chips) e leva botões de ação, como em "Títulos a pagar". Os números são o `contagem` do
- * servidor (já com filial + busca aplicadas), então não dependem da página aberta.
+ * Os 4 cards de ação da aba "Boletos DDA", no padrão de `CardsSituacao` (Títulos a pagar): número,
+ * R$ no rodapé e UM botão cheio na cor do card que liga o filtro. Os totais vêm do servidor
+ * (`totais`), na mesma base do filtro externo. O total do período não é card: é o segmento Todos.
  */
 export function CardsBoletosDda({
-  contagem,
-  situacaoAtiva,
-  onSelecionar,
-  emGrupoAtivo = false,
+  dados,
+  carregando,
+  segmento,
+  urgentesAtivo,
+  emGrupoAtivo,
+  onVerCasados,
+  onConferir,
+  onAlternarUrgentes,
   onAlternarEmGrupo,
 }: {
-  /** `undefined` enquanto a primeira resposta não chegou: o card mostra "—", nunca zero. */
-  contagem?: BoletoDdaContagem
-  situacaoAtiva: FiltroSituacaoDda
-  onSelecionar: (s: FiltroSituacaoDda) => void
-  /** I21v: o filtro "Em grupo" está ligado. */
-  emGrupoAtivo?: boolean
-  onAlternarEmGrupo?: () => void
+  /** `undefined` enquanto a primeira resposta não chegou: os cards mostram o esqueleto. */
+  dados?: BoletosDdaResposta
+  carregando: boolean
+  segmento: string | undefined
+  urgentesAtivo: boolean
+  emGrupoAtivo: boolean
+  onVerCasados: () => void
+  onConferir: () => void
+  onAlternarUrgentes: () => void
+  onAlternarEmGrupo: () => void
 }) {
-  const aConferir = contagem ? contagem.CANDIDATO + contagem.AMBIGUO : undefined
-  const alternar = (s: BoletoDdaSituacao) => onSelecionar(situacaoAtiva === s ? 'todas' : s)
+  const casados = totalDe(dados, 'VINCULADO')
+  const candidatos = totalDe(dados, 'CANDIDATO')
+  const ambiguos = totalDe(dados, 'AMBIGUO')
+  const conferir = somaTotais(candidatos, ambiguos)
+  const urgentes = totalDe(dados, 'urgentes')
+  const urgConferir = totalDe(dados, 'urgentesParaConferir')
+  const urgSemTitulo = totalDe(dados, 'urgentesSemTitulo')
+  const grupos = totalDe(dados, 'emGrupo')
+  const sugeridos = totalDe(dados, 'grupoSugerido')
+  const confirmados = totalDe(dados, 'grupoConfirmado')
+  const loading = carregando && !dados
+  // Carregando: a MESMA árvore, com esqueleto no número e no rodapé (nada desloca ao chegar).
+  const numero = (t: TotalDda) => (loading ? <Skeleton className="h-8 w-16" /> : qtd(t))
+  const rodape = (conteudo: React.ReactNode) =>
+    loading ? <Skeleton className="h-4 w-40" /> : <div className="space-y-2">{conteudo}</div>
+
   return (
-    <KPIGrid columns={5} aria-label="Resumo dos boletos DDA">
+    <KPIGrid columns={4} aria-label="Resumo dos boletos DDA" aria-busy={loading}>
       <SimpleKPI
         label="Casados com título"
-        value={fmt(contagem?.VINCULADO)}
+        value={numero(casados)}
         color="success"
-        active={situacaoAtiva === 'VINCULADO'}
-        footer={
-          <div className="space-y-2">
-            <p>O Conexos já ligou o boleto a um título</p>
-            {contagem && contagem.VINCULADO > 0 ? (
-              <Button
-                size="sm"
-                variant="outline"
-                aria-pressed={situacaoAtiva === 'VINCULADO'}
-                onClick={() => alternar('VINCULADO')}
-              >
-                {situacaoAtiva === 'VINCULADO' ? 'Tirar o filtro' : 'Ver os casados'}
+        active={segmento === 'casados'}
+        footer={rodape(
+          <>
+            <p>{reais(casados)} · o Conexos já ligou o boleto a um título</p>
+            {(casados.qtd ?? 0) > 0 ? (
+              <Button size="sm" aria-pressed={segmento === 'casados'} onClick={onVerCasados}>
+                {segmento === 'casados' ? 'Tirar o filtro' : 'Ver os casados'}
               </Button>
             ) : null}
-          </div>
-        }
+          </>,
+        )}
       />
       <SimpleKPI
         label="Para conferir"
-        value={fmt(aConferir)}
-        color="info"
-        active={situacaoAtiva === 'CANDIDATO' || situacaoAtiva === 'AMBIGUO'}
-        footer={
-          <div className="space-y-2">
+        value={numero(conferir)}
+        color="danger"
+        active={segmento === 'conferir'}
+        footer={rodape(
+          <>
             <p>
-              {contagem
-                ? `${contagem.CANDIDATO} com um candidato · ${contagem.AMBIGUO} ambíguos`
-                : 'carregando…'}
+              {reais(conferir)} · {qtd(candidatos)} com um candidato · {qtd(ambiguos)} ambíguos
             </p>
-            <div className="flex flex-wrap gap-2">
-              {contagem && contagem.CANDIDATO > 0 ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-pressed={situacaoAtiva === 'CANDIDATO'}
-                  onClick={() => alternar('CANDIDATO')}
-                >
-                  Ver candidatos
-                </Button>
-              ) : null}
-              {contagem && contagem.AMBIGUO > 0 ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-pressed={situacaoAtiva === 'AMBIGUO'}
-                  onClick={() => alternar('AMBIGUO')}
-                >
-                  Ver ambíguos
-                </Button>
-              ) : null}
-            </div>
-          </div>
-        }
-      />
-      <SimpleKPI
-        label="Sem título"
-        value={fmt(contagem?.SEM_TITULO)}
-        color="warning"
-        active={situacaoAtiva === 'SEM_TITULO'}
-        footer={
-          <div className="space-y-2">
-            <p>Nenhum título aberto bate em valor e vencimento</p>
-            {contagem && contagem.SEM_TITULO > 0 ? (
+            {(conferir.qtd ?? 0) > 0 ? (
               <Button
                 size="sm"
-                variant="outline"
-                aria-pressed={situacaoAtiva === 'SEM_TITULO'}
-                onClick={() => alternar('SEM_TITULO')}
+                className={BOTAO_PERIGO}
+                aria-pressed={segmento === 'conferir'}
+                onClick={onConferir}
               >
-                {situacaoAtiva === 'SEM_TITULO' ? 'Tirar o filtro' : 'Ver sem título'}
+                {segmento === 'conferir' ? 'Tirar o filtro' : 'Conferir'}
               </Button>
             ) : null}
-          </div>
-        }
+          </>,
+        )}
+      />
+      <SimpleKPI
+        label="Vencem em até 2 dias"
+        value={numero(urgentes)}
+        color="warning"
+        active={urgentesAtivo}
+        footer={rodape(
+          <>
+            <p>
+              {reais(urgentes)} · {qtd(urgConferir)} para conferir · {qtd(urgSemTitulo)} sem título
+            </p>
+            {(urgentes.qtd ?? 0) > 0 || urgentesAtivo ? (
+              <Button
+                size="sm"
+                className={BOTAO_ALERTA}
+                aria-pressed={urgentesAtivo}
+                onClick={onAlternarUrgentes}
+              >
+                {urgentesAtivo ? 'Tirar o filtro' : 'Ver só os urgentes'}
+              </Button>
+            ) : null}
+          </>,
+        )}
       />
       <SimpleKPI
         label="Pagam vários títulos"
-        value={fmt(contagem?.emGrupo)}
-        color="info"
+        value={numero(grupos)}
+        color="primary"
         active={emGrupoAtivo}
-        footer={
-          <div className="space-y-2">
-            <p>Um boleto que fecha a soma de vários títulos do credor</p>
-            {contagem && contagem.emGrupo > 0 && onAlternarEmGrupo ? (
+        footer={rodape(
+          <>
+            <p>
+              {reais(grupos)} · {qtd(sugeridos)} sugeridos · {qtd(confirmados)} confirmados
+            </p>
+            {(grupos.qtd ?? 0) > 0 || emGrupoAtivo ? (
               <Button
                 size="sm"
-                variant="outline"
+                className={BOTAO_PRIMARIO}
                 aria-pressed={emGrupoAtivo}
                 onClick={onAlternarEmGrupo}
               >
                 {emGrupoAtivo ? 'Tirar o filtro' : 'Ver os grupos'}
               </Button>
             ) : null}
-          </div>
-        }
-      />
-      <SimpleKPI
-        label="Boletos no período"
-        value={fmt(contagem?.todas)}
-        active={situacaoAtiva === 'todas'}
-        footer={<p>Com a filial e a busca atuais. O valor total ainda não vem do servidor.</p>}
+          </>,
+        )}
       />
     </KPIGrid>
   )

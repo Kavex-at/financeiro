@@ -64,3 +64,24 @@ Uma carteira nova sobre um pool velho mostra "boleto sem DDA" que o próprio ERP
 - **Sincronizar depois dos títulos**: deixa o flag uma rodada atrás do pool, que é o defeito de hoje.
 - **Falhar a ingestão quando o DDA falha**: a carteira é o produto principal; derrubá-la por causa do
   enriquecimento repete o erro que `titulosComBoletoDda` já evita.
+
+## Emenda 2026-10-30 (feature `sispag-dda-paridade`, aprovada por Yuri)
+
+O botão "Atualizar DDA" passa a usar o mesmo prazo da ingestão (60 s, `DDA_PRAZO_NA_INGESTAO_MS`),
+o que substitui "Botão da aba e job avulso seguem sem prazo" no item 3 para o **botão**. Motivo: sem
+prazo, o botão relia todos os arquivos importados nos últimos 60 dias numa única requisição HTTP; a
+requisição podia cair no proxy enquanto o servidor seguia rodando com o lock, e o clique seguinte
+dava 409. Com prazo, a resposta sempre volta, e o que faltou aparece como `arquivosAdiados` ("rode
+de novo"). O resultado ganha `arquivosLidos` (só os lidos de fato), porque `arquivosNovos` contava
+também os que falharam ou foram adiados. O job avulso continua sem prazo (carga completa). Não muda
+o lock, a janela de releitura nem os gatilhos.
+
+Na mesma feature: lista vazia do `fin124` para um arquivo que tinha itens não apaga o snapshot
+(guarda de proteção; conta como falha do arquivo). Ver `entities/boleto-dda.md` §Sincronização.
+
+## Emenda 2026-10-30, segunda (conferência rápida e aviso)
+
+Soma-se um gatilho: a conferência rápida ao abrir a tela com carteira recente (I-DDA6). O item 5 (aviso
+"DDA parado") passa a contar de `conferido_em`, a última listagem bem-sucedida do `fin124` (I-DDA7),
+não do último arquivo gravado; o limiar de 8 h e a regra de dia útil não mudam. Fecha a parte
+"só anda quando um arquivo é salvo" do follow-up F5.1.

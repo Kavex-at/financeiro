@@ -40,7 +40,10 @@ import RemittanceFileUnavailableError from '../domain/errors/RemittanceFileUnava
 import RemittanceExportInvalidError from '../domain/errors/RemittanceExportInvalidError.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
 import SincronizacaoPassadaService from '../domain/service/sispag/SincronizacaoPassadaService.js';
-import BoletoDdaService from '../domain/service/sispag/BoletoDdaService.js';
+import BoletoDdaService, {
+    BOLETO_DDA_PRAZO_MS,
+} from '../domain/service/sispag/BoletoDdaService.js';
+import IngestLockBusyError from '../domain/errors/IngestLockBusyError.js';
 import { errorMiddleware } from '../http/errorMiddleware.js';
 import { requestIdMiddleware } from '../middleware/requestId.js';
 import sispagRouter from './sispag.js';
@@ -1673,6 +1676,56 @@ describe('GET /sispag/boletos-dda', () => {
         });
         expect(listar).toHaveBeenCalled();
     });
+
+    it('paridade: repassa os filtros de coluna e a ordem já tipados', async () => {
+        const listar = registrar();
+        await comApp({}, async (url) => {
+            const qs = [
+                'situacoes=CANDIDATO,AMBIGUO',
+                'filiais=1,sem',
+                'bancos=341,237',
+                'faixas=HOJE,1-2',
+                'valorMin=10.5',
+                'valorMax=200',
+                'numero=%20123%20',
+                'titulo=adp',
+                'ordem=valor:desc',
+                'tamanho=25',
+            ].join('&');
+            const res = await fetch(`${url}/sispag/boletos-dda?${qs}`);
+            expect(res.status).toBe(200);
+        });
+        expect(listar).toHaveBeenCalledWith({
+            escopo: 'a-vencer',
+            pagina: 1,
+            tamanho: 25,
+            situacoes: ['CANDIDATO', 'AMBIGUO'],
+            filiais: [1, 'sem'],
+            bancos: ['341', '237'],
+            faixas: ['HOJE', '1-2'],
+            valorMin: 10.5,
+            valorMax: 200,
+            numero: '123',
+            titulo: 'adp',
+            ordem: { coluna: 'valor', direcao: -1 },
+        });
+    });
+
+    it.each([
+        ['situação desconhecida na lista', 'situacoes=CANDIDATO,PAGO'],
+        ['filial que não é número nem "sem"', 'filiais=1,abc'],
+        ['faixa desconhecida', 'faixas=AMANHA'],
+        ['coluna de ordem desconhecida', 'ordem=codbar:asc'],
+        ['direção de ordem desconhecida', 'ordem=valor:cima'],
+        ['valor negativo', 'valorMin=-1'],
+    ])('400 para %s (paridade)', async (_caso, qs) => {
+        const listar = registrar();
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/boletos-dda?${qs}`);
+            expect(res.status).toBe(400);
+        });
+        expect(listar).not.toHaveBeenCalled();
+    });
 });
 
 // ─────────────────────────────────────────────────────────── ADR-0061 — exceção de destino
@@ -1810,5 +1863,32 @@ describe('POST /sispag/lotes/:id/retorno — L7 aposentada (ADR-0055)', () => {
             expect((await readJson(res)).error).toMatch(/Sincronizar lotes/);
         });
         expect(service.marcarRetorno).not.toHaveBeenCalled();
+    });
+});
+
+describe('POST /sispag/boletos-dda/sincronizar', () => {
+    it('o botão tem o mesmo prazo da ingestão (emenda 2026-10-30 da ADR-0067)', async () => {
+        const sincronizar = jest.fn().mockResolvedValue({ arquivosLidos: 0 });
+        container.registerInstance(BoletoDdaService, { sincronizar } as never);
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/boletos-dda/sincronizar`, { method: 'POST' });
+            expect(res.status).toBe(200);
+        });
+        expect(sincronizar).toHaveBeenCalledWith({
+            triggeredBy: 'user-abc',
+            prazoMs: BOLETO_DDA_PRAZO_MS,
+        });
+        expect(BOLETO_DDA_PRAZO_MS).toBe(60_000);
+    });
+
+    it('lock ocupado vira 409 com a mensagem para o operador', async () => {
+        const sincronizar = jest.fn().mockRejectedValue(new IngestLockBusyError());
+        container.registerInstance(BoletoDdaService, { sincronizar } as never);
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/boletos-dda/sincronizar`, { method: 'POST' });
+            expect(res.status).toBe(409);
+            const body = (await res.json()) as { error?: string };
+            expect(body.error).toBeTruthy();
+        });
     });
 });

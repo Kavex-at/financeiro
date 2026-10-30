@@ -3,9 +3,10 @@
 import { CircleHelp } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { formatBRL } from '@/lib/utils'
 import { MOTIVO_PAGAMENTO, type MotivoPagamento, type SugestaoBoletoSemDda } from '@/lib/sispag'
+import { ChipFiltro } from '../components/filtros/ChipFiltro'
 import { DONO_DO_MOTIVO, ROTULO_DONO, ROTULO_MOTIVO, ROTULO_SUGESTAO_BOLETO } from './rotulos'
+import { SegmentosComTotal } from '../components/filtros/SegmentosComTotal'
 import type { EstadoFiltro, Total } from './situacaoTitulos'
 
 const OPCOES: ReadonlyArray<{ valor: EstadoFiltro; rotulo: string }> = [
@@ -13,11 +14,6 @@ const OPCOES: ReadonlyArray<{ valor: EstadoFiltro; rotulo: string }> = [
   { valor: 'prontos', rotulo: 'Prontos' },
   { valor: 'bloqueados', rotulo: 'Bloqueados' },
 ]
-
-const CHIP =
-  'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]'
-const chipMarcado = (marcado: boolean): string =>
-  marcado ? 'border-foreground bg-foreground text-background' : 'bg-card hover:bg-accent'
 
 const PONTO: Record<EstadoFiltro, string> = {
   todos: '',
@@ -63,38 +59,18 @@ export function FiltroSituacaoBarra({
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div
-          role="group"
-          aria-label="Situação do título"
-          className="inline-flex overflow-hidden rounded-lg border bg-card"
-        >
-          {OPCOES.map((o, i) => (
-            <button
-              key={o.valor}
-              type="button"
-              aria-pressed={estado === o.valor}
-              onClick={() => onEstado(o.valor)}
-              className={cn(
-                'flex min-w-32 flex-col items-start px-4 py-2 text-left outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]',
-                i > 0 && 'border-l',
-                estado === o.valor ? 'bg-primary/10' : 'hover:bg-accent',
-              )}
-            >
-              <span className="flex items-center gap-1.5 text-sm font-medium">
-                {PONTO[o.valor] ? (
-                  <span className={cn('size-2 rounded-full', PONTO[o.valor])} aria-hidden />
-                ) : null}
-                {o.rotulo}
-                <span className="rounded-full bg-muted px-1.5 text-xs tabular-nums">
-                  {totais[o.valor].qtd.toLocaleString('pt-BR')}
-                </span>
-              </span>
-              <span className="text-xs tabular-nums text-muted-foreground">
-                {formatBRL(totais[o.valor].valor)}
-              </span>
-            </button>
-          ))}
-        </div>
+        <SegmentosComTotal
+          rotulo="Situação do título"
+          segmentos={OPCOES.map((o) => ({
+            valor: o.valor,
+            rotulo: o.rotulo,
+            ponto: PONTO[o.valor],
+            qtd: totais[o.valor].qtd,
+            valorReais: totais[o.valor].valor,
+          }))}
+          ativo={estado}
+          onSelecionar={onEstado}
+        />
         <Button
           type="button"
           variant="outline"
@@ -118,19 +94,13 @@ export function FiltroSituacaoBarra({
             .map(({ motivo, qtd }) => {
               const marcado = motivosSelecionados.includes(motivo)
               return (
-                <button
-                  key={motivo}
-                  type="button"
-                  aria-pressed={marcado}
-                  onClick={() => onAlternarMotivo(motivo)}
-                  className={cn(CHIP, chipMarcado(marcado))}
-                >
+                <ChipFiltro key={motivo} marcado={marcado} onClick={() => onAlternarMotivo(motivo)}>
                   {ROTULO_MOTIVO[motivo]}
                   <b className="tabular-nums">{qtd}</b>
                   <span className={cn('text-xs', marcado ? 'opacity-70' : 'text-muted-foreground')}>
                     · {ROTULO_DONO[DONO_DO_MOTIVO[motivo]]}
                   </span>
-                </button>
+                </ChipFiltro>
               )
             })}
         </div>
@@ -147,16 +117,14 @@ export function FiltroSituacaoBarra({
           {sugestoesBoleto.map(({ sugestao, qtd }) => {
             const marcado = sugestoesSelecionadas.includes(sugestao)
             return (
-              <button
+              <ChipFiltro
                 key={sugestao}
-                type="button"
-                aria-pressed={marcado}
+                marcado={marcado}
                 onClick={() => onAlternarSugestao?.(sugestao)}
-                className={cn(CHIP, chipMarcado(marcado))}
               >
                 {ROTULO_SUGESTAO_BOLETO[sugestao]}
                 <b className="tabular-nums">{qtd}</b>
-              </button>
+              </ChipFiltro>
             )
           })}
         </div>

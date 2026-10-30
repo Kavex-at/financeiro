@@ -358,6 +358,7 @@ export default class EnvironmentProvider {
             sispagCarteiraCooldownMin: this.readMinutos('SISPAG_CARTEIRA_COOLDOWN_MIN', 5),
             sispagLotesSyncTtlMin: this.readMinutos('SISPAG_LOTES_SYNC_TTL_MIN', 30),
             sispagLotesSyncCooldownMin: this.readMinutos('SISPAG_LOTES_SYNC_COOLDOWN_MIN', 5),
+            sispagDdaConferenciaMin: this.readMinutos('SISPAG_DDA_CONFERENCIA_MIN', 10),
             // Mesmo parse dos minutos (número > 0, senão default), em segundos.
             sispagLotesSyncPrazoSeg: this.readMinutos('SISPAG_LOTES_SYNC_PRAZO_SEG', 120),
             sispagVerificacao: this.resolveSispagVerificacao(),
@@ -459,6 +460,7 @@ export default class EnvironmentProvider {
             sispagCarteiraCooldownMin: this.readMinutos('SISPAG_CARTEIRA_COOLDOWN_MIN', 5),
             sispagLotesSyncTtlMin: this.readMinutos('SISPAG_LOTES_SYNC_TTL_MIN', 30),
             sispagLotesSyncCooldownMin: this.readMinutos('SISPAG_LOTES_SYNC_COOLDOWN_MIN', 5),
+            sispagDdaConferenciaMin: this.readMinutos('SISPAG_DDA_CONFERENCIA_MIN', 10),
             // Mesmo parse dos minutos (número > 0, senão default), em segundos.
             sispagLotesSyncPrazoSeg: this.readMinutos('SISPAG_LOTES_SYNC_PRAZO_SEG', 120),
             sispagVerificacao: this.resolveSispagVerificacao(),

@@ -74,3 +74,14 @@ saiu entre 11:29 e 13:48 BRT nas últimas execuções (2 a 5 h depois). A ingest
 
 `SISPAG_CARTEIRA_TTL_MIN` alto (por exemplo 1440) torna o refresh de abertura inerte sem redeploy de
 código; voltar o cron a `0 10 * * *` desfaz o item 5.
+
+## Emenda 2026-10-30 (feature `sispag-dda-paridade`, aprovada por Gabriel)
+
+- **Item 1:** com a carteira recente, a abertura também faz a conferência rápida do DDA (I-DDA6 em
+  `entities/boleto-dda.md`), na mesma requisição, se a última conferência tem mais de 10 min
+  (`SISPAG_DDA_CONFERENCIA_MIN`). Falha da conferência não muda o estado da carteira.
+- **Item 5:** os crons saem do minuto :00 (medido: o das 10:00 UTC saiu ~16:23 UTC e o das 19:00 UTC
+  não disparou nos últimos 3 dias úteis) e ganham uma rede de segurança cedo: `7 8 * * 1-5` (05:07 BRT),
+  `7 10 * * *` (07:07), `13 15 * * 1-5` (12:13) e `13 19 * * 1-5` (16:13). A formação é chamada nos
+  slots 05:07, 07:07 e 12:13, mas a regra passa ao serviço (`formarLotesAutomaticos`): dia útil, não
+  antes das 06:30 BRT, no máximo uma por dia. Continua grátis (GitHub Actions; Render Cron é pago).

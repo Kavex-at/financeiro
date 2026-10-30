@@ -14,6 +14,7 @@ import {
   type BoletoDda,
   type BoletosDdaResposta,
 } from '@/lib/sispag'
+import { esquecerEstadoBoletosDda } from '../boletos-dda/useTabelaBoletosDda'
 import { BoletosDdaTab } from './BoletosDdaTab'
 import { grupoConfirmado, sugestaoGrupo } from './grupoBoleto.fixtures'
 
@@ -89,6 +90,8 @@ const pagina = (boletos: BoletoDda[], over: Partial<BoletosDdaResposta> = {}): B
 }
 
 beforeEach(() => {
+  // O estado da aba sobrevive à troca de aba (módulo); entre testes, começa do zero.
+  esquecerEstadoBoletosDda()
   jest.clearAllMocks()
   permissoes = [...CATALOGO_PERMISSOES]
   mockFetch.mockResolvedValue(pagina([BOLETO_GRUPO, BOLETO_CONFIRMADO, BOLETO_AVULSO]))
@@ -103,16 +106,18 @@ describe('Boletos DDA × grupos (I21v)', () => {
     await waitFor(() => expect(cartao.parentElement?.textContent).toMatch(/2/))
     await userEvent.click(await screen.findByRole('button', { name: 'Ver os grupos' }))
     await waitFor(() =>
-      expect(mockFetch).toHaveBeenLastCalledWith(expect.objectContaining({ emGrupo: true })),
+      expect(mockFetch.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({ emGrupo: true })),
     )
   })
 
-  it('chip "Em grupo (N)" liga e desliga o filtro emGrupo no servidor', async () => {
+  it('chip "Em grupo N" liga e desliga o filtro emGrupo no servidor', async () => {
     render(<BoletosDdaTab />)
-    const chip = await screen.findByRole('button', { name: 'Em grupo (2)' })
+    const chip = await screen.findByRole('button', { name: 'Em grupo 2' })
     await userEvent.click(chip)
     await waitFor(() =>
-      expect(mockFetch).toHaveBeenLastCalledWith(expect.objectContaining({ emGrupo: true, pagina: 1 })),
+      expect(mockFetch.mock.calls.at(-1)?.[0]).toEqual(
+        expect.objectContaining({ emGrupo: true, pagina: 1 }),
+      ),
     )
     expect(chip).toHaveAttribute('aria-pressed', 'true')
     await userEvent.click(chip)

@@ -10,12 +10,16 @@ import { isHandlerError } from '../domain/libs/handler/HandlerError.js';
 import ConciliacaoExecucaoRepository from '../domain/repository/sispag/ConciliacaoExecucaoRepository.js';
 import PagamentoIngestaoRunRepository from '../domain/repository/sispag/PagamentoIngestaoRunRepository.js';
 import RemessaExecucaoRepository from '../domain/repository/sispag/RemessaExecucaoRepository.js';
-import { BOLETO_DDA_ESCOPO } from '../domain/interface/sispag/BoletoDda.js';
-import BoletoDdaService from '../domain/service/sispag/BoletoDdaService.js';
+import { BOLETO_DDA_ESCOPO, BOLETO_DDA_SEM_FILIAL } from '../domain/interface/sispag/BoletoDda.js';
+import BoletoDdaService, {
+    BOLETO_DDA_PRAZO_MS,
+} from '../domain/service/sispag/BoletoDdaService.js';
 import {
     BOLETO_DDA_TAMANHO_MAX,
     BOLETO_DDA_TAMANHO_PADRAO,
+    COLUNAS_ORDENAVEIS,
     DATA_CIVIL_REGEX,
+    FAIXAS_FILTRAVEIS,
     SITUACOES_FILTRAVEIS,
 } from '../domain/service/sispag/PaginacaoBoletoDda.js';
 import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.js';
@@ -1523,6 +1527,21 @@ router.post(
 // ===================================================== Boletos DDA (fin124)
 // Snapshot local do pool DDA consolidado contra a carteira. READ-ONLY no ERP.
 
+/** `a,b,c` → lista validada item a item (até 50); itens vazios saem. */
+const listaQuery = <T extends z.ZodTypeAny>(item: T) =>
+    z
+        .preprocess(
+            (v) =>
+                typeof v === 'string'
+                    ? v
+                          .split(',')
+                          .map((x) => x.trim())
+                          .filter((x) => x !== '')
+                    : v,
+            z.array(item).max(50),
+        )
+        .optional();
+
 const boletosDdaSchema = z.object({
     escopo: z.enum([BOLETO_DDA_ESCOPO.A_VENCER, BOLETO_DDA_ESCOPO.TODOS]).default('a-vencer'),
     situacao: z.enum(SITUACOES_FILTRAVEIS).optional(),
@@ -1544,9 +1563,30 @@ const boletosDdaSchema = z.object({
     // comparação por string no `PaginacaoBoletoDda` — nada disto chega a SQL.
     vencimentoDe: z.string().regex(DATA_CIVIL_REGEX).optional(),
     vencimentoAte: z.string().regex(DATA_CIVIL_REGEX).optional(),
+    // Filtros de coluna (paridade com Títulos a pagar). Listas vêm separadas por vírgula.
+    situacoes: listaQuery(z.enum(SITUACOES_FILTRAVEIS)),
+    // I-DDA5: filial numérica ou `sem` (boleto sem filial de exibição).
+    filiais: listaQuery(
+        z.union([z.literal(BOLETO_DDA_SEM_FILIAL), z.coerce.number().int().positive()]),
+    ),
+    bancos: listaQuery(z.string().regex(/^\d{3}$/)),
+    faixas: listaQuery(z.enum(FAIXAS_FILTRAVEIS)),
+    valorMin: z.coerce.number().nonnegative().optional(),
+    valorMax: z.coerce.number().nonnegative().optional(),
+    numero: z.string().trim().min(1).max(60).optional(),
+    titulo: z.string().trim().min(1).max(100).optional(),
+    ordem: z
+        .string()
+        .regex(new RegExp(`^(${COLUNAS_ORDENAVEIS.join('|')}):(asc|desc)$`))
+        .transform((v) => {
+            const [coluna, direcao] = v.split(':') as [(typeof COLUNAS_ORDENAVEIS)[number], string];
+            return { coluna, direcao: direcao === 'desc' ? (-1 as const) : (1 as const) };
+        })
+        .optional(),
 });
 
 // GET /sispag/boletos-dda?escopo=&situacao=&emGrupo=&busca=&filCod=&vencimentoDe=&vencimentoAte=&pagina=&tamanho=
+//   &situacoes=&filiais=&bancos=&faixas=&valorMin=&valorMax=&numero=&titulo=&ordem=coluna:asc|desc
 // Devolve UMA página (≤ 100 linhas) — nunca o pool inteiro (Regis-Review performance-1/security-2).
 router.get(
     '/boletos-dda',
@@ -1565,7 +1605,9 @@ router.get(
     }),
 );
 
-// POST /sispag/boletos-dda/sincronizar — relê o fin124 (incremental). `IngestLockBusyError` → 409.
+// POST /sispag/boletos-dda/sincronizar — relê o fin124 (incremental), com o mesmo prazo da
+// ingestão (emenda 2026-10-30 da ADR-0067): a resposta sempre volta, e o que não coube sai em
+// `arquivosAdiados`. `IngestLockBusyError` → 409.
 router.post(
     '/boletos-dda/sincronizar',
     exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
@@ -1574,7 +1616,9 @@ router.post(
         await bootstrapAppContainer();
         const service = container.resolve(BoletoDdaService);
         try {
-            res.json(await service.sincronizar({ triggeredBy: ator(req) }));
+            res.json(
+                await service.sincronizar({ triggeredBy: ator(req), prazoMs: BOLETO_DDA_PRAZO_MS }),
+            );
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }

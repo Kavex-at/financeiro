@@ -891,3 +891,24 @@ describe('LotePagamentoRepository — retirada por código de barras (ADR-0069 e
         });
     });
 });
+
+describe('LotePagamentoRepository.assinaturaTitulosEmLotesAbertos (cache da aba DDA)', () => {
+    it('resume a MESMA base de listTitulosEmLotesAbertos numa linha, sem trazer os itens', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValue({ n: 3, h: '-12345' });
+        const r = await make(db).assinaturaTitulosEmLotesAbertos();
+        expect(r).toBe('3:-12345');
+        const [sql, params] = db.selectFirst.mock.calls[0] ?? [];
+        expect(sql).toContain(
+            'FROM lote_pagamento_item i JOIN lote_pagamento l ON l.id = i.lote_id',
+        );
+        expect(sql).toContain("l.status <> 'CANCELADO'");
+        expect(sql).toContain('l.data_debito');
+        expect(params).toBeUndefined();
+    });
+
+    it('sem linha: assinatura de lista vazia', async () => {
+        const db = buildDb();
+        expect(await make(db).assinaturaTitulosEmLotesAbertos()).toBe('0:0');
+    });
+});

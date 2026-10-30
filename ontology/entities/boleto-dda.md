@@ -1,7 +1,7 @@
 ---
 name: BoletoDda
 type: entity
-ontology_version: "0.40.0"
+ontology_version: "0.53.0"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -19,6 +19,17 @@ related_files:
   - src/backend/migrations/0083_titulo_doc_esp_numero.sql
   - src/frontend/app/sispag/components/BoletosDdaTab.tsx
   - src/frontend/app/sispag/components/ddaDefasado.ts
+  - src/backend/migrations/0092_boleto_dda_conferencia.sql
+  - src/backend/domain/service/sispag/CarteiraAtualizacaoService.ts
+  - src/backend/domain/service/sispag/PaginacaoBoletoDda.ts
+  - src/backend/domain/service/sispag/ConsolidacaoBoletoDdaCache.ts
+  - src/backend/domain/errors/EmptyDdaFileError.ts
+  - src/frontend/app/sispag/boletos-dda/filtrosBoletosDda.ts
+  - src/frontend/app/sispag/boletos-dda/useTabelaBoletosDda.ts
+  - src/frontend/app/sispag/boletos-dda/TabelaBoletosDda.tsx
+  - src/frontend/app/sispag/boletos-dda/FiltroSituacaoDdaBarra.tsx
+  - src/frontend/app/sispag/boletos-dda/FaixaBoletosHoje.tsx
+  - src/frontend/app/sispag/components/CardsBoletosDda.tsx
 properties:
   - ddcCod
   - ditCod
@@ -40,7 +51,7 @@ relationships:
   - "BoletoDda 0..N—0..N TituloAPagar (candidatos — SUGESTÃO calculada, não persistida: regra em camadas I15c; só o que o ERP não associou)"
   - "BoletoDda 0..N—N DecisaoSugestaoBoleto (snapshot por ddcCod/ditCod; decisão humana registrada, ADR-0068, implemented)"
   - "BoletoDda 0..1—0..N GrupoBoleto (boleto que paga N títulos do mesmo credor; no máximo um grupo CONFIRMADO por boleto; ADR-0077, implemented)"
-last_review: 2026-10-20
+last_review: 2026-10-30
 universality_evidence:
   - "ontology/_inbox/sispag-boleto-dda-sondagem.md — pool fin124 medido em PRD: 100% dos itens com barras de 44 dígitos, ~0% com vínculo"
   - "ontology/_inbox/sispag-boleto-dda-tab.md — casos PEDRONI 34697/1 e ADP 5046/1 (2026-09-23): boleto 1 dia depois do título, Conexos não associou"
@@ -67,7 +78,14 @@ universality_evidence:
 ## Pool global
 
 O pool é da **conta pagadora**, não da filial: o header `Cnx-filCod` não o escopa. Um boleto só
-ganha filial quando é vinculado (ou, na aba, pelo candidato único).
+ganha filial quando é vinculado. Na aba, a **filial de exibição** é a do vínculo; sem vínculo, a
+filial comum a **todos** os candidatos (um ou vários); sem isso, o boleto é **"sem filial"**.
+
+- **I-DDA5 — filtro de filial não deixa passar boleto sem filial** (v0.53.0, feature
+  `sispag-dda-paridade`, aprovado por Yuri em 2026-10-30). Filtrar por uma ou mais filiais mostra e
+  conta só boletos daquelas filiais; "sem filial" é uma opção própria do filtro, com total. (Antes da
+  v0.53.0 o boleto sem filial passava em qualquer filtro e inflava a contagem de cada filial.) A
+  filial de exibição é derivada, não persistida, e não altera I-DDA1/I-DDA2.
 
 ## Situação (derivada, não persistida)
 
@@ -98,17 +116,45 @@ Invariantes:
 
 ## Sincronização
 
-Três gatilhos, todos incrementais (arquivos novos + releitura dos importados nos últimos 60 dias —
-é neles que o Conexos ainda grava vínculo):
+Quatro gatilhos. Os três primeiros são a **passada completa** (arquivos novos + releitura dos
+importados nos últimos 60 dias — é neles que o Conexos ainda grava vínculo):
 
-- **Ingestão de pagamentos (ADR-0067)** — antes de ler os títulos, em toda rodada (cron 07h/12h/16h
-  BRT e abertura da tela). Com prazo de 60 s; falha, lock ocupado e prazo estourado **não** derrubam
+- **Ingestão de pagamentos (ADR-0067)** — antes de ler os títulos, em toda rodada (cron 05:07, 07:07,
+  12:13 e 16:13 BRT — emenda 2026-10-30 da ADR-0060 — e abertura da tela com carteira velha). Com prazo de 60 s; falha, lock ocupado e prazo estourado **não** derrubam
   a ingestão (`dda.estado`: `sincronizado`/`parcial`/`ocupada`/`falhou`).
-- Botão "Atualizar DDA" (admin) — sem prazo.
+- Botão "Atualizar DDA" (`sispag:executar`) — com o **mesmo prazo da ingestão** (60 s,
+  `DDA_PRAZO_NA_INGESTAO_MS`; emenda 2026-10-30 da ADR-0067): o que está em voo termina, o resto fica
+  para a próxima passada (`arquivosAdiados`). O resultado separa arquivos lidos, adiados e com falha.
 - Job avulso `npm run job:ingest-boletos-dda` — carga completa, sem prazo.
 
+O quarto é a **conferência rápida** (v0.53.0, feature `sispag-dda-paridade`, aprovada por Gabriel em
+2026-10-30):
+
+- **I-DDA6 — conferência rápida ao abrir a tela.** Com a carteira recente (a ADR-0060 não roda a
+  ingestão), a abertura confere o `fin124` se a última conferência tem mais de
+  `SISPAG_DDA_CONFERENCIA_MIN` (10 min): UMA listagem de arquivos comparada com `boleto_dda_arquivo`.
+  Arquivo **novo** → lê e grava os itens. Arquivo **cancelado ou com status/nome trocado** → atualiza
+  **só o cabeçalho**. Arquivo que sumiu da listagem → nada (nunca apaga; `warn`). Nada mudou → só
+  registra `conferido_em`. Não relê arquivo conhecido: o vínculo que o Conexos grava num arquivo já
+  importado **não** aparece aqui (a listagem não traz marca de alteração), só na passada completa.
+  Mesmo advisory lock, mesmo prazo (60 s), mesmo teto de leituras e mesma sequência da abertura
+  (ADR-0066 §3) da passada completa; falha da conferência nunca muda o estado da carteira.
+- **Conferido em.** Toda listagem bem-sucedida do `fin124` (rápida ou completa) grava `conferido_em`
+  (`boleto_dda_conferencia`, uma linha, migration 0092). Falha na listagem não grava.
+- **I-DDA7 — o aviso "DDA parado" conta da última conferência.** Defasado = mais de 8 h, em dia útil,
+  desde `conferido_em` (sem ela, desde o último arquivo gravado). Enquanto a abertura está conferindo
+  ou ingerindo, a aba não avisa.
+
 Supersede a decisão de 2026-09-24 ("sem cron"): o pool ficou 5 dias parado (08–13/10/2026) sem
-ninguém ver. A aba mostra aviso quando o pool está parado há mais de 8 h em dia útil.
+ninguém ver.
+
+**Lista vazia não apaga** (v0.53.0). Se o `fin124` devolve zero itens para um arquivo que tinha itens
+no snapshot, o snapshot desse arquivo é mantido e a passada registra `warn` (conta como falha do
+arquivo). Arquivo cancelado continua saindo pelo `cancelado_em`.
+
+**Urgência na aba** (v0.53.0). "Vence hoje" e "vence em até 2 dias" usam o vencimento **do boleto**
+como dia civil BRT (`BankingCalendar.todayBrt`, ADR-0070) e excluem `VINCULADO`. Faixas iguais às de
+Títulos a pagar (`VENCIDO`/`HOJE`/`1-2`/`3-7`/`8+`).
 
 **Não há beneficiário no item DDA** (sonda PRD 2026-10-13: 15 campos, nenhum nome/CNPJ do emissor).
 O emissor só se deriva do código de barras (banco + agência + conta). `titulo_a_pagar.doc_esp_numero`

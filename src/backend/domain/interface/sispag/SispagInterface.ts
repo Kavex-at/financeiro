@@ -209,6 +209,8 @@ export interface DdaNaIngestao {
     boletos?: number;
     falhas?: number;
     arquivosAdiados?: number;
+    /** Arquivos que o fin124 devolveu vazios (`DDA_FILE_EMPTY`); só quando > 0. */
+    arquivosVazios?: number;
     /** Mensagem do erro (só em `falhou`). */
     erro?: string;
 }
@@ -623,7 +625,17 @@ export interface FormacaoLotesResult {
     lotesDesfeitos: number;
     /** Grupos de boleto lotados inteiros nesta rodada (ADR-0077, P1-4). */
     gruposLotados?: number;
+    /** Rodada AUTOMÁTICA que não formou nada por regra (v0.53.0); ausente = formou. */
+    pulado?: FormacaoPulada;
 }
+
+/** Por que a formação automática não rodou (dia útil, 06:30 BRT, uma por dia). */
+export const FORMACAO_PULADA = {
+    DIA_NAO_UTIL: 'dia_nao_util',
+    ANTES_DAS_0630: 'antes_das_0630',
+    JA_FORMADO_HOJE: 'ja_formado_hoje',
+} as const;
+export type FormacaoPulada = (typeof FORMACAO_PULADA)[keyof typeof FORMACAO_PULADA];
 
 /** Entrada — criar lote. */
 export interface CriarLoteInput {
