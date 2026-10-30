@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import type PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
+import type BoletoDdaService from './BoletoDdaService.js';
 import CarteiraAtualizacaoService from './CarteiraAtualizacaoService.js';
 import type IngestaoPagamentosService from './IngestaoPagamentosService.js';
 
@@ -23,6 +24,8 @@ const make = (
         executar?: jest.Mock;
         ttlMin?: number;
         cooldownMin?: number;
+        conferirSeVelho?: jest.Mock;
+        conferenciaMin?: number;
     } = {},
 ) => {
     const executar =
@@ -41,14 +44,17 @@ const make = (
         getEnvironmentVars: jest.fn().mockResolvedValue({
             sispagCarteiraTtlMin: o.ttlMin ?? 30,
             sispagCarteiraCooldownMin: o.cooldownMin ?? 5,
+            sispagDdaConferenciaMin: o.conferenciaMin ?? 10,
         }),
     };
+    const conferirSeVelho = o.conferirSeVelho ?? jest.fn().mockResolvedValue(undefined);
     const service = new CarteiraAtualizacaoService(
         { executar } as unknown as IngestaoPagamentosService,
         runRepo as unknown as PagamentoIngestaoRunRepository,
         env as unknown as EnvironmentProvider,
+        { conferirSeVelho } as unknown as BoletoDdaService,
     );
-    return { service, executar, runRepo };
+    return { service, executar, runRepo, conferirSeVelho };
 };
 
 const pedir = (service: CarteiraAtualizacaoService) =>
@@ -147,5 +153,58 @@ describe('CarteiraAtualizacaoService (ADR-0060)', () => {
         const executar = jest.fn().mockRejectedValue(new Error('ingestão sem leitura'));
         const { service } = make({ ultimoSucesso: minAtras(90), executar });
         await expect(pedir(service)).rejects.toThrow('ingestão sem leitura');
+    });
+
+    describe('I-DDA6: conferência rápida do DDA na abertura (v0.53.0)', () => {
+        it('fresca: confere o DDA com o intervalo configurado e devolve o resultado em `dda`', async () => {
+            const conferirSeVelho = jest
+                .fn()
+                .mockResolvedValue({ estado: 'conferido', arquivosNovos: 1, arquivosCabecalho: 0 });
+            const { service, executar } = make({
+                ultimoSucesso: minAtras(12),
+                conferirSeVelho,
+                conferenciaMin: 7,
+            });
+            const r = await pedir(service);
+            expect(executar).not.toHaveBeenCalled();
+            expect(conferirSeVelho).toHaveBeenCalledWith({
+                triggeredBy: 'abertura:u1',
+                intervaloMs: 7 * MIN,
+                agora: AGORA,
+            });
+            expect(r).toMatchObject({
+                estado: 'fresca',
+                dda: { estado: 'conferido', arquivosNovos: 1 },
+            });
+        });
+
+        it('fresca e conferência recente: sem campo `dda`', async () => {
+            const { service } = make({ ultimoSucesso: minAtras(12) });
+            expect(await pedir(service)).not.toHaveProperty('dda');
+        });
+
+        it('conferência que lança não muda o estado da carteira', async () => {
+            const conferirSeVelho = jest.fn().mockRejectedValue(new Error('banco fora'));
+            const { service } = make({ ultimoSucesso: minAtras(12), conferirSeVelho });
+            expect(await pedir(service)).toMatchObject({
+                estado: 'fresca',
+                dda: { estado: 'falhou' },
+            });
+        });
+
+        it('defasada: a ingestão já faz a passada completa; não confere à parte', async () => {
+            const { service, conferirSeVelho } = make({ ultimoSucesso: minAtras(31) });
+            expect((await pedir(service)).estado).toBe('atualizada');
+            expect(conferirSeVelho).not.toHaveBeenCalled();
+        });
+
+        it('em_andamento e falha_recente: não confere', async () => {
+            const andamento = make({
+                ultimoSucesso: minAtras(40),
+                ultimaRun: { status: 'running', startedAt: minAtras(2).toISOString() },
+            });
+            await pedir(andamento.service);
+            expect(andamento.conferirSeVelho).not.toHaveBeenCalled();
+        });
     });
 });

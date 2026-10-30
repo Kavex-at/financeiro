@@ -5,16 +5,13 @@ import { KPIGrid, SimpleKPI } from '@/components/ui/kpi-card'
 import { formatBRL } from '@/lib/utils'
 import type { DonoPagamento, ResumoSituacao, TituloAPagar } from '@/lib/sispag'
 import { ESTADO_PAGAMENTO } from '@/lib/sispag'
+import { BOTAO_ALERTA, BOTAO_INFO, BOTAO_PERIGO } from '../components/filtros/botoesDeCard'
 import { ROTULO_DONO } from './rotulos'
 import { ehBloqueado, ehPronto, vencemEmAteDoisDias } from './situacaoTitulos'
 
 /** Ordem em que os donos aparecem no card "Precisam de ação" (quem é você vem primeiro). */
 const ORDEM_DONOS: readonly DonoPagamento[] = ['VOCE', 'APROVADOR', 'PERMUTAS', 'CONTAS_A_PAGAR']
 
-/** Botões cheios na cor do card: o `outline` cinza parecia desabilitado ao lado do botão azul. */
-const BOTAO_PERIGO = 'bg-danger text-white hover:bg-danger/90'
-const BOTAO_ALERTA = 'bg-warning text-warning-foreground hover:bg-warning/90'
-const BOTAO_INFO = 'bg-info text-white hover:bg-info/90'
 
 export interface LotesEsperando {
   paraFinalizar: number

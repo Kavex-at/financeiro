@@ -3,6 +3,7 @@ import path from 'node:path';
 import { Client } from 'pg';
 import 'reflect-metadata';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import EmptyDdaFileError from '../../errors/EmptyDdaFileError.js';
 import SqlBuilder from '../../libs/sql/SqlBuilder.js';
 import BoletoDdaRepository from './BoletoDdaRepository.js';
 
@@ -30,10 +31,26 @@ const adaptar = (db: Client): PostgreeDatabaseClient => {
         const { query, params } = p ? sb.build(q, p) : { query: q, params: undefined };
         return db.query(query, params as unknown[] | undefined);
     };
-    return {
+    const tx = {
         selectMany: async (q: string, p?: Record<string, unknown>) => (await run(q, p)).rows,
         selectFirst: async (q: string, p?: Record<string, unknown>) =>
             (await run(q, p)).rows[0] ?? null,
+        insert: async (q: string, p?: Record<string, unknown>) => (await run(q, p)).rowCount ?? 0,
+        update: async (q: string, p?: Record<string, unknown>) => (await run(q, p)).rowCount ?? 0,
+    };
+    return {
+        ...tx,
+        withTransaction: async <T>(fn: (t: typeof tx) => Promise<T>): Promise<T> => {
+            await db.query('BEGIN');
+            try {
+                const r = await fn(tx);
+                await db.query('COMMIT');
+                return r;
+            } catch (err) {
+                await db.query('ROLLBACK');
+                throw err;
+            }
+        },
     } as unknown as PostgreeDatabaseClient;
 };
 
@@ -164,5 +181,55 @@ describeComBanco('BoletoDdaRepository.buscarPorChave — integração (ADR-0068)
         const pontual = await repo.buscarPorChave({ ddcCod: 900, ditCod: 1 });
         expect(pontual).toBeDefined();
         expect(pontual).toEqual(doPool);
+    });
+
+    it('lista vazia do fin124 não apaga os boletos de um arquivo com itens (v0.53.0)', async () => {
+        await repo.salvarArquivo({ ddcCod: 950, nome: 'DDA_950.RET' }, [
+            { ddcCod: 950, ditCod: 1, valor: 10 },
+            { ddcCod: 950, ditCod: 2, valor: 20 },
+        ]);
+        await expect(repo.salvarArquivo({ ddcCod: 950, nome: 'DDA_950.RET' }, [])).rejects.toEqual(
+            expect.any(EmptyDdaFileError),
+        );
+        const { rows } = await db.query(
+            'SELECT count(*)::int AS n FROM boleto_dda WHERE ddc_cod = 950',
+        );
+        expect(rows[0].n).toBe(2);
+        // Sumir UM item continua apagando só ele (o caminho normal).
+        await repo.salvarArquivo({ ddcCod: 950, nome: 'DDA_950.RET' }, [
+            { ddcCod: 950, ditCod: 1, valor: 10 },
+        ]);
+        const depois = await db.query(
+            'SELECT count(*)::int AS n FROM boleto_dda WHERE ddc_cod = 950',
+        );
+        expect(depois.rows[0].n).toBe(1);
+    });
+
+    it('I-DDA6: atualizarCabecalho não reescreve itens; registrarConferencia mantém UMA linha', async () => {
+        await repo.salvarArquivo({ ddcCod: 960, nome: 'DDA_960.RET', status: 1 }, [
+            { ddcCod: 960, ditCod: 1, valor: 10 },
+        ]);
+        const antes = await db.query(
+            'SELECT sincronizado_em FROM boleto_dda WHERE ddc_cod = 960 AND dit_cod = 1',
+        );
+        await repo.atualizarCabecalho({
+            ddcCod: 960,
+            nome: 'DDA_960.RET',
+            status: 2,
+            canceladoEm: Date.now(),
+        });
+        const depois = await db.query(
+            'SELECT sincronizado_em FROM boleto_dda WHERE ddc_cod = 960 AND dit_cod = 1',
+        );
+        expect(depois.rows[0].sincronizado_em).toEqual(antes.rows[0].sincronizado_em);
+        const estado = await repo.listArquivosEstado();
+        expect(estado.get(960)).toMatchObject({ status: 2, nome: 'DDA_960.RET' });
+        expect(estado.get(960)?.canceladoEm).toBeDefined();
+
+        await repo.registrarConferencia({ origem: 'a', arquivosLidos: 0, arquivosCabecalho: 0 });
+        await repo.registrarConferencia({ origem: 'b', arquivosLidos: 1, arquivosCabecalho: 0 });
+        const linhas = await db.query('SELECT origem FROM boleto_dda_conferencia');
+        expect(linhas.rows).toEqual([{ origem: 'b' }]);
+        expect(await repo.ultimaConferencia()).toEqual(expect.any(Number));
     });
 });

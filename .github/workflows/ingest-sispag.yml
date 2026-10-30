@@ -4,14 +4,21 @@ name: Ingestão diária de SISPAG
 # carteira de pagamentos e, EM SEGUIDA, a formação automática de lotes (a ordem
 # importa: formar-lotes consome o que a ingestão gravou).
 #
-# Agendado PELA MANHÃ todo dia, +1h depois da ingestão matinal de Permutas (09:00 UTC) para NÃO
-# CONFLITAR na sessão Conexos: 10:00 UTC = 07:00 BRT. Em DIA ÚTIL ganha mais duas ingestões
-# (12:00 e 16:00 BRT) — ADR-0060. A carteira também é atualizada quando alguém abre a tela do
-# SISPAG (TTL de 30 min), então estas são a rede de segurança, não a fonte de frescor: o GitHub
-# atrasa schedules em 2–5 h.
+# Horários (v0.53.0, emenda 2026-10-30 da ADR-0060), FORA da hora cheia: o GitHub atrasa mais os
+# schedules do minuto :00 (o das 10:00 UTC saiu ~16:23 UTC e o das 19:00 UTC não disparou nos últimos
+# 3 dias úteis medidos). Minutos :07/:13 não colidem com os outros crons (permutas 0 9,15,21; extratos
+# :20; reaper :10,:25,:40,:55; nde :35; staleness :45; lotes :48) nem com permutas às 06:00 BRT.
+#   05:07 BRT (dia útil) — rede de segurança da manhã: atualiza carteira + DDA antes do expediente.
+#   07:07 BRT (todo dia) — principal.
+#   12:13 e 16:13 BRT (dia útil).
+# A carteira também é atualizada quando alguém abre a tela do SISPAG (TTL de 30 min), então estes são
+# a rede de segurança, não a fonte de frescor.
 #
-# A FORMAÇÃO de lotes roda só na execução da manhã (e no disparo manual): formar lote várias vezes
-# ao dia fragmentaria os lotes, e nunca acontece na abertura da tela.
+# A FORMAÇÃO de lotes é chamada nos slots 05:07, 07:07 e 12:13 (e no disparo manual, com `--manual`).
+# Quem decide é o serviço: só em dia útil, nunca antes das 06:30 BRT e no máximo UMA por dia (trilha
+# `job_execucao`, pipeline `sispag-formacao-lotes`) — formar várias vezes fragmentaria os lotes. Assim
+# um slot da manhã atrasado ou perdido não impede a formação, e dois slots juntos não formam duas vezes.
+# Nunca acontece na abertura da tela.
 # Os jobs usam o robô (rodam fora de request) — o bloqueio de acesso do SISPAG
 # (SISPAG_ENABLED) é só das rotas HTTP e NÃO afeta estes crons.
 #
@@ -20,11 +27,14 @@ name: Ingestão diária de SISPAG
 # (workflow_dispatch) na aba Actions.
 on:
   schedule:
-    # Manhã, todos os dias: 07:00 BRT (= 10:00 UTC) — 1h após a ingestão matinal de Permutas.
-    # Ingestão + formação de lotes.
-    - cron: '0 10 * * *'
-    # Dia útil, 12:00 e 16:00 BRT (= 15:00 e 19:00 UTC). Só ingestão.
-    - cron: '0 15,19 * * 1-5'
+    # 05:07 BRT (= 08:07 UTC), dia útil — rede de segurança (a formação pula: antes das 06:30).
+    - cron: '7 8 * * 1-5'
+    # 07:07 BRT (= 10:07 UTC), todo dia — principal (formação só se for dia útil).
+    - cron: '7 10 * * *'
+    # 12:13 BRT (= 15:13 UTC), dia útil — forma se a manhã inteira se perdeu.
+    - cron: '13 15 * * 1-5'
+    # 16:13 BRT (= 19:13 UTC), dia útil — só ingestão.
+    - cron: '13 19 * * 1-5'
   workflow_dispatch: {} # permite rodar manualmente pela aba Actions
 
 # Evita duas execuções simultâneas do pipeline SISPAG.
@@ -59,11 +69,19 @@ jobs:
         run: npm run migrate
       - name: Ingestão de pagamentos (carteira titulo_a_pagar)
         run: npm run job:ingest-pagamentos
-      # Só na manhã ou no disparo manual. `github.event.schedule` traz a expressão cron que disparou
-      # a execução (não a hora, que o GitHub atrasa).
+      # Slots 05:07, 07:07 e 12:13 BRT: o serviço decide se forma (dia útil, ≥ 06:30 BRT, uma por
+      # dia). `github.event.schedule` traz a expressão cron que disparou (não a hora, que o GitHub
+      # atrasa). O disparo manual forma sem trava (`--manual`), como o botão da tela.
       - name: Formação automática de lotes (após a ingestão)
-        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 10 * * *'
+        if: >-
+          github.event_name == 'schedule' &&
+          (github.event.schedule == '7 8 * * 1-5' ||
+           github.event.schedule == '7 10 * * *' ||
+           github.event.schedule == '13 15 * * 1-5')
         run: npm run job:formar-lotes
+      - name: Formação de lotes (disparo manual, sem trava)
+        if: github.event_name == 'workflow_dispatch'
+        run: npm run job:formar-lotes -- --manual
       # ADR-0073 (D2): lê o "NÚMERO DA DPS" do PDF da NFS-e no GED só para os títulos cuja sugestão
       # de boleto DDA a ordem de DPS não desempatou. Por último: nunca atrasa nem bloqueia a carteira
       # e a formação; falha geral (nada lido, tudo falhou) cai no passo de alerta abaixo.

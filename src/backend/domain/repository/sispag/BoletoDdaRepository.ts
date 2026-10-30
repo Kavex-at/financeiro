@@ -3,7 +3,13 @@ import { chunked } from '../../client/ConexosBaseClient.js';
 import PostgreeDatabaseClient, {
     type TransactionClient,
 } from '../../client/database/PostgreeDatabaseClient.js';
-import type { ArquivoDda, BoletoDda, ItemDda } from '../../interface/sispag/BoletoDda.js';
+import EmptyDdaFileError from '../../errors/EmptyDdaFileError.js';
+import type {
+    ArquivoDda,
+    ArquivoDdaEstado,
+    BoletoDda,
+    ItemDda,
+} from '../../interface/sispag/BoletoDda.js';
 
 const UPSERT_CHUNK = 200;
 
@@ -44,9 +50,20 @@ export default class BoletoDdaRepository {
     /**
      * Grava um arquivo e TODOS os seus itens numa transação: o arquivo só aparece como
      * sincronizado se os itens entraram junto. Itens que sumiram do arquivo no Conexos saem daqui.
+     *
+     * Lista VAZIA para um arquivo não cancelado que tem itens no snapshot lança
+     * `EmptyDdaFileError` antes de qualquer escrita (v0.53.0): resposta vazia do ERP não apaga.
      */
     public salvarArquivo = async (arquivo: ArquivoDda, itens: ItemDda[]): Promise<void> => {
         await this.databaseClient.withTransaction(async (tx) => {
+            if (itens.length === 0 && arquivo.canceladoEm == null) {
+                const atual = await tx.selectFirst<{ n: number | string }>(
+                    'SELECT count(*) AS n FROM boleto_dda WHERE ddc_cod = $ddcCod',
+                    { ddcCod: arquivo.ddcCod },
+                );
+                const n = Number(atual?.n ?? 0);
+                if (n > 0) throw new EmptyDdaFileError(arquivo.ddcCod, n);
+            }
             await tx.insert(
                 `INSERT INTO boleto_dda_arquivo (
                     ddc_cod, nome, importado_em, cancelado_em, status, total_itens, sincronizado_em
@@ -149,6 +166,76 @@ export default class BoletoDdaRepository {
             chave,
         );
         return row ? this.map(row) : null;
+    };
+
+    /** Cabeçalho de cada arquivo do snapshot, para a conferência rápida (I-DDA6). */
+    public listArquivosEstado = async (): Promise<Map<number, ArquivoDdaEstado>> => {
+        const rows = (await this.databaseClient.selectMany(
+            'SELECT ddc_cod, nome, status, cancelado_em, importado_em FROM boleto_dda_arquivo',
+        )) as Array<{
+            ddc_cod: number;
+            nome: string | null;
+            status: number | null;
+            cancelado_em: Date | null;
+            importado_em: Date | null;
+        }>;
+        return new Map(
+            rows.map((r) => [
+                r.ddc_cod,
+                {
+                    ...(r.nome != null ? { nome: r.nome } : {}),
+                    ...(r.status != null ? { status: r.status } : {}),
+                    ...(r.cancelado_em ? { canceladoEm: r.cancelado_em.getTime() } : {}),
+                    ...(r.importado_em ? { importadoEm: r.importado_em.getTime() } : {}),
+                },
+            ]),
+        );
+    };
+
+    /**
+     * Atualiza SÓ o cabeçalho de um arquivo conhecido (cancelado, status, nome) — nenhum item é
+     * lido nem reescrito (I-DDA6). Arquivo cancelado sai da aba pelo `cancelado_em`.
+     */
+    public atualizarCabecalho = async (arquivo: ArquivoDda): Promise<void> => {
+        await this.databaseClient.update(
+            `UPDATE boleto_dda_arquivo
+                SET nome = $nome, importado_em = $importadoEm, cancelado_em = $canceladoEm,
+                    status = $status, sincronizado_em = now()
+              WHERE ddc_cod = $ddcCod`,
+            {
+                ddcCod: arquivo.ddcCod,
+                nome: arquivo.nome ?? null,
+                importadoEm: arquivo.importadoEm != null ? new Date(arquivo.importadoEm) : null,
+                canceladoEm: arquivo.canceladoEm != null ? new Date(arquivo.canceladoEm) : null,
+                status: arquivo.status ?? null,
+            },
+        );
+    };
+
+    /** Última listagem bem-sucedida do `fin124` (I-DDA7) — UMA linha, sobrescrita. */
+    public registrarConferencia = async (input: {
+        origem: string;
+        arquivosLidos: number;
+        arquivosCabecalho: number;
+    }): Promise<void> => {
+        await this.databaseClient.insert(
+            `INSERT INTO boleto_dda_conferencia
+                (id, conferido_em, origem, arquivos_lidos, arquivos_cabecalho)
+             VALUES (1, now(), $origem, $arquivosLidos, $arquivosCabecalho)
+             ON CONFLICT (id) DO UPDATE SET
+                conferido_em = EXCLUDED.conferido_em, origem = EXCLUDED.origem,
+                arquivos_lidos = EXCLUDED.arquivos_lidos,
+                arquivos_cabecalho = EXCLUDED.arquivos_cabecalho`,
+            input,
+        );
+    };
+
+    /** epoch ms da última conferência; `undefined` = nunca conferido (ou antes da 0092). */
+    public ultimaConferencia = async (): Promise<number | undefined> => {
+        const row = await this.databaseClient.selectFirst<{ em: Date | null }>(
+            'SELECT conferido_em AS em FROM boleto_dda_conferencia WHERE id = 1',
+        );
+        return row?.em?.getTime();
     };
 
     /** epoch ms da sincronização mais recente; `undefined` = nunca sincronizado. */

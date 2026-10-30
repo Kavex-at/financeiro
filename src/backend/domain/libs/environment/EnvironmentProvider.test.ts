@@ -221,6 +221,18 @@ describe('EnvironmentProvider', () => {
             setFlagsTedPix(undefined);
         });
 
+        it('conferência rápida do DDA (I-DDA6): SISPAG_DDA_CONFERENCIA_MIN default 10; lixo volta ao default', async () => {
+            const ler = async () =>
+                (await new EnvironmentProvider().getEnvironmentVars()).sispagDdaConferenciaMin;
+            delete process.env.SISPAG_DDA_CONFERENCIA_MIN;
+            expect(await ler()).toBe(10);
+            process.env.SISPAG_DDA_CONFERENCIA_MIN = '3';
+            expect(await ler()).toBe(3);
+            process.env.SISPAG_DDA_CONFERENCIA_MIN = '0';
+            expect(await ler()).toBe(10);
+            delete process.env.SISPAG_DDA_CONFERENCIA_MIN;
+        });
+
         it('carteira SISPAG ao abrir a tela (ADR-0060): TTL 30 e cooldown 5 por default; inválido/≤0 volta ao default', async () => {
             const ler = async () => {
                 const v = await new EnvironmentProvider().getEnvironmentVars();

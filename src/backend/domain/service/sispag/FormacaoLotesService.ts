@@ -6,10 +6,13 @@ import { GRUPO_BOLETO_ESTADO } from '../../interface/sispag/GrupoBoletoInterface
 import SituacaoGrupoBoleto, { type SituacaoGrupo } from '../../libs/boleto/SituacaoGrupoBoleto.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import {
+    FORMACAO_PULADA,
     type FormacaoLotesResult,
+    type FormacaoPulada,
     MODALIDADE,
     type TituloAPagar,
 } from '../../interface/sispag/SispagInterface.js';
+import JobExecucaoRepository from '../../repository/operacao/JobExecucaoRepository.js';
 import GrupoBoletoRepository from '../../repository/sispag/GrupoBoletoRepository.js';
 import LotePagamentoRepository, {
     RESULTADO_OPERACAO_GRUPO,
@@ -28,6 +31,11 @@ import PreSelecaoItemLote, { type PreSelecaoItem } from './PreSelecaoItemLote.js
 const HORIZONTE_DIAS = 7;
 /** Advisory lock EXCLUSIVO da formação (≠ ingestão 726354819, ≠ permutas). */
 export const FORMACAO_LOCK_KEY = 615243789;
+/** Trilha da formação em `job_execucao` (v0.53.0); a trava "uma por dia" lê daqui. */
+export const PIPELINE_FORMACAO_LOTES = 'sispag-formacao-lotes';
+/** A formação AUTOMÁTICA não roda antes deste horário de Brasília (minutos desde 00:00). */
+export const FORMACAO_AUTOMATICA_DESDE_MIN_BRT = 6 * 60 + 30;
+const MIN_MS = 60_000;
 
 /** Um lote a formar: títulos avulsos e grupos de boleto inteiros (ADR-0077, P1-4). */
 interface FatiaDeLote {
@@ -68,16 +76,86 @@ export default class FormacaoLotesService {
         @inject(GrupoBoletoRepository) private readonly grupoRepo: GrupoBoletoRepository,
         @inject(LeituraGrupoBoleto) private readonly leituraGrupo: LeituraGrupoBoleto,
         @inject(PreSelecaoItemLote) private readonly preSelecao: PreSelecaoItemLote,
+        @inject(JobExecucaoRepository) private readonly jobRuns: JobExecucaoRepository,
     ) {}
 
-    public formar = async (input: { triggeredBy: string }): Promise<FormacaoLotesResult> =>
+    /**
+     * `automatica` (o cron): só em dia útil, a partir das 06:30 BRT e no máximo uma rodada concluída
+     * por dia de Brasília (manual ou automática) — conferido DENTRO do lock, para dois crons quase
+     * juntos não formarem duas vezes. Sem `automatica` (rota manual, `workflow_dispatch`): sem trava.
+     */
+    public formar = async (input: {
+        triggeredBy: string;
+        automatica?: boolean;
+    }): Promise<FormacaoLotesResult> =>
         this.db.withAdvisoryLock(
             FORMACAO_LOCK_KEY,
-            () => this.run(input),
+            async () => {
+                const pulado = input.automatica ? await this.motivoParaPular() : undefined;
+                if (pulado) return this.pular(pulado, input.triggeredBy);
+                return this.comTrilha(input);
+            },
             async () => {
                 throw new IngestLockBusyError('lot formation already in progress');
             },
         );
+
+    private motivoParaPular = async (): Promise<FormacaoPulada | undefined> => {
+        if (!this.calendar.isBusinessDay(this.calendar.todayBrt())) {
+            return FORMACAO_PULADA.DIA_NAO_UTIL;
+        }
+        const inicioDoDia = this.calendar.startOfTodayBrt();
+        const agora = this.calendar.now();
+        if (
+            (agora.getTime() - inicioDoDia.getTime()) / MIN_MS <
+            FORMACAO_AUTOMATICA_DESDE_MIN_BRT
+        ) {
+            return FORMACAO_PULADA.ANTES_DAS_0630;
+        }
+        return (await this.jobRuns.existeConcluidaDesde(PIPELINE_FORMACAO_LOTES, inicioDoDia))
+            ? FORMACAO_PULADA.JA_FORMADO_HOJE
+            : undefined;
+    };
+
+    private pular = async (
+        pulado: FormacaoPulada,
+        triggeredBy: string,
+    ): Promise<FormacaoLotesResult> => {
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: 'formação automática de lotes pulada',
+            data: { motivo: pulado, triggeredBy },
+        });
+        return { lotesFormados: 0, titulosLotados: 0, lotesDesfeitos: 0, pulado };
+    };
+
+    private comTrilha = async (input: { triggeredBy: string }): Promise<FormacaoLotesResult> => {
+        const runId = await this.jobRuns.createRun({
+            pipeline: PIPELINE_FORMACAO_LOTES,
+            triggeredBy: input.triggeredBy,
+        });
+        try {
+            const r = await this.run(input);
+            await this.jobRuns.finishRun({
+                runId,
+                status: 'success',
+                metricas: {
+                    lotesFormados: r.lotesFormados,
+                    titulosLotados: r.titulosLotados,
+                    lotesDesfeitos: r.lotesDesfeitos,
+                    gruposLotados: r.gruposLotados ?? 0,
+                },
+            });
+            return r;
+        } catch (error) {
+            await this.jobRuns.finishRun({
+                runId,
+                status: 'error',
+                errorMessage: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+        }
+    };
 
     private run = async (input: { triggeredBy: string }): Promise<FormacaoLotesResult> => {
         // 1) desfaz lotes automáticos RASCUNHO com título vencido (libera os títulos).

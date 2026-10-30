@@ -2,10 +2,14 @@ import { inject, injectable } from 'tsyringe';
 import ConexosBaseClient from '../../client/ConexosBaseClient.js';
 import ConexosDdaClient from '../../client/ConexosDdaClient.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import EmptyDdaFileError from '../../errors/EmptyDdaFileError.js';
 import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import {
     BOLETO_DDA_ESCOPO,
+    CONFERENCIA_DDA_ESTADO,
     type ArquivoDda,
+    type ArquivoDdaEstado,
+    type ConferenciaDda,
     type BoletoDdaConsolidado,
     type BoletoDdaEscopo,
     type BoletoDdaGrupo,
@@ -17,10 +21,12 @@ import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import BoletoDdaRepository from '../../repository/sispag/BoletoDdaRepository.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
+import PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
 import BoletoSuggestionService from './BoletoSuggestionService.js';
 import ConsolidacaoBoletoDda from './ConsolidacaoBoletoDda.js';
+import ConsolidacaoBoletoDdaCache from './ConsolidacaoBoletoDdaCache.js';
 import { REGRA_CANDIDATO_TEXTO } from './RegraSugestaoBoleto.js';
 import SugestaoBoletoCache from './SugestaoBoletoCache.js';
 import PaginacaoBoletoDda, {
@@ -37,6 +43,11 @@ const FANOUT_LIMIT = 3;
  * Conexos ainda grava vínculo (boletos a vencer). Arquivo mais antigo é lido uma vez só.
  */
 export const RELEITURA_DIAS = 60;
+/**
+ * Prazo de uma passada disparada por requisição (ingestão e botão "Atualizar DDA"; emenda
+ * 2026-10-30 da ADR-0067). O que está em voo termina; o resto fica para a próxima passada.
+ */
+export const BOLETO_DDA_PRAZO_MS = 60_000;
 
 /**
  * BoletoDdaService — aba "Boletos DDA" do SISPAG.
@@ -62,6 +73,10 @@ export default class BoletoDdaService {
         @inject(SugestaoBoletoCache) private readonly sugestoesCache: SugestaoBoletoCache,
         // I21v: o grupo (sugerido ou confirmado) de cada boleto, do cenário em cache das sugestões.
         @inject(BoletoSuggestionService) private readonly sugestoes: BoletoSuggestionService,
+        @inject(ConsolidacaoBoletoDdaCache)
+        private readonly consolidadoCache: ConsolidacaoBoletoDdaCache,
+        @inject(PagamentoIngestaoRunRepository)
+        private readonly runRepo: PagamentoIngestaoRunRepository,
     ) {}
 
     /**
@@ -71,33 +86,58 @@ export default class BoletoDdaService {
     public listar = async (
         input: { escopo: BoletoDdaEscopo } & Partial<FiltroPaginaBoletoDda>,
     ): Promise<BoletosDdaResposta> => {
-        const vencimentoDesde =
-            input.escopo === BOLETO_DDA_ESCOPO.A_VENCER ? this.calendar.todayBrt() : undefined;
-        const [boletos, titulos, titulosEmLote, sincronizadoEm] = await Promise.all([
-            this.repo.listBoletos(vencimentoDesde ? { vencimentoDesde } : {}),
-            this.tituloRepo.listAtivos(),
-            this.loteRepo.listTitulosEmLotesAbertos(),
+        const hoje = this.calendar.todayBrt();
+        const [sincronizadoEm, conferenciaEm, carteiraEm, lotes] = await Promise.all([
             this.repo.ultimaSincronizacao(),
+            this.repo.ultimaConferencia(),
+            this.runRepo.findLatestSuccessFinishedAt(),
+            this.loteRepo.assinaturaTitulosEmLotesAbertos(),
         ]);
-        const consolidados = this.comGrupo(
-            this.consolidacao.consolidar({ boletos, titulos, titulosEmLote }),
-            await this.gruposOuNenhum(),
+        // F4: a consolidação é a parte cara; filtro, ordem e página rodam sobre ela em cache.
+        const chave = [
+            input.escopo,
+            hoje,
+            sincronizadoEm ?? '-',
+            carteiraEm?.getTime() ?? '-',
+            lotes,
+            this.sugestoesCache.versao(),
+        ].join('|');
+        const consolidados = await this.consolidadoCache.obter(chave, () =>
+            this.consolidarEscopo(input.escopo, hoje),
         );
+        const { escopo: _escopo, ...filtro } = input;
+        // I-DDA7: a conversa bem-sucedida mais recente com o fin124 (gravar arquivo também é uma).
+        const marcas = [conferenciaEm, sincronizadoEm].filter((m): m is number => m != null);
+        const conferidoEm = marcas.length > 0 ? Math.max(...marcas) : undefined;
         const pagina = this.paginacao.paginar(consolidados, {
+            ...filtro,
+            hoje,
             pagina: input.pagina ?? 1,
             tamanho: input.tamanho ?? BOLETO_DDA_TAMANHO_PADRAO,
-            ...(input.situacao ? { situacao: input.situacao } : {}),
-            ...(input.busca ? { busca: input.busca } : {}),
-            ...(input.filCod !== undefined ? { filCod: input.filCod } : {}),
-            ...(input.emGrupo ? { emGrupo: true } : {}),
-            ...(input.vencimentoDe ? { vencimentoDe: input.vencimentoDe } : {}),
-            ...(input.vencimentoAte ? { vencimentoAte: input.vencimentoAte } : {}),
         });
         return {
             ...pagina,
             ...(sincronizadoEm != null ? { sincronizadoEm } : {}),
+            ...(conferidoEm !== undefined ? { conferidoEm } : {}),
             regraCandidato: REGRA_CANDIDATO_TEXTO,
         };
+    };
+
+    /** O escopo inteiro consolidado contra a carteira, com o grupo de cada boleto. */
+    private consolidarEscopo = async (
+        escopo: BoletoDdaEscopo,
+        hoje: string,
+    ): Promise<BoletoDdaConsolidado[]> => {
+        const vencimentoDesde = escopo === BOLETO_DDA_ESCOPO.A_VENCER ? hoje : undefined;
+        const [boletos, titulos, titulosEmLote] = await Promise.all([
+            this.repo.listBoletos(vencimentoDesde ? { vencimentoDesde } : {}),
+            this.tituloRepo.listAtivos(),
+            this.loteRepo.listTitulosEmLotesAbertos(),
+        ]);
+        return this.comGrupo(
+            this.consolidacao.consolidar({ boletos, titulos, titulosEmLote }),
+            await this.gruposOuNenhum(),
+        );
     };
 
     /** Falha ao ler os grupos desliga SÓ o resumo de grupo na aba (nunca derruba a lista). */
@@ -147,8 +187,10 @@ export default class BoletoDdaService {
                     return await this.executarSincronizacao(input);
                 } finally {
                     // O pool mudou (ou mudou em parte, se falhou no meio): o cenário em cache das
-                    // sugestões não vale mais. Vale para o botão, o job e a ingestão.
+                    // sugestões não vale mais, nem a lista consolidada da aba. Vale para o botão,
+                    // o job e a ingestão.
                     this.sugestoesCache.invalidar();
+                    this.consolidadoCache.invalidar();
                 }
             },
             async () => {
@@ -181,7 +223,150 @@ export default class BoletoDdaService {
             (a) => conhecidos.has(a.ddcCod) && (a.importadoEm ?? 0) >= corte,
         );
         const alvo: ArquivoDda[] = [...novos, ...relidos];
+        const { boletos, falhas, arquivosAdiados, arquivosVazios } = await this.lerArquivos(
+            alvo,
+            filCod,
+            limite,
+        );
+        // I-DDA7: a listagem deu certo — é uma conferência, mesmo que nenhum arquivo tenha sido gravado.
+        await this.repo.registrarConferencia({
+            origem: input.triggeredBy,
+            arquivosLidos: alvo.length - falhas - arquivosAdiados,
+            arquivosCabecalho: 0,
+        });
 
+        const resultado: SincronizacaoDdaResultado = {
+            arquivosNovos: novos.length,
+            arquivosRelidos: relidos.length,
+            arquivosLidos: alvo.length - falhas - arquivosAdiados,
+            boletos,
+            falhas,
+            arquivosAdiados,
+            arquivosVazios,
+        };
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: 'sincronização de boletos DDA concluída',
+            data: { triggeredBy: input.triggeredBy, ...resultado },
+        });
+        return resultado;
+    };
+
+    /**
+     * I-DDA6 — conferência rápida (abertura da tela com carteira recente): UMA listagem do `fin124`
+     * comparada com o snapshot. Novo → lê e grava os itens; cancelado/status/nome trocado → só o
+     * cabeçalho; sumido → aviso (nunca apaga); nada mudou → só registra a conferência. Mesmo lock,
+     * prazo e teto da passada completa. Nunca lança: o resultado diz o que houve.
+     */
+    public conferir = async (input: {
+        triggeredBy: string;
+        prazoMs?: number;
+    }): Promise<ConferenciaDda> =>
+        this.db.withAdvisoryLock(
+            BOLETO_DDA_SYNC_LOCK_KEY,
+            () => this.executarConferencia(input),
+            async () => ({ estado: CONFERENCIA_DDA_ESTADO.OCUPADA }),
+        );
+
+    /** Confere só se a última conferência tem mais de `intervaloMs` (I-DDA6). */
+    public conferirSeVelho = async (input: {
+        triggeredBy: string;
+        intervaloMs: number;
+        agora?: number;
+    }): Promise<ConferenciaDda | undefined> => {
+        const agora = input.agora ?? Date.now();
+        const ultima = await this.repo.ultimaConferencia();
+        if (ultima !== undefined && agora - ultima < input.intervaloMs) return undefined;
+        return this.conferir({ triggeredBy: input.triggeredBy, prazoMs: BOLETO_DDA_PRAZO_MS });
+    };
+
+    private executarConferencia = async (input: {
+        triggeredBy: string;
+        prazoMs?: number;
+    }): Promise<ConferenciaDda> => {
+        const limite = Date.now() + (input.prazoMs ?? BOLETO_DDA_PRAZO_MS);
+        let arquivos: ArquivoDda[];
+        let filCod: number;
+        let conhecidos: Map<number, ArquivoDdaEstado>;
+        try {
+            filCod = (await this.base.getFilCodDefault()) ?? 1;
+            [arquivos, conhecidos] = await Promise.all([
+                this.dda.listarArquivos({ filCod }),
+                this.repo.listArquivosEstado(),
+            ]);
+        } catch (err: unknown) {
+            const erro = err instanceof Error ? err.message : String(err);
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'conferência rápida do DDA: não foi possível listar o fin124',
+                data: { triggeredBy: input.triggeredBy, erro: erro.slice(0, 300) },
+            });
+            return { estado: CONFERENCIA_DDA_ESTADO.FALHOU, erro: erro.slice(0, 300) };
+        }
+
+        const novos = arquivos.filter((a) => !conhecidos.has(a.ddcCod));
+        const mudados = arquivos.filter((a) => {
+            const atual = conhecidos.get(a.ddcCod);
+            return atual !== undefined && cabecalhoMudou(atual, a);
+        });
+        const listados = new Set(arquivos.map((a) => a.ddcCod));
+        const sumidos = [...conhecidos.keys()].filter((ddc) => !listados.has(ddc));
+
+        const leitura = await this.lerArquivos(novos, filCod, limite);
+        for (const a of mudados) await this.repo.atualizarCabecalho(a);
+        if (sumidos.length > 0) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'conferência rápida do DDA: arquivos sumiram da listagem do fin124; nada apagado',
+                data: { ddcCods: sumidos.slice(0, 50), total: sumidos.length },
+            });
+        }
+        const lidos = novos.length - leitura.falhas - leitura.arquivosAdiados;
+        await this.repo.registrarConferencia({
+            origem: input.triggeredBy,
+            arquivosLidos: lidos,
+            arquivosCabecalho: mudados.length,
+        });
+        if (lidos > 0 || mudados.length > 0) {
+            this.sugestoesCache.invalidar();
+            this.consolidadoCache.invalidar();
+        }
+        const resultado: ConferenciaDda = {
+            estado:
+                leitura.falhas > 0 || leitura.arquivosAdiados > 0
+                    ? CONFERENCIA_DDA_ESTADO.PARCIAL
+                    : CONFERENCIA_DDA_ESTADO.CONFERIDO,
+            arquivosNovos: novos.length,
+            arquivosCabecalho: mudados.length,
+            arquivosSumidos: sumidos.length,
+            boletos: leitura.boletos,
+            falhas: leitura.falhas,
+            arquivosAdiados: leitura.arquivosAdiados,
+            ...(leitura.arquivosVazios > 0 ? { arquivosVazios: leitura.arquivosVazios } : {}),
+        };
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: 'conferência rápida do DDA concluída',
+            data: { triggeredBy: input.triggeredBy, ...resultado },
+        });
+        return resultado;
+    };
+
+    /**
+     * Lê e grava os itens de `alvo` (teto de 3 leituras, prazo). Falha de um arquivo não derruba os
+     * outros; lista vazia sobre arquivo cheio (`EmptyDdaFileError`) é contada e logada à parte.
+     */
+    private lerArquivos = async (
+        alvo: ArquivoDda[],
+        filCod: number,
+        limite: number | undefined,
+    ): Promise<{
+        boletos: number;
+        falhas: number;
+        arquivosAdiados: number;
+        arquivosVazios: number;
+    }> => {
         const resultados = await this.bounded.run(
             alvo,
             async (arquivo) => {
@@ -196,6 +381,7 @@ export default class BoletoDdaService {
         let boletos = 0;
         let falhas = 0;
         let arquivosAdiados = 0;
+        let arquivosVazios = 0;
         for (const [i, r] of resultados.entries()) {
             if (r.status === 'fulfilled') {
                 if (r.value === null) arquivosAdiados += 1;
@@ -203,6 +389,20 @@ export default class BoletoDdaService {
                 continue;
             }
             falhas += 1;
+            if (r.reason instanceof EmptyDdaFileError) {
+                arquivosVazios += 1;
+                await this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message:
+                        'sincronização DDA: fin124 devolveu arquivo vazio que tinha itens; snapshot mantido',
+                    data: {
+                        ddcCod: r.reason.ddcCod,
+                        codigoErro: r.reason.code,
+                        itensNoSnapshot: r.reason.itensNoSnapshot,
+                    },
+                });
+                continue;
+            }
             await this.logService.warn({
                 type: LOG_TYPE.BUSINESS_INFO,
                 message: 'sincronização DDA: falha ao ler arquivo do fin124',
@@ -212,19 +412,13 @@ export default class BoletoDdaService {
                 },
             });
         }
-
-        const resultado: SincronizacaoDdaResultado = {
-            arquivosNovos: novos.length,
-            arquivosRelidos: relidos.length,
-            boletos,
-            falhas,
-            arquivosAdiados,
-        };
-        await this.logService.info({
-            type: LOG_TYPE.BUSINESS_INFO,
-            message: 'sincronização de boletos DDA concluída',
-            data: { triggeredBy: input.triggeredBy, ...resultado },
-        });
-        return resultado;
+        return { boletos, falhas, arquivosAdiados, arquivosVazios };
     };
 }
+
+/** Cabeçalho do arquivo mudou no ERP (cancelado, status, nome, data de importação)? */
+const cabecalhoMudou = (atual: ArquivoDdaEstado, novo: ArquivoDda): boolean =>
+    (atual.canceladoEm ?? null) !== (novo.canceladoEm ?? null) ||
+    (atual.status ?? null) !== (novo.status ?? null) ||
+    (atual.nome ?? null) !== (novo.nome ?? null) ||
+    (novo.importadoEm !== undefined && (atual.importadoEm ?? null) !== novo.importadoEm);

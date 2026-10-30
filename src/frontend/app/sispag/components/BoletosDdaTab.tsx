@@ -2,117 +2,75 @@
 
 import * as React from 'react'
 import { toast } from 'sonner'
-import { AlertTriangle, ChevronDown, Copy, DatabaseZap, RefreshCcw } from 'lucide-react'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import { Badge } from '@/components/ui/badge'
+import { AlertTriangle, DatabaseZap, RefreshCcw, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
-import { Spinner } from '@/components/ui/spinner'
+import { Input } from '@/components/ui/input'
+import { TableSkeleton } from '@/components/ui/skeleton'
 import { usePermissoes } from '@/lib/auth/PermissoesProvider'
 import { PERMISSAO } from '@/lib/permissoes'
-import { formatBRL } from '@/lib/utils'
 import {
   type BoletoDda,
-  type BoletoDdaEscopo,
-  type BoletoDdaSituacao,
-  type BoletoDdaTitulo,
   type BoletosDdaResposta,
-  type FiltroBoletosDda,
+  type SincronizacaoDdaResultado,
   fetchBoletosDda,
   SincronizacaoDdaEmAndamentoError,
   sincronizarBoletosDda,
 } from '@/lib/sispag'
-import {
-  FiltroBarra,
-  Paginacao,
-  type TabelaFiltro,
-} from '@/app/permutas/components/tabela-filtro'
-import {
-  CandidatosBoletoDialog,
-  DiferencaBadge,
-  fmtCivil,
-  resumoCandidatos,
-} from './CandidatosBoletoDialog'
-import { CardsBoletosDda, type FiltroSituacaoDda } from './CardsBoletosDda'
-import { GrupoBoletoDaFilial } from './GrupoBoletoDaFilial'
+import { FaixaBoletosHoje } from '../boletos-dda/FaixaBoletosHoje'
+import { FiltroSituacaoDdaBarra } from '../boletos-dda/FiltroSituacaoDdaBarra'
+import { haFiltroDda, totalDe } from '../boletos-dda/filtrosBoletosDda'
+import { RegrasBoletoDda } from '../boletos-dda/RegrasBoletoDda'
+import { TabelaBoletosDda } from '../boletos-dda/TabelaBoletosDda'
+import { useTabelaBoletosDda } from '../boletos-dda/useTabelaBoletosDda'
+import { CandidatosBoletoDialog } from './CandidatosBoletoDialog'
+import { CardsBoletosDda } from './CardsBoletosDda'
 import { horasDdaDefasado } from './ddaDefasado'
-import { hojeBrt, somarDias } from './vencimentoDda'
 
-type FiltroSituacao = FiltroSituacaoDda
+// A gaveta do título (`BoletosDoTituloDialog`) importa o selo daqui.
+export { SITUACAO_BADGE } from '../boletos-dda/rotulosDda'
 
-const SITUACOES: { value: FiltroSituacao; label: string }[] = [
-  { value: 'todas', label: 'Todas' },
-  { value: 'VINCULADO', label: 'Vinculados' },
-  { value: 'CANDIDATO', label: 'Candidatos' },
-  { value: 'AMBIGUO', label: 'Ambíguos' },
-  { value: 'SEM_TITULO', label: 'Sem título' },
-]
-
-export const SITUACAO_BADGE: Record<BoletoDdaSituacao, { label: string; className: string; title: string }> =
-  {
-    VINCULADO: {
-      label: 'vinculado',
-      className: 'border-success/40 text-success',
-      title: 'O Conexos já ligou este boleto a um título (associação do fin015).',
-    },
-    CANDIDATO: {
-      label: 'candidato',
-      className: 'border-info/40 text-info',
-      title: 'Livre. Um título aberto cai nos limites seguros de valor e vencimento — confira.',
-    },
-    AMBIGUO: {
-      label: 'ambíguo',
-      className: 'border-warning/40 text-warning',
-      title: 'Livre. Mais de um título aberto cai nos limites seguros (cobrança recorrente).',
-    },
-    SEM_TITULO: {
-      label: 'sem título',
-      className: 'border-muted text-muted-foreground',
-      title: 'Livre, e nenhum título aberto cai nos limites seguros de valor e vencimento.',
-    },
+/**
+ * Toast do "Atualizar DDA" (F3): conta o que foi LIDO, não o que foi planejado. `arquivosNovos`
+ * inclui os que falharam ou ficaram para depois do prazo de 60 s.
+ */
+export const resumoDaSincronizacao = (
+  r: SincronizacaoDdaResultado,
+): { completa: boolean; descricao: string } => {
+  const adiados = r.arquivosAdiados ?? 0
+  const lidos = r.arquivosLidos ?? Math.max(0, r.arquivosNovos + r.arquivosRelidos - r.falhas - adiados)
+  const partes = [`${lidos} arquivo(s) lido(s)`]
+  if (adiados > 0) partes.push(`${adiados} adiado(s)`)
+  if (r.falhas > 0) partes.push(`${r.falhas} com falha`)
+  const completa = adiados === 0 && r.falhas === 0
+  return {
+    completa,
+    descricao: completa
+      ? partes.join(' · ')
+      : `${partes.join(' · ')}. Clique em "Atualizar DDA" de novo para completar.`,
   }
-
-/** Linhas por página. O backend pagina e filtra — o pool inteiro nunca vem ao navegador. */
-const TAMANHO_PAGINA = 20
-/** Espera antes de mandar a busca: sem isto, cada tecla vira uma requisição. */
-const DEBOUNCE_BUSCA_MS = 300
-
-function TituloLinha({ t, flpCod }: { t: BoletoDdaTitulo; flpCod?: number }) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="max-w-[16rem] truncate font-medium">{t.credor ?? '—'}</span>
-      <span className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-        <span>
-          {t.docCod}/{t.titCod} · fil {t.filCod}
-          {t.vencimento ? ` · vence ${fmtCivil(t.vencimento)}` : ''}
-          {flpCod !== undefined ? ` · lote fin015 ${flpCod}` : ''}
-        </span>
-        <DiferencaBadge dias={t.diferencaDias} />
-        {t.lote ? (
-          <Badge variant="outline" className="border-muted text-muted-foreground">
-            lote {t.lote.status.toLowerCase()}
-          </Badge>
-        ) : null}
-      </span>
-    </div>
-  )
 }
 
 export function BoletosDdaTab({
   onCompor,
   onGrupoAlterado,
+  versaoCarteira,
+  atualizandoCarteira = false,
 }: {
   /** Compor um boleto agrupado a partir de um boleto livre (ADR-0077): só com `sispag:executar`. */
   onCompor?: (boleto: BoletoDda) => void
   /** I21v: depois de confirmar ou anular um grupo aqui, a tela relê carteira, lotes e sugestões. */
   onGrupoAlterado?: () => void | Promise<void>
+  /**
+   * Marca da última ingestão da carteira (a da página). Mudou = a ingestão re-sincronizou o pool
+   * DDA, e a aba relê sem esperar um filtro mudar (F4).
+   */
+  versaoCarteira?: string | number
+  /**
+   * I-DDA7: a abertura da tela está atualizando a carteira ou conferindo o DDA. O aviso "DDA parado"
+   * fica quieto até terminar (o resultado chega pelo `versaoCarteira`).
+   */
+  atualizandoCarteira?: boolean
 } = {}) {
   // ADR-0053: consultar os boletos (`GET /sispag/boletos-dda`) basta `sispag:ver`; sincronizar
   // com o fin124 ("Atualizar DDA") exige `sispag:executar` e some sem ela (R11). Sem `ver`, por
@@ -120,26 +78,14 @@ export function BoletosDdaTab({
   const { carregando: carregandoPermissoes, tem } = usePermissoes()
   const podeVer = !carregandoPermissoes && tem(PERMISSAO.SISPAG_VER)
   const podeExecutar = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXECUTAR)
-  const [escopo, setEscopo] = React.useState<BoletoDdaEscopo>('a-vencer')
-  const [situacao, setSituacao] = React.useState<FiltroSituacao>('todas')
-  const [filial, setFilial] = React.useState('todas')
-  /** I21v: só os boletos de grupo (sugerido ou confirmado). */
-  const [emGrupo, setEmGrupo] = React.useState(false)
-  /** Linhas de grupo abertas (`ddcCod:ditCod`). */
-  const [abertos, setAbertos] = React.useState<ReadonlySet<string>>(new Set())
-  /** Vencimento de/até (`YYYY-MM-DD`) — filtrado no servidor, como os demais. */
-  const [vencimentoDe, setVencimentoDe] = React.useState('')
-  const [vencimentoAte, setVencimentoAte] = React.useState('')
-  /** O que está no campo de busca. */
-  const [busca, setBusca] = React.useState('')
-  /** A busca que de fato vai ao servidor (depois do debounce). */
-  const [buscaAplicada, setBuscaAplicada] = React.useState('')
-  const [pagina, setPagina] = React.useState(1)
+  const tabela = useTabelaBoletosDda()
+  const { filtros, filtro } = tabela
   const [sincronizando, setSincronizando] = React.useState(false)
   /** Incrementado para recarregar a lista (depois de sincronizar) sem mudar nenhum filtro. */
   const [recarga, setRecarga] = React.useState(0)
-  /** Boleto ambíguo cujos candidatos estão abertos no modal. */
   const [candidatosDe, setCandidatosDe] = React.useState<BoletoDda | null>(null)
+  const [regrasAbertas, setRegrasAbertas] = React.useState(false)
+  const regrasId = React.useId()
   /** Última resposta, com a chave da requisição que a produziu. */
   const [resultado, setResultado] = React.useState<{
     chave: string
@@ -147,150 +93,48 @@ export function BoletosDdaTab({
     erro?: string
   } | null>(null)
 
-  React.useEffect(() => {
-    if (busca === buscaAplicada) return
-    const t = setTimeout(() => {
-      setBuscaAplicada(busca)
-      setPagina(1)
-    }, DEBOUNCE_BUSCA_MS)
-    return () => clearTimeout(t)
-  }, [busca, buscaAplicada])
+  const chave = `${JSON.stringify(filtro)}#${recarga}#${versaoCarteira ?? ''}`
 
-  const filtro = React.useMemo<FiltroBoletosDda>(
-    () => ({
-      escopo,
-      pagina,
-      tamanho: TAMANHO_PAGINA,
-      ...(situacao !== 'todas' ? { situacao } : {}),
-      ...(emGrupo ? { emGrupo: true } : {}),
-      ...(buscaAplicada.trim() ? { busca: buscaAplicada.trim() } : {}),
-      ...(filial !== 'todas' ? { filCod: Number(filial) } : {}),
-      ...(vencimentoDe ? { vencimentoDe } : {}),
-      ...(vencimentoAte ? { vencimentoAte } : {}),
-    }),
-    [escopo, pagina, situacao, emGrupo, buscaAplicada, filial, vencimentoDe, vencimentoAte],
-  )
-  const chave = `${JSON.stringify(filtro)}#${recarga}`
-
-  // Estado só muda DEPOIS do fetch. Resposta de requisição já superada é descartada (`vivo`).
+  // F4: a requisição superada é ABORTADA (não só descartada); estado muda só depois do fetch.
   React.useEffect(() => {
     if (!podeVer) return
-    let vivo = true
-    fetchBoletosDda(filtro)
+    const ctrl = new AbortController()
+    fetchBoletosDda(filtro, { signal: ctrl.signal })
       .then((dados) => {
-        if (vivo) setResultado({ chave, dados })
+        if (!ctrl.signal.aborted) setResultado({ chave, dados })
       })
       .catch((e: unknown) => {
-        if (vivo) setResultado({ chave, erro: e instanceof Error ? e.message : String(e) })
+        if (ctrl.signal.aborted) return
+        setResultado({ chave, erro: e instanceof Error ? e.message : String(e) })
       })
-    return () => {
-      vivo = false
-    }
+    return () => ctrl.abort()
   }, [chave, filtro, podeVer])
 
   /** Carregando = a última resposta é de outra requisição. A página anterior fica visível, esmaecida. */
   const carregando = resultado?.chave !== chave
   const erro = carregando ? undefined : resultado?.erro
   const dados = resultado?.dados
-  const horasDefasado = horasDdaDefasado(dados?.sincronizadoEm)
-  const boletos = dados?.boletos ?? []
-  const contagem = dados?.contagem
-
-  const trocarEscopo = (e: BoletoDdaEscopo) => {
-    setEscopo(e)
-    setPagina(1)
-  }
+  // I-DDA7: conta da última conferência bem-sucedida, não do último arquivo gravado.
+  const horasDefasado = atualizandoCarteira
+    ? undefined
+    : horasDdaDefasado(dados?.conferidoEm ?? dados?.sincronizadoEm)
+  const filtrando = haFiltroDda(filtros)
   const recarregar = () => setRecarga((n) => n + 1)
-  const selecionarSituacao = (s: FiltroSituacao) => {
-    setSituacao(s)
-    setPagina(1)
-  }
-  // "Vencem em até 2 dias": atalho para o filtro de vencimento (hoje .. hoje + 2, dia civil BRT).
-  const urgentesDe = hojeBrt()
-  const urgentesAte = somarDias(urgentesDe, 2)
-  const urgentesAtivo = vencimentoDe === urgentesDe && vencimentoAte === urgentesAte
-  const alternarUrgentes = () => {
-    setVencimentoDe(urgentesAtivo ? '' : urgentesDe)
-    setVencimentoAte(urgentesAtivo ? '' : urgentesAte)
-    setPagina(1)
-  }
-  const alternarEmGrupo = () => {
-    setEmGrupo((v) => !v)
-    setPagina(1)
-  }
-  const alternarAberto = (b: BoletoDda) =>
-    setAbertos((atual) => {
-      const k = `${b.ddcCod}:${b.ditCod}`
-      const next = new Set(atual)
-      if (next.has(k)) next.delete(k)
-      else next.add(k)
-      return next
-    })
-  const limparFiltros = () => {
-    setSituacao('todas')
-    setEmGrupo(false)
-    setFilial('todas')
-    setBusca('')
-    setBuscaAplicada('')
-    setVencimentoDe('')
-    setVencimentoAte('')
-    setPagina(1)
-  }
-
-  // Mesmo formato que a `FiltroBarra` e a `Paginacao` das outras abas esperam — só que os dados
-  // já chegam filtrados e paginados pelo servidor.
-  const total = dados?.total ?? 0
-  const aba: TabelaFiltro<BoletoDda> = {
-    filial,
-    busca,
-    setFilial: (v) => {
-      setFilial(v)
-      setPagina(1)
-    },
-    setBusca,
-    dataDe: vencimentoDe,
-    dataAte: vencimentoAte,
-    setDataDe: (v) => {
-      setVencimentoDe(v)
-      setPagina(1)
-    },
-    setDataAte: (v) => {
-      setVencimentoAte(v)
-      setPagina(1)
-    },
-    pagina,
-    setPagina,
-    filiais: dados?.filiais ?? [],
-    slice: boletos,
-    total,
-    totalPaginas: Math.max(1, Math.ceil(total / TAMANHO_PAGINA)),
-    paginaAtual: dados?.pagina ?? pagina,
-    pageSize: dados?.tamanho ?? TAMANHO_PAGINA,
-  }
-  const filtrando =
-    situacao !== 'todas' ||
-    emGrupo ||
-    filial !== 'todas' ||
-    buscaAplicada.trim() !== '' ||
-    vencimentoDe !== '' ||
-    vencimentoAte !== ''
 
   const sincronizar = async () => {
     setSincronizando(true)
     try {
-      const r = await sincronizarBoletosDda()
-      const partes = [`${r.arquivosNovos} arquivo(s) novo(s)`, `${r.arquivosRelidos} relido(s)`]
-      if (r.falhas > 0) {
-        toast.warning('DDA atualizado com falhas', {
-          description: `${partes.join(', ')}; ${r.falhas} arquivo(s) não puderam ser lidos. Tente de novo.`,
-        })
-      } else {
-        toast.success('DDA atualizado', { description: partes.join(', ') })
-      }
+      const { completa, descricao } = resumoDaSincronizacao(await sincronizarBoletosDda())
+      if (completa) toast.success('DDA atualizado', { description: descricao })
+      else toast.warning('DDA atualizado em parte', { description: descricao })
       recarregar()
     } catch (e) {
       if (e instanceof SincronizacaoDdaEmAndamentoError) toast.info(e.message)
-      else toast.error('Não foi possível atualizar o DDA', { description: String(e) })
+      else {
+        toast.error('Não foi possível atualizar o DDA', {
+          description: e instanceof Error ? e.message : String(e),
+        })
+      }
     } finally {
       setSincronizando(false)
     }
@@ -308,8 +152,20 @@ export function BoletosDdaTab({
 
   if (!podeVer) return null
 
+  // F1: "não sincronizado" só com resposta OK sem `sincronizadoEm` — nunca na carga nem no erro.
+  const quando = (ms: number) => new Date(ms).toLocaleString('pt-BR')
+  const cabecalhoDda = dados
+    ? dados.sincronizadoEm
+      ? dados.conferidoEm !== undefined && dados.conferidoEm !== dados.sincronizadoEm
+        ? `DDA conferido em ${quando(dados.conferidoEm)} · dados de ${quando(dados.sincronizadoEm)}`
+        : `DDA de ${quando(dados.sincronizadoEm)}`
+      : 'DDA ainda não sincronizado'
+    : erro
+      ? 'Não foi possível ler o DDA'
+      : 'Carregando o DDA…'
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <div className="flex gap-1" role="group" aria-label="Período">
@@ -317,25 +173,21 @@ export function BoletosDdaTab({
               <Button
                 key={e}
                 size="sm"
-                variant={escopo === e ? 'default' : 'outline'}
-                onClick={() => trocarEscopo(e)}
-                aria-pressed={escopo === e}
+                variant={filtros.escopo === e ? 'default' : 'outline'}
+                onClick={() => tabela.atualizar({ escopo: e })}
+                aria-pressed={filtros.escopo === e}
               >
                 {e === 'a-vencer' ? 'A vencer' : 'Todos (inclui vencidos)'}
               </Button>
             ))}
           </div>
-          <span className="text-xs text-muted-foreground">
-            {dados?.sincronizadoEm
-              ? `DDA de ${new Date(dados.sincronizadoEm).toLocaleString('pt-BR')}`
-              : 'DDA ainda não sincronizado'}
-            {dados?.regraCandidato ? ` · ${dados.regraCandidato}` : ''}
-          </span>
+          <span className="text-xs text-muted-foreground">{cabecalhoDda}</span>
           {horasDefasado !== undefined ? (
             <span role="status" className="flex items-center gap-1 text-xs text-warning">
               <AlertTriangle className="size-3.5" aria-hidden="true" />
               DDA parado há {horasDefasado} h — a coluna Boleto pode estar defasada. A ingestão
-              atualiza o DDA a cada rodada; use &quot;Atualizar DDA&quot; para forçar.
+              atualiza o DDA a cada rodada
+              {podeExecutar ? '; use "Atualizar DDA" para forçar.' : '.'}
             </span>
           ) : null}
         </div>
@@ -348,63 +200,61 @@ export function BoletosDdaTab({
       </div>
 
       <CardsBoletosDda
-        contagem={contagem}
-        situacaoAtiva={situacao}
-        onSelecionar={selecionarSituacao}
-        emGrupoAtivo={emGrupo}
-        onAlternarEmGrupo={alternarEmGrupo}
+        dados={dados}
+        carregando={carregando}
+        segmento={tabela.segmento}
+        urgentesAtivo={tabela.urgentesAtivo}
+        emGrupoAtivo={filtros.emGrupo}
+        onVerCasados={() => tabela.definirSegmento(tabela.segmento === 'casados' ? 'todos' : 'casados')}
+        onConferir={() => tabela.definirSegmento(tabela.segmento === 'conferir' ? 'todos' : 'conferir')}
+        onAlternarUrgentes={tabela.alternarUrgentes}
+        onAlternarEmGrupo={tabela.alternarEmGrupo}
       />
 
-      <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Situação">
-        {SITUACOES.map((s) => (
-          <Button
-            key={s.value}
-            size="sm"
-            variant={situacao === s.value ? 'default' : 'outline'}
-            onClick={() => {
-              setSituacao(s.value)
-              setPagina(1)
-            }}
-            aria-pressed={situacao === s.value}
-          >
-            {s.label} ({contagem ? contagem[s.value] : '—'})
-          </Button>
-        ))}
-        <Button
-          size="sm"
-          variant={emGrupo ? 'default' : 'outline'}
-          onClick={alternarEmGrupo}
-          aria-pressed={emGrupo}
-          title="Boletos que pagam vários títulos de uma vez (grupo sugerido ou confirmado)"
-        >
-          Em grupo ({contagem ? contagem.emGrupo : '—'})
-        </Button>
-        <Button
-          size="sm"
-          variant={urgentesAtivo ? 'default' : 'outline'}
-          onClick={alternarUrgentes}
-          aria-pressed={urgentesAtivo}
-          title="Boletos com vencimento de hoje até daqui a 2 dias"
-        >
-          Vencem em até 2 dias
-        </Button>
-        {filtrando ? (
-          <Button size="sm" variant="ghost" onClick={limparFiltros}>
-            Limpar filtros
-          </Button>
-        ) : null}
-      </div>
+      {dados ? (
+        <FaixaBoletosHoje
+          amostra={dados.amostraHoje ?? []}
+          total={totalDe(dados, 'hoje').qtd ?? 0}
+          onVerSoEstes={tabela.verSoHoje}
+          onVerCandidatos={setCandidatosDe}
+        />
+      ) : null}
 
-      <FiltroBarra
-        aba={aba}
-        buscaPlaceholder="Buscar por número, valor, credor, documento, código de barras ou arquivo…"
-        rotuloData="Vencimento"
+      <FiltroSituacaoDdaBarra
+        dados={dados}
+        segmento={tabela.segmento}
+        situacoes={filtros.situacoes}
+        emGrupo={filtros.emGrupo}
+        onSegmento={tabela.definirSegmento}
+        onAlternarConferir={tabela.alternarConferir}
+        onAlternarEmGrupo={tabela.alternarEmGrupo}
+        regrasAbertas={regrasAbertas}
+        regrasId={regrasId}
+        onAlternarRegras={() => setRegrasAbertas((v) => !v)}
       />
+      {regrasAbertas ? <RegrasBoletoDda id={regrasId} regraCandidato={dados?.regraCandidato} /> : null}
 
-      {carregando && !dados ? (
-        <div className="flex items-center justify-center gap-2 py-16 text-muted-foreground">
-          <Spinner /> Carregando boletos…
-        </div>
+      <label className="relative block max-w-md">
+        <span className="sr-only">Buscar boletos</span>
+        <Search
+          className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+          aria-hidden
+        />
+        <Input
+          type="search"
+          className="pl-8"
+          value={filtros.busca}
+          placeholder="Buscar por número, valor, credor, documento, código de barras ou arquivo…"
+          onChange={(e) => tabela.atualizar({ busca: e.target.value })}
+        />
+      </label>
+
+      {!dados && carregando ? (
+        <TableSkeleton
+          columns={8}
+          aria-label="Carregando boletos"
+          larguras={['w-20', 'w-24', 'w-20', 'w-20', 'w-10', 'w-40', 'w-10', 'w-8']}
+        />
       ) : erro ? (
         <EmptyState
           icon={<AlertTriangle className="size-6" />}
@@ -416,178 +266,42 @@ export function BoletosDdaTab({
             </Button>
           }
         />
-      ) : total === 0 ? (
+      ) : dados && dados.total === 0 ? (
         <EmptyState
           icon={filtrando ? undefined : <DatabaseZap className="size-6" />}
           title={filtrando ? 'Nenhum boleto encontrado' : 'Nenhum boleto DDA'}
           description={
-            !dados?.sincronizadoEm
-              ? 'Clique em "Atualizar DDA" para trazer os boletos do fin124.'
+            !dados.sincronizadoEm
+              ? podeExecutar
+                ? 'Clique em "Atualizar DDA" para trazer os boletos do fin124.'
+                : 'A ingestão traz os boletos do fin124 às 07h, 12h e 16h dos dias úteis.'
               : filtrando
-                ? 'Ajuste a situação, a filial, o vencimento ou a busca acima.'
+                ? 'Ajuste a situação, os filtros das colunas ou a busca.'
                 : 'Nenhum boleto neste período. Veja "Todos" para incluir os vencidos.'
           }
           action={
             filtrando ? (
-              <Button size="sm" variant="outline" onClick={limparFiltros}>
+              <Button size="sm" variant="outline" onClick={tabela.limpar}>
                 Limpar filtros
               </Button>
             ) : undefined
           }
         />
-      ) : (
-        <div
-          className={`overflow-x-auto rounded-lg border transition-opacity ${carregando ? 'opacity-60' : ''}`}
-          aria-busy={carregando}
-        >
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Situação</TableHead>
-                <TableHead>Boleto</TableHead>
-                <TableHead className="text-right">Valor</TableHead>
-                <TableHead>Vencimento</TableHead>
-                <TableHead>Banco</TableHead>
-                <TableHead>Título</TableHead>
-                <TableHead className="w-10" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {aba.slice.map((b) => {
-                const badge = SITUACAO_BADGE[b.situacao]
-                // Na linha vai no máximo UM título (o vínculo ou o candidato mais próximo); o
-                // resto de um ambíguo abre no modal — senão a linha vira uma coluna de cartões.
-                const principal = b.vinculo ?? b.candidatos[0]
-                const extras = b.vinculo ? 0 : b.candidatos.length - 1
-                const chaveLinha = `${b.ddcCod}:${b.ditCod}`
-                const aberto = abertos.has(chaveLinha)
-                return (
-                  <React.Fragment key={chaveLinha}>
-                  <TableRow>
-                    <TableCell>
-                      <div className="flex flex-col items-start gap-1">
-                        <Badge variant="outline" className={badge.className} title={badge.title}>
-                          {badge.label}
-                        </Badge>
-                        {b.grupo ? (
-                          <Button
-                            size="sm"
-                            variant="link"
-                            className="h-auto p-0 text-xs"
-                            aria-expanded={aberto}
-                            aria-controls={`grupo-${b.ddcCod}-${b.ditCod}`}
-                            onClick={() => alternarAberto(b)}
-                            aria-label={`${aberto ? 'Esconder' : 'Ver'} os ${b.grupo.nTitulos} títulos do grupo do boleto ${b.numero ?? b.ditCod}`}
-                          >
-                            <ChevronDown
-                              className={`size-3 transition-transform ${aberto ? 'rotate-180' : ''}`}
-                              aria-hidden
-                            />
-                            {b.grupo.estado === 'CONFIRMADO' ? 'Grupo confirmado' : 'Grupo sugerido'}
-                            {' · '}
-                            {b.grupo.nTitulos} títulos
-                          </Button>
-                        ) : null}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col gap-0.5">
-                        <span className="font-medium tabular-nums">{b.numero ?? '—'}</span>
-                        <span className="text-xs text-muted-foreground" title={b.arquivo}>
-                          fin124 #{b.ddcCod}
-                          {b.importadoEm
-                            ? ` · ${new Date(b.importadoEm).toLocaleDateString('pt-BR')}`
-                            : ''}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{formatBRL(b.valor)}</TableCell>
-                    <TableCell>
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-xs text-muted-foreground">
-                          {fmtCivil(b.vencimento)}
-                        </span>
-                        {b.vencido ? (
-                          <Badge variant="outline" className="border-danger/40 text-danger">
-                            vencido
-                          </Badge>
-                        ) : null}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground tabular-nums">
-                      {b.bancoEmissor ?? '—'}
-                    </TableCell>
-                    <TableCell>
-                      {principal === undefined ? (
-                        <span className="text-muted-foreground">—</span>
-                      ) : (
-                        <div className="flex flex-col items-start gap-1">
-                          <TituloLinha t={principal} flpCod={b.vinculo?.flpCod} />
-                          {extras > 0 ? (
-                            <Button
-                              size="sm"
-                              variant="link"
-                              className="h-auto p-0 text-xs"
-                              onClick={() => setCandidatosDe(b)}
-                              aria-label={`Ver os ${b.candidatos.length} títulos candidatos do boleto ${b.numero ?? b.ditCod}`}
-                            >
-                              {resumoCandidatos(b.candidatos)}
-                            </Button>
-                          ) : null}
-                        </div>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {onCompor &&
-                      b.situacao !== 'VINCULADO' &&
-                      !b.vencido &&
-                      b.codbar &&
-                      b.grupo?.estado !== 'CONFIRMADO' ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => onCompor(b)}
-                          aria-label={`Compor com títulos o boleto ${b.numero ?? b.ditCod}`}
-                        >
-                          Compor com títulos
-                        </Button>
-                      ) : null}
-                      {b.linhaDigitavel ? (
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          onClick={() => copiar(b)}
-                          aria-label={`Copiar linha digitável do boleto ${b.numero ?? b.ditCod}`}
-                          title="Copiar linha digitável"
-                        >
-                          <Copy className="size-4" />
-                        </Button>
-                      ) : null}
-                    </TableCell>
-                  </TableRow>
-                  {b.grupo && aberto ? (
-                    <TableRow>
-                      <TableCell colSpan={7} id={`grupo-${b.ddcCod}-${b.ditCod}`}>
-                        <GrupoBoletoDaFilial
-                          filCod={b.grupo.filCod}
-                          onde={{ tipo: 'boleto', ddcCod: b.ddcCod, ditCod: b.ditCod }}
-                          podeExecutar={podeExecutar}
-                          onAlterado={async () => {
-                            recarregar()
-                            await onGrupoAlterado?.()
-                          }}
-                        />
-                      </TableCell>
-                    </TableRow>
-                  ) : null}
-                  </React.Fragment>
-                )
-              })}
-            </TableBody>
-          </Table>
-        </div>
-      )}
-      <Paginacao aba={aba} />
+      ) : dados ? (
+        <TabelaBoletosDda
+          tabela={tabela}
+          dados={dados}
+          carregando={carregando}
+          podeExecutar={podeExecutar}
+          {...(onCompor ? { onCompor } : {})}
+          onVerCandidatos={setCandidatosDe}
+          onCopiar={(b) => void copiar(b)}
+          onGrupoAlterado={async () => {
+            recarregar()
+            await onGrupoAlterado?.()
+          }}
+        />
+      ) : null}
       <CandidatosBoletoDialog boleto={candidatosDe} onClose={() => setCandidatosDe(null)} />
     </div>
   )

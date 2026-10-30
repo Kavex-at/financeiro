@@ -1713,6 +1713,11 @@ export interface BoletoDda {
   informativos?: BoletoDdaTitulo[]
   /** I21v: o boleto fecha a soma de um grupo (sugerido ou confirmado); ortogonal à situação. */
   grupo?: BoletoDdaGrupo
+  /**
+   * I-DDA5: filial de exibição (a do vínculo; senão a comum a todos os candidatos). Ausente =
+   * "sem filial". Backend anterior à v0.80 não manda.
+   */
+  filial?: number
 }
 
 /** O grupo de títulos que o boleto paga (só o resumo; o detalhe vem dos endpoints de grupos). */
@@ -1731,6 +1736,36 @@ export type BoletoDdaContagem = Record<BoletoDdaSituacao | 'todas', number> & {
 }
 
 /** Uma PÁGINA da aba — o backend filtra e pagina; o pool inteiro nunca vem ao navegador. */
+/** Quantidade e soma do valor do boleto (R$). */
+export interface BoletoDdaTotal {
+  qtd: number
+  valor: number
+}
+
+/**
+ * Totais da aba na base da `contagem` (antes do filtro de situação e do "Em grupo"). `urgentes` e
+ * `hoje` excluem `VINCULADO` e usam o dia civil BRT do vencimento do boleto.
+ */
+export type BoletoDdaTotais = Record<
+  | BoletoDdaSituacao
+  | 'todas'
+  | 'emGrupo'
+  | 'grupoSugerido'
+  | 'grupoConfirmado'
+  | 'hoje'
+  | 'urgentes'
+  | 'urgentesParaConferir'
+  | 'urgentesSemTitulo',
+  BoletoDdaTotal
+>
+
+/** Opções dos filtros de coluna, sobre o escopo inteiro. */
+export interface BoletoDdaFacetas {
+  filiais: Array<{ valor: number; qtd: number }>
+  semFilial: number
+  bancos: Array<{ valor: string; qtd: number }>
+}
+
 export interface BoletosDdaResposta {
   boletos: BoletoDda[]
   /** Linhas depois de todos os filtros — base da paginação. */
@@ -1739,19 +1774,53 @@ export interface BoletosDdaResposta {
   tamanho: number
   /** Por situação, depois de filial + busca e antes do filtro de situação (chips). */
   contagem: BoletoDdaContagem
+  /** Com R$ (cards e segmentos). Backend anterior à v0.80 não manda. */
+  totais?: BoletoDdaTotais
+  facetas?: BoletoDdaFacetas
+  /** Até 4 boletos não casados que vencem hoje (a faixa sob os cards). */
+  amostraHoje?: BoletoDda[]
   filiais: number[]
   sincronizadoEm?: number
+  /**
+   * I-DDA7: última conversa bem-sucedida com o fin124 (conferência ou sincronização). Base do aviso
+   * "DDA parado". Backend anterior à v0.81 não manda.
+   */
+  conferidoEm?: number
   /** Regra de candidato vigente (texto vindo do backend, a partir das constantes). */
   regraCandidato: string
 }
 
+/** Faixas de vencimento (as mesmas de Títulos a pagar). */
+export type BoletoDdaFaixa = 'VENCIDO' | 'HOJE' | '1-2' | '3-7' | '8+'
+export type BoletoDdaColuna =
+  | 'situacao'
+  | 'numero'
+  | 'valor'
+  | 'vencimento'
+  | 'banco'
+  | 'titulo'
+  | 'filial'
+/** I-DDA5: filial numérica ou `'sem'` (boleto sem filial de exibição). */
+export type BoletoDdaFiltroFilial = number | 'sem'
+
 export interface FiltroBoletosDda {
   escopo: BoletoDdaEscopo
   situacao?: BoletoDdaSituacao
+  /** Filtro de coluna Situação (várias). */
+  situacoes?: BoletoDdaSituacao[]
   /** I21v: só os boletos de grupo (ortogonal à situação). */
   emGrupo?: boolean
   busca?: string
+  /** Legado (gaveta do título): boleto sem filial também passa. A aba usa `filiais`. */
   filCod?: number
+  filiais?: BoletoDdaFiltroFilial[]
+  bancos?: string[]
+  faixas?: BoletoDdaFaixa[]
+  valorMin?: number
+  valorMax?: number
+  numero?: string
+  titulo?: string
+  ordem?: { coluna: BoletoDdaColuna; direcao: 1 | -1 }
   /** Vencimento do boleto de/até, `YYYY-MM-DD`, inclusivo (filtrado no servidor). */
   vencimentoDe?: string
   vencimentoAte?: string
@@ -1760,8 +1829,13 @@ export interface FiltroBoletosDda {
 }
 
 export interface SincronizacaoDdaResultado {
+  /** Planejados (incluem os que falharam ou ficaram adiados). */
   arquivosNovos: number
   arquivosRelidos: number
+  /** Lidos e gravados de fato. Backend anterior à v0.80 não manda. */
+  arquivosLidos?: number
+  /** Ficaram para a próxima passada (prazo de 60 s do botão). */
+  arquivosAdiados?: number
   boletos: number
   falhas: number
 }
@@ -1774,26 +1848,44 @@ export class SincronizacaoDdaEmAndamentoError extends Error {
   }
 }
 
-export async function fetchBoletosDda(filtro: FiltroBoletosDda): Promise<BoletosDdaResposta> {
+/** Corpo de erro da API (`error`/`userMessage`) ou `API <status>`. */
+const erroDaApiDda = async (res: Response): Promise<string> => {
+  try {
+    const j = (await res.json()) as { error?: unknown; userMessage?: unknown }
+    if (typeof j?.error === 'string' && j.error) return j.error
+    if (typeof j?.userMessage === 'string' && j.userMessage) return j.userMessage
+  } catch {}
+  return `API ${res.status}`
+}
+
+export async function fetchBoletosDda(
+  filtro: FiltroBoletosDda,
+  opcoes: { signal?: AbortSignal } = {},
+): Promise<BoletosDdaResposta> {
   const qs = new URLSearchParams({ escopo: filtro.escopo, pagina: String(filtro.pagina) })
   if (filtro.situacao) qs.set('situacao', filtro.situacao)
+  if (filtro.situacoes?.length) qs.set('situacoes', filtro.situacoes.join(','))
   if (filtro.emGrupo) qs.set('emGrupo', 'true')
   if (filtro.busca?.trim()) qs.set('busca', filtro.busca.trim())
   if (filtro.filCod != null) qs.set('filCod', String(filtro.filCod))
+  if (filtro.filiais?.length) qs.set('filiais', filtro.filiais.join(','))
+  if (filtro.bancos?.length) qs.set('bancos', filtro.bancos.join(','))
+  if (filtro.faixas?.length) qs.set('faixas', filtro.faixas.join(','))
+  if (filtro.valorMin != null) qs.set('valorMin', String(filtro.valorMin))
+  if (filtro.valorMax != null) qs.set('valorMax', String(filtro.valorMax))
+  if (filtro.numero?.trim()) qs.set('numero', filtro.numero.trim())
+  if (filtro.titulo?.trim()) qs.set('titulo', filtro.titulo.trim())
+  if (filtro.ordem) {
+    qs.set('ordem', `${filtro.ordem.coluna}:${filtro.ordem.direcao === -1 ? 'desc' : 'asc'}`)
+  }
   if (filtro.vencimentoDe) qs.set('vencimentoDe', filtro.vencimentoDe)
   if (filtro.vencimentoAte) qs.set('vencimentoAte', filtro.vencimentoAte)
   if (filtro.tamanho != null) qs.set('tamanho', String(filtro.tamanho))
   const res = await apiFetch(`${API}/sispag/boletos-dda?${qs.toString()}`, {
     headers: await withAuthHeaders(),
+    ...(opcoes.signal ? { signal: opcoes.signal } : {}),
   })
-  if (!res.ok) {
-    let msg = `API ${res.status}`
-    try {
-      const j = await res.json()
-      if (j?.error) msg = j.error
-    } catch {}
-    throw new Error(msg)
-  }
+  if (!res.ok) throw new Error(await erroDaApiDda(res))
   return (await res.json()) as BoletosDdaResposta
 }
 
@@ -1907,7 +1999,7 @@ export async function sincronizarBoletosDda(): Promise<SincronizacaoDdaResultado
     headers: { 'content-type': 'application/json', ...(await withAuthHeaders()) },
   })
   if (res.status === 409) throw new SincronizacaoDdaEmAndamentoError()
-  if (!res.ok) throw new Error(`API ${res.status}`)
+  if (!res.ok) throw new Error(await erroDaApiDda(res))
   return (await res.json()) as SincronizacaoDdaResultado
 }
 

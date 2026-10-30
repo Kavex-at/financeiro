@@ -18,7 +18,7 @@ import PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIng
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
 import LogService from '../LogService.js';
-import BoletoDdaService from './BoletoDdaService.js';
+import BoletoDdaService, { BOLETO_DDA_PRAZO_MS } from './BoletoDdaService.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -28,9 +28,10 @@ type TipoDoDocumento = { tpdCod?: string; tpdDesNome?: string };
 /**
  * Orçamento da sincronização DDA dentro da ingestão. A ingestão leva ~10 s medidos no cron; a
  * leitura do fin124 (arquivos novos + releitura) não pode multiplicar isso. O que não couber fica
- * para a próxima rodada (novos primeiro) — o botão da aba e o job avulso não têm prazo.
+ * para a próxima rodada (novos primeiro). O botão da aba usa o mesmo prazo (emenda 2026-10-30 da
+ * ADR-0067); só o job avulso não tem prazo.
  */
-export const DDA_PRAZO_NA_INGESTAO_MS = 60_000;
+export const DDA_PRAZO_NA_INGESTAO_MS = BOLETO_DDA_PRAZO_MS;
 /** Chave de advisory lock EXCLUSIVA da ingestão de pagamentos (≠ da de permutas). */
 export const PAGAMENTO_INGEST_LOCK_KEY = 726354819;
 /** Teto de leituras Conexos simultâneas no fan-out da ingestão. */
@@ -216,6 +217,7 @@ export default class IngestaoPagamentosService {
                 boletos: r.boletos,
                 falhas: r.falhas,
                 arquivosAdiados: r.arquivosAdiados,
+                ...(r.arquivosVazios > 0 ? { arquivosVazios: r.arquivosVazios } : {}),
             };
         } catch (error) {
             if (error instanceof IngestLockBusyError) return { estado: DDA_NA_INGESTAO.OCUPADA };
@@ -335,6 +337,11 @@ export default class IngestaoPagamentosService {
                 : undefined,
             ddaComAviso
                 ? `pool DDA ${dda.estado}${dda.erro ? ` (${dda.erro.slice(0, 120)})` : ''}`
+                : undefined,
+            // fault-tolerance-1: lista vazia do fin124 não é falha de leitura comum; o código
+            // separa o caso (snapshot mantido) na trilha da run.
+            dda.arquivosVazios
+                ? `${dda.arquivosVazios} arquivo(s) vazio(s) no fin124 (DDA_FILE_EMPTY)`
                 : undefined,
         ].filter(Boolean);
         return partes.length > 0 ? partes.join('; ') : undefined;

@@ -8,13 +8,23 @@ import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.
  * Monta lotes candidatos (RASCUNHO) com os títulos a vencer (≤7d), por filial × classe ×
  * banco, e desfaz os lotes automáticos que venceram. Escreve só no Postgres (READ-only no ERP).
  *
- * CRON (NÃO configurado — documentado; roda depois de `job:ingest-pagamentos`):
- *   10 6 * * *  cd /caminho/do/repo/src/backend && npm run job:formar-lotes
+ * Roda no workflow `ingest-sispag.yml` depois de `job:ingest-pagamentos` (slots 05:07, 07:07 e
+ * 12:13 BRT); o serviço pula fora de dia útil, antes das 06:30 BRT e se já formou hoje (v0.53.0).
  */
 const main = async (): Promise<void> => {
     await bootstrapAppContainer();
     const service = container.resolve(FormacaoLotesService);
-    const r = await service.formar({ triggeredBy: 'cron' });
+    // Cron = formação AUTOMÁTICA (dia útil, ≥ 06:30 BRT, uma por dia — o serviço decide). O
+    // disparo manual do workflow passa `--manual` e forma sem trava, como a rota.
+    const manual = process.argv.includes('--manual');
+    const r = await service.formar({
+        triggeredBy: manual ? 'manual' : 'cron',
+        automatica: !manual,
+    });
+    if (r.pulado) {
+        console.log(`[formar-lotes] pulada: ${r.pulado}`);
+        return;
+    }
     console.log(
         `[formar-lotes] lotes formados=${r.lotesFormados} títulos=${r.titulosLotados} ` +
             `desfeitos=${r.lotesDesfeitos}`,

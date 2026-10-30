@@ -1,8 +1,10 @@
 import { inject, injectable } from 'tsyringe';
 import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
+import { CONFERENCIA_DDA_ESTADO, type ConferenciaDda } from '../../interface/sispag/BoletoDda.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import type { IngestaoPagamentosResult } from '../../interface/sispag/SispagInterface.js';
 import PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
+import BoletoDdaService from './BoletoDdaService.js';
 import IngestaoPagamentosService from './IngestaoPagamentosService.js';
 
 const MIN_MS = 60_000;
@@ -34,6 +36,8 @@ export interface CarteiraAtualizacao {
     run?: IngestaoPagamentosResult;
     /** Mensagem da última falha (só em `falha_recente`). */
     motivo?: string;
+    /** I-DDA6: conferência rápida do DDA feita nesta abertura (só em `fresca`, quando rodou). */
+    dda?: ConferenciaDda;
 }
 
 /**
@@ -55,6 +59,7 @@ export default class CarteiraAtualizacaoService {
         @inject(PagamentoIngestaoRunRepository)
         private readonly runRepo: PagamentoIngestaoRunRepository,
         @inject(EnvironmentProvider) private readonly environmentProvider: EnvironmentProvider,
+        @inject(BoletoDdaService) private readonly boletoDda: BoletoDdaService,
     ) {}
 
     public atualizarSeDefasada = async (input: {
@@ -76,7 +81,15 @@ export default class CarteiraAtualizacaoService {
             : {};
 
         if (ultimoSucesso && agora - ultimoSucesso.getTime() < ttlMs) {
-            return { estado: ESTADO_CARTEIRA.FRESCA, ...referencia };
+            // I-DDA6: carteira recente não ingere (e não sincroniza o DDA). A conferência rápida
+            // pega o arquivo DDA novo do dia sem esperar o TTL; na mesma requisição, então segue
+            // sequencial com a sincronização dos lotes (ADR-0066 §3).
+            const dda = await this.conferirDda(
+                input.triggeredBy,
+                agora,
+                env.sispagDdaConferenciaMin,
+            );
+            return { estado: ESTADO_CARTEIRA.FRESCA, ...referencia, ...(dda ? { dda } : {}) };
         }
 
         const [ultima] = await this.runRepo.listRecentRuns(1);
@@ -109,6 +122,24 @@ export default class CarteiraAtualizacaoService {
                 return { estado: ESTADO_CARTEIRA.EM_ANDAMENTO, ...referencia };
             }
             throw error;
+        }
+    };
+
+    /** Falha da conferência nunca muda o estado da carteira: vira `dda.estado = falhou`. */
+    private conferirDda = async (
+        triggeredBy: string,
+        agora: number,
+        intervaloMin: number,
+    ): Promise<ConferenciaDda | undefined> => {
+        try {
+            return await this.boletoDda.conferirSeVelho({
+                triggeredBy,
+                intervaloMs: intervaloMin * MIN_MS,
+                agora,
+            });
+        } catch (err: unknown) {
+            const erro = err instanceof Error ? err.message : String(err);
+            return { estado: CONFERENCIA_DDA_ESTADO.FALHOU, erro: erro.slice(0, 300) };
         }
     };
 }

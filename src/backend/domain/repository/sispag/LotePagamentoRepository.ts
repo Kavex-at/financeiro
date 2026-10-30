@@ -417,6 +417,25 @@ export default class LotePagamentoRepository {
      * em que lote o título do boleto está. Lote mais recente primeiro (um título pode ter ficado
      * num lote antigo que nunca gerou remessa).
      */
+    /**
+     * Assinatura de `listTitulosEmLotesAbertos` numa linha (quantos itens + soma de hash de
+     * lote/título/status/data de débito), sem trazer os itens. Muda quando qualquer lote não
+     * cancelado ganha, perde ou troca item, muda de status ou de data — venha a mudança desta
+     * instância, de outra ou de um job. É a chave de lotes do cache da aba DDA (performance-1).
+     */
+    public assinaturaTitulosEmLotesAbertos = async (): Promise<string> => {
+        const row = await this.databaseClient.selectFirst<{ n: number | string; h: string | null }>(
+            `SELECT count(*) AS n,
+                    coalesce(sum(hashtext(
+                        i.lote_id::text || ':' || i.fil_cod || ':' || i.doc_cod || ':' || i.tit_cod
+                        || ':' || l.status || ':' || coalesce(l.data_debito::text, '')
+                    )::bigint), 0)::text AS h
+             FROM lote_pagamento_item i JOIN lote_pagamento l ON l.id = i.lote_id
+             WHERE l.status <> 'CANCELADO'`,
+        );
+        return `${Number(row?.n ?? 0)}:${row?.h ?? '0'}`;
+    };
+
     public listTitulosEmLotesAbertos = async (): Promise<
         Array<{
             filCod: number;

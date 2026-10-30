@@ -94,6 +94,21 @@ export default class JobExecucaoRepository {
         );
     };
 
+    /**
+     * Há execução CONCLUÍDA (`success`/`partial`) do pipeline iniciada a partir de `desde`? É a trava
+     * "uma formação automática por dia" (v0.53.0); `running` e `error` não contam.
+     */
+    public existeConcluidaDesde = async (pipeline: string, desde: Date): Promise<boolean> => {
+        const row = await this.databaseClient.selectFirst<{ existe: boolean }>(
+            `SELECT true AS existe FROM job_execucao
+              WHERE pipeline = $pipeline AND status IN ('success', 'partial')
+                AND started_at >= $desde
+              LIMIT 1`,
+            { pipeline, desde },
+        );
+        return row?.existe === true;
+    };
+
     public listRecentRuns = async (pipeline: string, limit: number): Promise<JobExecucao[]> => {
         const rows: Row[] = await this.databaseClient.selectMany(
             `SELECT ${COLUNAS} FROM job_execucao
