@@ -1,5 +1,16 @@
 # Columbia Financeiro — Changelog
 
+## v0.83.0 (2026-10-30) — SISPAG: fornecedor na aba Boletos DDA
+
+- **Coluna Fornecedor.** O DDA não traz o beneficiário; a conta de destino vem no código de barras e
+  identifica o fornecedor. O sistema aprende conta → fornecedor a cada sincronização do DDA, a partir do
+  vínculo do Conexos, das confirmações da analista e de boletos com um único título de mesmo valor e dia.
+- **Selo "provável".** Nome deduzido (sem vínculo nem confirmação) aparece com o selo e só depois de dois
+  boletos diferentes da mesma conta. Conta ligada a mais de um fornecedor fica sem nome.
+- **Busca por fornecedor.** A busca da aba também procura pelo nome do fornecedor.
+- **Bancos cobertos:** Bradesco, Itaú, Santander, Banco do Brasil, Sicredi, Safra, Citibank, Caixa, Ailos e
+  Sicoob. Boleto de outro banco fica sem fornecedor.
+
 ## v0.82.0 (2026-10-30) — SISPAG: Boletos DDA sem duplicata e "sem título" que é sem título mesmo
 
 - **Uma linha por boleto.** O mesmo boleto que chega em vários arquivos DDA vira uma linha só, com "em N
