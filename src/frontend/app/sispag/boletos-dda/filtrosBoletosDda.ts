@@ -23,11 +23,23 @@ export const ROTULO_SITUACAO_DDA: Readonly<Record<BoletoDdaSituacao, string>> = 
   VINCULADO: 'Casado',
   CANDIDATO: 'Candidato',
   AMBIGUO: 'Ambíguo',
+  FORA_JANELA: 'Fora da janela',
+  TITULO_SAIU_CARTEIRA: 'Saiu da carteira',
   SEM_TITULO: 'Sem título',
 }
 
+/** Rótulo tolerante a situação desconhecida (backend mais novo no deploy): devolve o valor cru. */
+export const rotuloDaSituacao = (situacao: string): string =>
+  (ROTULO_SITUACAO_DDA as Record<string, string | undefined>)[situacao] ?? situacao
+
 /** Segmentos do filtro externo. `misto` = a coluna Situação tem uma combinação sem segmento. */
-export type SegmentoDda = 'todos' | 'casados' | 'conferir' | 'sem-titulo'
+export type SegmentoDda =
+  | 'todos'
+  | 'casados'
+  | 'conferir'
+  | 'sem-titulo'
+  | 'fora-janela'
+  | 'saiu-carteira'
 
 export interface FiltrosBoletosDda {
   escopo: BoletoDdaEscopo
@@ -86,6 +98,8 @@ export const segmentoDe = (situacoes: readonly BoletoDdaSituacao[]): SegmentoDda
   if (situacoes.length === 0) return 'todos'
   if (mesmoConjunto(situacoes, ['VINCULADO'])) return 'casados'
   if (mesmoConjunto(situacoes, ['SEM_TITULO'])) return 'sem-titulo'
+  if (mesmoConjunto(situacoes, ['FORA_JANELA'])) return 'fora-janela'
+  if (mesmoConjunto(situacoes, ['TITULO_SAIU_CARTEIRA'])) return 'saiu-carteira'
   if (situacoes.every((s) => SITUACOES_PARA_CONFERIR.includes(s))) return 'conferir'
   return undefined
 }
@@ -100,6 +114,10 @@ export const situacoesDoSegmento = (s: SegmentoDda): BoletoDdaSituacao[] => {
       return [...SITUACOES_PARA_CONFERIR]
     case 'sem-titulo':
       return ['SEM_TITULO']
+    case 'fora-janela':
+      return ['FORA_JANELA']
+    case 'saiu-carteira':
+      return ['TITULO_SAIU_CARTEIRA']
   }
 }
 
@@ -213,7 +231,7 @@ export const descreverFiltrosDda = (f: FiltrosBoletosDda): FiltroAtivoDda[] => {
   if (f.situacoes.length > 0 && segmentoDe(f.situacoes) === undefined) {
     out.push({
       id: 'situacoes',
-      texto: `Situação: ${f.situacoes.map((s) => ROTULO_SITUACAO_DDA[s].toLowerCase()).join(', ')}`,
+      texto: `Situação: ${f.situacoes.map((s) => rotuloDaSituacao(s).toLowerCase()).join(', ')}`,
       remover: { situacoes: [] },
     })
   }

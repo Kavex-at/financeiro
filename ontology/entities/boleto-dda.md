@@ -30,6 +30,7 @@ related_files:
   - src/frontend/app/sispag/boletos-dda/FiltroSituacaoDdaBarra.tsx
   - src/frontend/app/sispag/boletos-dda/FaixaBoletosHoje.tsx
   - src/frontend/app/sispag/components/CardsBoletosDda.tsx
+  - src/backend/domain/libs/calendar/JanelaCarteira.ts
 properties:
   - ddcCod
   - ditCod
@@ -94,7 +95,11 @@ filial comum a **todos** os candidatos (um ou vários); sem isso, o boleto é **
 | `VINCULADO` | O Conexos preencheu `docCod`/`titCod` no item do fin124. |
 | `CANDIDATO` | Livre, e **um** título aberto cai nas camadas de I15c (\|Δvalor\| ≤ R$ 0,05 e mesmo dia; ou valor igual e 1–5 dias depois), sem estar reservado por título que o ERP já sinalizou (I15e). **Regra vigente desde a v0.66.0 (ADR-0068):** os limites vêm de `business-rules/sugestao-boleto-dda-sispag.md`; a janela "valor exato ±3 dias" (`JANELA_CANDIDATO_DIAS`) deixou de ser a regra (ela inclui dias ANTES do título, que são vencidos — I15h). |
 | `AMBIGUO` | Livre, e **mais de um** título casa. Típico de cobrança recorrente de mesmo valor. |
-| `SEM_TITULO` | Livre, e nenhum título aberto casa. |
+| `FORA_JANELA` | Livre, sem candidato, e o vencimento cai fora da janela que a carteira carrega (hoje − 15 a hoje + 45 dias, `JANELA_CARTEIRA_DIAS_*`, a mesma da ingestão; data civil via `BankingCalendar`). O título nunca poderia estar na carteira — não é "sem título". `VINCULADO` ignora a janela. |
+| `TITULO_SAIU_CARTEIRA` | Livre, sem candidato, dentro da janela, mas há título **inativo** (`ativo = false`: saiu do fin064) com \|Δvalor\| ≤ R$ 0,05 e \|Δdias\| ≤ 10. Em regra quitado, mas pode ser cancelado, previsão ou renegociado — o rótulo é "Título saiu da carteira", nunca "pago". Carrega o(s) título(s) (`titulosSaidos`). **Escondida da lista padrão ("Todas") e fora de `contagem.todas`**; só pelo filtro próprio. |
+| `SEM_TITULO` | Livre, e nenhum título casa (nem aberto, nem saído, e dentro da janela). |
+
+Precedência: `VINCULADO` > `CANDIDATO`/`AMBIGUO` > `FORA_JANELA` > `TITULO_SAIU_CARTEIRA` > `SEM_TITULO`.
 
 Invariantes:
 
@@ -113,6 +118,12 @@ Invariantes:
   `business-rules/sugestao-boleto-dda-sispag.md`. I-DDA1 (candidato não é gravado) permanece:
   a sugestão é calculada; o que se persiste é a **decisão** (`DecisaoSugestaoBoleto`) e o **par**
   (`ConfirmacaoEmissorBoleto`), nunca o candidato. **Nota (ADR-0072, `planned`):** o pool (com `sincronizadoEm`) é a base do desfecho derivado `SEM_CANDIDATO` (I15m); defasagem > 8 h (ADR-0067) torna-o "sem candidato no pool de há N h", nunca afirmação absoluta. Desfecho não é persistido.
+
+- **I-DDA8 — uma linha por código de barras.** O mesmo `codbar` aparece em vários arquivos do `fin124`.
+  A consolidação colapsa as cópias em UMA linha (a que o Conexos vinculou; senão a do maior `ddcCod`,
+  depois `ditCod`) e expõe `arquivos` (arquivos distintos em que apareceu). Sem `codbar` nunca
+  colapsa. Contagens e chips contam linhas colapsadas. Medido na PRD de 30/10: 1.941 itens a vencer
+  → 1.792 linhas. A decisão/grupo de sugestão é chaveada pelo representante (`ddcCod:ditCod`).
 
 ## Sincronização
 

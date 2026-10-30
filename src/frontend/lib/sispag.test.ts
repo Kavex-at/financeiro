@@ -648,6 +648,7 @@ describe('boletos DDA de um título', () => {
     valor: 4815.33,
     vencimento: '2026-09-24',
     vencido: false,
+    arquivos: 1,
     situacao: 'SEM_TITULO',
     candidatos: [],
     ...over,

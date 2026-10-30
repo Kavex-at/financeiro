@@ -25,6 +25,7 @@ export function CardsBoletosDda({
   emGrupoAtivo,
   onVerCasados,
   onConferir,
+  onVerForaJanela,
   onAlternarUrgentes,
   onAlternarEmGrupo,
 }: {
@@ -35,6 +36,7 @@ export function CardsBoletosDda({
   urgentesAtivo: boolean
   emGrupoAtivo: boolean
   onVerCasados: () => void
+  onVerForaJanela: () => void
   onConferir: () => void
   onAlternarUrgentes: () => void
   onAlternarEmGrupo: () => void
@@ -46,6 +48,8 @@ export function CardsBoletosDda({
   const urgentes = totalDe(dados, 'urgentes')
   const urgConferir = totalDe(dados, 'urgentesParaConferir')
   const urgSemTitulo = totalDe(dados, 'urgentesSemTitulo')
+  const foraJanela = totalDe(dados, 'FORA_JANELA')
+  const saidos = totalDe(dados, 'TITULO_SAIU_CARTEIRA')
   const grupos = totalDe(dados, 'emGrupo')
   const sugeridos = totalDe(dados, 'grupoSugerido')
   const confirmados = totalDe(dados, 'grupoConfirmado')
@@ -56,7 +60,7 @@ export function CardsBoletosDda({
     loading ? <Skeleton className="h-4 w-40" /> : <div className="space-y-2">{conteudo}</div>
 
   return (
-    <KPIGrid columns={4} aria-label="Resumo dos boletos DDA" aria-busy={loading}>
+    <KPIGrid columns={5} aria-label="Resumo dos boletos DDA" aria-busy={loading}>
       <SimpleKPI
         label="Casados com título"
         value={numero(casados)}
@@ -114,6 +118,24 @@ export function CardsBoletosDda({
                 onClick={onAlternarUrgentes}
               >
                 {urgentesAtivo ? 'Tirar o filtro' : 'Ver só os urgentes'}
+              </Button>
+            ) : null}
+          </>,
+        )}
+      />
+      <SimpleKPI
+        label="Fora da janela"
+        value={numero(foraJanela)}
+        active={segmento === 'fora-janela'}
+        footer={rodape(
+          <>
+            <p>
+              {reais(foraJanela)} · vencem fora do que a carteira carrega (−15 a +45 dias)
+              {(saidos.qtd ?? 0) > 0 ? ` · ${qtd(saidos)} com título que saiu da carteira (escondidos)` : ''}
+            </p>
+            {(foraJanela.qtd ?? 0) > 0 ? (
+              <Button size="sm" aria-pressed={segmento === 'fora-janela'} onClick={onVerForaJanela}>
+                {segmento === 'fora-janela' ? 'Tirar o filtro' : 'Ver fora da janela'}
               </Button>
             ) : null}
           </>,

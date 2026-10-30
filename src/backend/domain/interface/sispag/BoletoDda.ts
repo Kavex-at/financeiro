@@ -48,12 +48,19 @@ export interface BoletoDda extends ItemDda {
  * - CANDIDATO:  livre, e exatamente UM título aberto cai nos limites seguros da regra em camadas
  *               (|Δvalor| ≤ R$ 0,05 no mesmo dia, ou valor igual e boleto 1–5 dias depois).
  * - AMBIGUO:    livre, e MAIS de um título casa (cobrança recorrente de mesmo valor).
- * - SEM_TITULO: livre, e nenhum título aberto casa.
+ * - FORA_JANELA: livre, sem candidato, e o vencimento cai fora da janela que a carteira carrega
+ *               (`JANELA_CARTEIRA_*`): o título nunca poderia estar na carteira.
+ * - TITULO_SAIU_CARTEIRA: livre, sem candidato, mas há título INATIVO (saiu do fin064: em regra
+ *               quitado, mas pode ser cancelado, previsão ou renegociado) de valor e data próximos.
+ *               Escondida da lista padrão.
+ * - SEM_TITULO: livre, e nenhum título casa.
  */
 export const BOLETO_DDA_SITUACAO = {
     VINCULADO: 'VINCULADO',
     CANDIDATO: 'CANDIDATO',
     AMBIGUO: 'AMBIGUO',
+    FORA_JANELA: 'FORA_JANELA',
+    TITULO_SAIU_CARTEIRA: 'TITULO_SAIU_CARTEIRA',
     SEM_TITULO: 'SEM_TITULO',
 } as const;
 export type BoletoDdaSituacao = (typeof BOLETO_DDA_SITUACAO)[keyof typeof BOLETO_DDA_SITUACAO];
@@ -84,6 +91,14 @@ export interface BoletoDdaTitulo {
     deltaValor?: number;
 }
 
+/** Outra cópia do mesmo código de barras (outro item do `fin124`), escondida pelo colapso. */
+export interface BoletoDdaCopia {
+    ddcCod: number;
+    ditCod: number;
+    arquivo?: string;
+    importadoEm?: number;
+}
+
 /** Linha da aba "Boletos DDA". */
 export interface BoletoDdaConsolidado {
     ddcCod: number;
@@ -98,6 +113,13 @@ export interface BoletoDdaConsolidado {
     linhaDigitavel?: string;
     /** Código FEBRABAN do banco emissor (3 primeiros dígitos das barras). */
     bancoEmissor?: string;
+    /** Em quantos arquivos do fin124 o mesmo `codbar` apareceu (1 = sem cópia). */
+    arquivos: number;
+    /**
+     * As OUTRAS cópias do `codbar` (só quando há). Grupo e decisão são chaveados por item
+     * (`ddcCod`/`ditCod`), então podem estar numa cópia que não é a representante.
+     */
+    copias?: BoletoDdaCopia[];
     situacao: BoletoDdaSituacao;
     /** Presente só em VINCULADO. */
     vinculo?: BoletoDdaTitulo & { flpCod?: number };
@@ -108,6 +130,8 @@ export interface BoletoDdaConsolidado {
      * débito, ou além de 5 dias): só informação, não conta para a situação (I15h).
      */
     informativos?: BoletoDdaTitulo[];
+    /** Presente só em TITULO_SAIU_CARTEIRA: o(s) título(s) inativo(s) de valor e data próximos. */
+    titulosSaidos?: BoletoDdaTitulo[];
     /**
      * I21v: o boleto fecha a soma de um grupo — sugerido (I21e/f) ou confirmado. Ortogonal à
      * `situacao`: um boleto `CANDIDATO` ou `AMBIGUO` pode ser de grupo.

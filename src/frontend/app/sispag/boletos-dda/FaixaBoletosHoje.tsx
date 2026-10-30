@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { BoletoDda } from '@/lib/sispag'
 import { formatBRL } from '@/lib/utils'
-import { SITUACAO_BADGE } from './rotulosDda'
+import { badgeDaSituacao } from './rotulosDda'
 
 /**
  * Faixa sob os cards (padrão `FaixaBloqueadosHoje`): os boletos NÃO casados que vencem hoje (até
@@ -41,7 +41,7 @@ export function FaixaBoletosHoje({
       <ul className="divide-y text-sm">
         {amostra.map((b) => {
           const principal = b.vinculo ?? b.candidatos[0]
-          const badge = SITUACAO_BADGE[b.situacao]
+          const badge = badgeDaSituacao(b.situacao)
           return (
             <li key={`${b.ddcCod}:${b.ditCod}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5">
               <span className="font-medium tabular-nums">{b.numero ?? '—'}</span>

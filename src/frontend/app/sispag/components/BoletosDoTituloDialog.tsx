@@ -26,7 +26,7 @@ import {
   fetchAjustesCentavos,
   fetchBoletosDdaDoTitulo,
 } from '@/lib/sispag'
-import { SITUACAO_BADGE } from './BoletosDdaTab'
+import { badgeDaSituacao } from '../boletos-dda/rotulosDda'
 import { DiferencaBadge, fmtCivil } from './CandidatosBoletoDialog'
 import { ConfirmacaoEmConjuntoSecao } from './ConfirmacaoEmConjuntoSecao'
 import { GrupoBoletoDaFilial } from './GrupoBoletoDaFilial'
@@ -71,7 +71,7 @@ function TabelaBoletos({ linhas, mostrarLigacao }: { linhas: BoletoDdaDoTitulo[]
       </TableHeader>
       <TableBody>
         {linhas.map(({ boleto: b, diferencaDias }) => {
-          const badge = SITUACAO_BADGE[b.situacao]
+          const badge = badgeDaSituacao(b.situacao)
           return (
             <TableRow key={`${b.ddcCod}:${b.ditCod}`}>
               <TableCell>

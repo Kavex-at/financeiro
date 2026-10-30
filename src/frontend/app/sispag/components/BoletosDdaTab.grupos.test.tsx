@@ -49,6 +49,7 @@ const BOLETO_GRUPO: BoletoDda = {
   valor: 1575,
   vencimento: '2026-10-21',
   vencido: false,
+  arquivos: 1,
   bancoEmissor: '341',
   codbar: 'x'.repeat(44),
   situacao: 'SEM_TITULO',
@@ -71,7 +72,7 @@ const BOLETO_AVULSO: BoletoDda = {
 delete (BOLETO_AVULSO as { grupo?: unknown }).grupo
 
 const pagina = (boletos: BoletoDda[], over: Partial<BoletosDdaResposta> = {}): BoletosDdaResposta => {
-  const contagem = { todas: boletos.length, VINCULADO: 0, CANDIDATO: 0, AMBIGUO: 0, SEM_TITULO: 0, emGrupo: 0 }
+  const contagem = { todas: boletos.length, VINCULADO: 0, CANDIDATO: 0, AMBIGUO: 0, FORA_JANELA: 0, TITULO_SAIU_CARTEIRA: 0, SEM_TITULO: 0, emGrupo: 0 }
   for (const b of boletos) {
     contagem[b.situacao] += 1
     if (b.grupo) contagem.emGrupo += 1

@@ -206,6 +206,9 @@ export function BoletosDdaTab({
         urgentesAtivo={tabela.urgentesAtivo}
         emGrupoAtivo={filtros.emGrupo}
         onVerCasados={() => tabela.definirSegmento(tabela.segmento === 'casados' ? 'todos' : 'casados')}
+        onVerForaJanela={() =>
+          tabela.definirSegmento(tabela.segmento === 'fora-janela' ? 'todos' : 'fora-janela')
+        }
         onConferir={() => tabela.definirSegmento(tabela.segmento === 'conferir' ? 'todos' : 'conferir')}
         onAlternarUrgentes={tabela.alternarUrgentes}
         onAlternarEmGrupo={tabela.alternarEmGrupo}

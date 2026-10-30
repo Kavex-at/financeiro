@@ -16,6 +16,11 @@ import {
     type BoletosDdaResposta,
     type SincronizacaoDdaResultado,
 } from '../../interface/sispag/BoletoDda.js';
+import {
+    JANELA_CARTEIRA_DIAS_ADIANTE,
+    JANELA_CARTEIRA_DIAS_ATRAS,
+} from '../../libs/calendar/JanelaCarteira.js';
+import type { TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
@@ -25,7 +30,7 @@ import PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIng
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
 import BoletoSuggestionService from './BoletoSuggestionService.js';
-import ConsolidacaoBoletoDda from './ConsolidacaoBoletoDda.js';
+import ConsolidacaoBoletoDda, { LIMITE_DIAS_SAIDO } from './ConsolidacaoBoletoDda.js';
 import ConsolidacaoBoletoDdaCache from './ConsolidacaoBoletoDdaCache.js';
 import { REGRA_CANDIDATO_TEXTO } from './RegraSugestaoBoleto.js';
 import SugestaoBoletoCache from './SugestaoBoletoCache.js';
@@ -129,15 +134,42 @@ export default class BoletoDdaService {
         hoje: string,
     ): Promise<BoletoDdaConsolidado[]> => {
         const vencimentoDesde = escopo === BOLETO_DDA_ESCOPO.A_VENCER ? hoje : undefined;
-        const [boletos, titulos, titulosEmLote] = await Promise.all([
+        const [boletos, titulos, titulosSaidos, titulosEmLote] = await Promise.all([
             this.repo.listBoletos(vencimentoDesde ? { vencimentoDesde } : {}),
             this.tituloRepo.listAtivos(),
+            this.inativosOuNenhum(hoje),
             this.loteRepo.listTitulosEmLotesAbertos(),
         ]);
         return this.comGrupo(
-            this.consolidacao.consolidar({ boletos, titulos, titulosEmLote }),
+            this.consolidacao.consolidar({ boletos, titulos, titulosSaidos, titulosEmLote }),
             await this.gruposOuNenhum(),
         );
+    };
+
+    /**
+     * Títulos que saíram da carteira, só para a situação TITULO_SAIU_CARTEIRA. Recorte: do que o
+     * casamento (±10 dias) alcança a partir da janela da carteira. Falha desliga SÓ essa situação
+     * (os boletos ficam FORA_JANELA/SEM_TITULO como antes); nunca derruba a lista.
+     */
+    private inativosOuNenhum = async (hoje: string): Promise<TituloAPagar[]> => {
+        try {
+            return await this.tituloRepo.listInativosRecentes({
+                de: this.calendar.addDays(hoje, -(JANELA_CARTEIRA_DIAS_ATRAS + LIMITE_DIAS_SAIDO)),
+                ate: this.calendar.addDays(hoje, JANELA_CARTEIRA_DIAS_ADIANTE + LIMITE_DIAS_SAIDO),
+            });
+        } catch (err: unknown) {
+            const code = (err as { code?: unknown } | null)?.code;
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'falha ao ler os títulos que saíram da carteira; a aba segue sem a situação "saiu da carteira"',
+                data: {
+                    erro: err instanceof Error ? err.message : String(err),
+                    ...(typeof code === 'string' ? { codigoErro: code } : {}),
+                },
+            });
+            return [];
+        }
     };
 
     /** Falha ao ler os grupos desliga SÓ o resumo de grupo na aba (nunca derruba a lista). */
@@ -158,6 +190,11 @@ export default class BoletoDdaService {
         }
     };
 
+    /**
+     * Grupo e decisão são chaveados por item (`ddcCod:ditCod`), e a linha colapsada é UMA cópia do
+     * `codbar`. Tenta a representante e depois as outras; o grupo CONFIRMADO vence o sugerido. Se o
+     * achado está noutra cópia, a linha passa a apontar para ela — é nela que as ações agem.
+     */
     private comGrupo = (
         linhas: BoletoDdaConsolidado[],
         grupos: ReadonlyMap<string, BoletoDdaGrupo>,
@@ -165,8 +202,44 @@ export default class BoletoDdaService {
         grupos.size === 0
             ? linhas
             : linhas.map((b) => {
-                  const grupo = grupos.get(`${b.ddcCod}:${b.ditCod}`);
-                  return grupo ? { ...b, grupo } : b;
+                  const itens = [b, ...(b.copias ?? [])];
+                  const achados = itens
+                      .map((c) => ({ c, grupo: grupos.get(`${c.ddcCod}:${c.ditCod}`) }))
+                      .filter(
+                          (x): x is { c: (typeof itens)[number]; grupo: BoletoDdaGrupo } =>
+                              x.grupo !== undefined,
+                      );
+                  const escolhido =
+                      achados.find((x) => x.grupo.estado === 'CONFIRMADO') ?? achados[0];
+                  if (!escolhido) return b;
+                  if (escolhido.c === b) return { ...b, grupo: escolhido.grupo };
+                  const {
+                      copias: _copias,
+                      arquivo: _arquivo,
+                      importadoEm: _importadoEm,
+                      ...resto
+                  } = b;
+                  // A representante vira cópia: a contagem e as chaves da linha seguem coerentes.
+                  const irmas = [
+                      {
+                          ddcCod: b.ddcCod,
+                          ditCod: b.ditCod,
+                          ...(b.arquivo ? { arquivo: b.arquivo } : {}),
+                          ...(b.importadoEm != null ? { importadoEm: b.importadoEm } : {}),
+                      },
+                      ...(b.copias ?? []).filter((c) => c !== escolhido.c),
+                  ];
+                  return {
+                      ...resto,
+                      copias: irmas,
+                      ddcCod: escolhido.c.ddcCod,
+                      ditCod: escolhido.c.ditCod,
+                      ...(escolhido.c.arquivo ? { arquivo: escolhido.c.arquivo } : {}),
+                      ...(escolhido.c.importadoEm != null
+                          ? { importadoEm: escolhido.c.importadoEm }
+                          : {}),
+                      grupo: escolhido.grupo,
+                  };
               });
 
     public sincronizar = async (input: {
