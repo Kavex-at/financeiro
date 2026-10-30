@@ -45,7 +45,7 @@ const SITUACOES: readonly BoletoDdaSituacao[] = [
   'SEM_TITULO',
   'TITULO_SAIU_CARTEIRA',
 ]
-const COLUNAS = 8
+const COLUNAS = 9
 
 function TituloLinha({ t, flpCod }: { t: BoletoDdaTitulo; flpCod?: number }) {
   return (
@@ -235,6 +235,7 @@ export function TabelaBoletosDda({
                   onChange={(bancos) => tabela.atualizar({ bancos })}
                 />
               </ColumnHeaderFilter>
+              <TableHead>Fornecedor</TableHead>
               <ColumnHeaderFilter
                 label="Título"
                 {...comum('titulo')}
@@ -330,6 +331,26 @@ export function TabelaBoletosDda({
                     </TableCell>
                     <TableCell className="text-muted-foreground tabular-nums">
                       {b.bancoEmissor ?? '—'}
+                    </TableCell>
+                    <TableCell>
+                      {b.fornecedor ? (
+                        <div className="flex flex-col items-start gap-1">
+                          <span className="max-w-[14rem] truncate font-medium" title={b.fornecedor.nome}>
+                            {b.fornecedor.nome}
+                          </span>
+                          {b.fornecedor.origem === 'INFERIDO' ? (
+                            <Badge
+                              variant="outline"
+                              className="border-muted text-muted-foreground"
+                              title="Deduzido da conta do beneficiário nas barras e de boletos parecidos já casados — confira."
+                            >
+                              provável
+                            </Badge>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       {principal === undefined ? (

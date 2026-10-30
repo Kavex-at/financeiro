@@ -181,3 +181,10 @@ medidos); demais bancos usam chave genérica (I15i).
 
 **Sugestão por título (ADR-0068, implemented):** `sispag:ver` vê a sugestão e copia a linha digitável
 (sempre auditado); confirmar, rejeitar e revogar exigem `sispag:executar`.
+
+## Fornecedor (v0.53.0, ADR-0081)
+
+O pool `fin124` não traz o beneficiário. `BoletoDdaConsolidado.fornecedor?` é **derivado**: a conta do
+beneficiário nas barras (`ContaBeneficiariaBoleto`) consultada no mapeamento aprendido
+(`FornecedorContaBoleto`). Entra depois da consolidação e não altera situação nem candidatos. Origem
+`INFERIDO` = "provável" na tela.

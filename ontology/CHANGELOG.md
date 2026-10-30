@@ -3,6 +3,19 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.53.0 — SISPAG: fornecedor do boleto DDA pela conta do beneficiário (2026-10-30, ADR-0081)
+
+Feature: `sispag-fornecedor-boleto` (`/feature-new`). Migration 0093.
+
+- **Entidade nova `FornecedorContaBoleto` (`implemented`):** mapeamento derivado conta do beneficiário (das barras)
+  → `pesCod` + credor, com origem `VINCULADO > CONFIRMADO > INFERIDO`, ambiguidade explícita e contagem de
+  evidências. Reconstruído ao fim de cada sincronização do pool DDA; a leitura da aba não escreve.
+- `BoletoDda` ganha `fornecedor?` (derivado, passo de enriquecimento depois da consolidação) e a coluna
+  "Fornecedor" com o selo "provável" nos inferidos; o nome entra na busca.
+- Desvio da entrevista, medido: a unicidade da inferência vale sobre toda a história da carteira, não só os
+  títulos ativos (43 → 91 contas na cópia de PRD de 30/10). Ver ADR-0081.
+- Numeração: vem sobre a 0.52.0 (main + pool-limpo não bumparam a ontologia); ADR 0081 e migration 0093 (a 0092 é da Paridade).
+
 ## v0.52.0 — SISPAG: sugestão de grupo vista pela carteira de títulos (2026-10-29, emenda da ADR-0077)
 
 Feature: `sispag-grupo-na-carteira` (`/feature-tweak boleto-agrupado-sispag`). Sem ADR nova, sem migration.
@@ -21,7 +34,7 @@ Feature: `sispag-grupo-na-carteira` (`/feature-tweak boleto-agrupado-sispag`). S
   `avisos` e a lista de boletos DDA ganha o resumo `grupo` e a contagem/filtro `emGrupo` (derivados, sem persistência).
   I21g, I21i, I21t, I21v e I21w reescritas no lugar; I21w deixa de dizer que a carteira nunca confirma e passa a dizer
   que o selo e a tabela não têm botão de confirmar.
-- Numeração: vem sobre a 0.51.0 (ADR-0080, I15t, `sispag-confirmar-em-conjunto`), já em `main`; as letras
+- Numeração: vem sobre a 0.52.0 (main + pool-limpo não bumparam a ontologia); ADR 0081 e migration 0093 (a 0092 é da Paridade).
   I21v e I21w seguem a I21u.
 
 ## v0.51.0 — SISPAG: confirmação em conjunto de títulos irmãos (2026-10-29, ADR-0080)

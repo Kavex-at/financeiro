@@ -29,9 +29,11 @@ import LotePagamentoRepository from '../../repository/sispag/LotePagamentoReposi
 import PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
+import AprendizadoFornecedorBoletoService from './AprendizadoFornecedorBoletoService.js';
 import BoletoSuggestionService from './BoletoSuggestionService.js';
 import ConsolidacaoBoletoDda, { LIMITE_DIAS_SAIDO } from './ConsolidacaoBoletoDda.js';
 import ConsolidacaoBoletoDdaCache from './ConsolidacaoBoletoDdaCache.js';
+import FornecedorBoletoDda from './FornecedorBoletoDda.js';
 import { REGRA_CANDIDATO_TEXTO } from './RegraSugestaoBoleto.js';
 import SugestaoBoletoCache from './SugestaoBoletoCache.js';
 import PaginacaoBoletoDda, {
@@ -82,6 +84,10 @@ export default class BoletoDdaService {
         private readonly consolidadoCache: ConsolidacaoBoletoDdaCache,
         @inject(PagamentoIngestaoRunRepository)
         private readonly runRepo: PagamentoIngestaoRunRepository,
+        // ADR-0081: fornecedor da conta do beneficiário (enriquecimento da lista + aprendizado).
+        @inject(FornecedorBoletoDda) private readonly fornecedores: FornecedorBoletoDda,
+        @inject(AprendizadoFornecedorBoletoService)
+        private readonly aprendizado: AprendizadoFornecedorBoletoService,
     ) {}
 
     /**
@@ -107,9 +113,13 @@ export default class BoletoDdaService {
             lotes,
             this.sugestoesCache.versao(),
         ].join('|');
-        const consolidados = await this.consolidadoCache.obter(chave, () =>
+        const consolidadosSemFornecedor = await this.consolidadoCache.obter(chave, () =>
             this.consolidarEscopo(input.escopo, hoje),
         );
+        // ADR-0081: o fornecedor vem da chave de conta das barras (igual em toda cópia do codbar),
+        // então roda sobre a linha final, depois do cache e do `comGrupo`; não entra na chave do
+        // cache porque o aprendizado muda o mapa sem mudar a consolidação.
+        const consolidados = await this.comFornecedorOuNenhum(consolidadosSemFornecedor);
         const { escopo: _escopo, ...filtro } = input;
         // I-DDA7: a conversa bem-sucedida mais recente com o fin124 (gravar arquivo também é uma).
         const marcas = [conferenciaEm, sincronizadoEm].filter((m): m is number => m != null);
@@ -190,6 +200,22 @@ export default class BoletoDdaService {
         }
     };
 
+    /** Falha ao ler o fornecedor tira SÓ a coluna "Fornecedor" (nunca derruba a lista). */
+    private comFornecedorOuNenhum = async (
+        linhas: BoletoDdaConsolidado[],
+    ): Promise<BoletoDdaConsolidado[]> => {
+        try {
+            return await this.fornecedores.enriquecer(linhas);
+        } catch (err: unknown) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'falha ao ler o fornecedor dos boletos; a aba segue sem a coluna',
+                data: { erro: err instanceof Error ? err.message : String(err) },
+            });
+            return linhas;
+        }
+    };
+
     /**
      * Grupo e decisão são chaveados por item (`ddcCod:ditCod`), e a linha colapsada é UMA cópia do
      * `codbar`. Tenta a representante e depois as outras; o grupo CONFIRMADO vence o sugerido. Se o
@@ -257,7 +283,9 @@ export default class BoletoDdaService {
             BOLETO_DDA_SYNC_LOCK_KEY,
             async () => {
                 try {
-                    return await this.executarSincronizacao(input);
+                    const resultado = await this.executarSincronizacao(input);
+                    await this.aprenderFornecedores();
+                    return resultado;
                 } finally {
                     // O pool mudou (ou mudou em parte, se falhou no meio): o cenário em cache das
                     // sugestões não vale mais, nem a lista consolidada da aba. Vale para o botão,
@@ -272,6 +300,27 @@ export default class BoletoDdaService {
                 );
             },
         );
+
+    /**
+     * Reaprende conta → fornecedor com o pool recém-copiado (ADR-0081). Acessório: falhar aqui
+     * mantém o mapeamento anterior e NUNCA derruba a sincronização.
+     */
+    private aprenderFornecedores = async (): Promise<void> => {
+        try {
+            const r = await this.aprendizado.aprender();
+            await this.logService.info({
+                type: LOG_TYPE.BUSINESS_INFO,
+                message: 'fornecedor dos boletos DDA reaprendido pela conta do beneficiário',
+                data: { ...r },
+            });
+        } catch (err: unknown) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'falha ao aprender o fornecedor dos boletos; mapeamento anterior mantido',
+                data: { erro: err instanceof Error ? err.message : String(err) },
+            });
+        }
+    };
 
     private executarSincronizacao = async (input: {
         triggeredBy: string;

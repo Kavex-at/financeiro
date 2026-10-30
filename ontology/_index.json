@@ -534,6 +534,21 @@
         "ADR-0077"
       ],
       "note": "ADR-0077 (implemented): 1 boleto DDA <-> N>=2 titulos do mesmo credor/filial, soma exata, confirmado por pessoa; N ItemLote ligados (grupoBoletoId); um item nativo de bordero fin010 na remessa. Code: GroupedBoleto. Tabelas sispag_grupo_boleto + sispag_grupo_boleto_titulo (migration 0090). Emenda 2026-10-29 (I21v, I21w): a sugestao de grupo aparece na carteira de titulos (selo GRUPO_SUGERIDO, ponteiro grupoSugerido) e o boleto dela sai do 1:1. Complemento 2026-10-29 (UI): confirmar/anular na gaveta do titulo e na linha do boleto da aba Boletos DDA; a aba Boletos agrupados deixa de existir."
+    },
+    "FornecedorContaBoleto": {
+      "file": "entities/fornecedor-conta-boleto.md",
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/migrations/0092_sispag_fornecedor_conta_boleto.sql",
+        "src/backend/domain/interface/sispag/FornecedorContaBoleto.ts",
+        "src/backend/domain/libs/boleto/ContaBeneficiariaBoleto.ts",
+        "src/backend/domain/repository/sispag/FornecedorContaBoletoRepository.ts",
+        "src/backend/domain/service/sispag/ConsolidacaoFornecedorConta.ts",
+        "src/backend/domain/service/sispag/AprendizadoFornecedorBoletoService.ts",
+        "src/backend/domain/service/sispag/FornecedorBoletoDda.ts",
+        "src/frontend/app/sispag/components/BoletosDdaTab.tsx"
+      ],
+      "note": "v0.53.0 (ADR-0081): fornecedor do boleto DDA aprendido da conta do beneficiario nas barras."
     }
   },
   "actions": {

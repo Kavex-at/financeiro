@@ -140,6 +140,7 @@ const textoDeBusca = (b: BoletoDdaConsolidado): string =>
         b.codbar,
         b.linhaDigitavel,
         b.arquivo,
+        b.fornecedor?.nome,
         b.valor.toFixed(2),
         valorBr(b.valor),
         ...titulosDe(b).flatMap((t) => [t.credor, `${t.docCod}/${t.titCod}`]),
