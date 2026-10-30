@@ -1,5 +1,18 @@
 # Columbia Financeiro — Changelog
 
+## v0.82.0 (2026-10-30) — SISPAG: Boletos DDA sem duplicata e "sem título" que é sem título mesmo
+
+- **Uma linha por boleto.** O mesmo boleto que chega em vários arquivos DDA vira uma linha só, com "em N
+  arquivos". Fica a cópia que o Conexos vinculou ou, sem vínculo, a do arquivo mais recente; grupo de boleto
+  feito sobre outra cópia continua aparecendo.
+- **Fora da janela.** Boleto que vence fora da janela da carteira (hoje − 15 a hoje + 45 dias) tem situação
+  e card próprios e não conta mais como "sem título": o título ainda não foi carregado.
+- **Título saiu da carteira.** Boleto cujo título (mesmo valor ±R$ 0,05, até 10 dias de diferença) já saiu da
+  carteira — em regra quitado, mas também cancelado ou renegociado — fica oculto por padrão, com contagem no
+  chip para mostrar. Nunca é rotulado como "pago".
+- **Aba mais robusta.** Situação nova que o navegador ainda não conheça aparece com o nome cru em vez de
+  derrubar a aba. Quem estava com a tela aberta antes desta versão precisa recarregar a página.
+
 ## v0.81.0 (2026-10-30) — SISPAG: aba Boletos DDA igual à de Títulos a pagar e DDA sempre em dia
 
 - **Aba Boletos DDA no padrão de Títulos a pagar.** Cards com quantidade e R$, segmentos por situação,
