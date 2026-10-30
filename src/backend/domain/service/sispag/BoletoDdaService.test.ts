@@ -57,11 +57,15 @@ const build = (lockLivre = true, agora: () => number = () => 0) => {
     };
     const runs = { findLatestSuccessFinishedAt: jest.fn().mockResolvedValue(null) };
     const consolidados = ConsolidacaoBoletoDdaCache.withClock(agora);
+    const tituloRepo = {
+        listAtivos: jest.fn().mockResolvedValue([]),
+        listInativosRecentes: jest.fn().mockResolvedValue([]),
+    };
     const service = new BoletoDdaService(
         dda as unknown as ConexosDdaClient,
         { getFilCodDefault: jest.fn().mockResolvedValue(1) } as unknown as ConexosBaseClient,
         repo as unknown as BoletoDdaRepository,
-        { listAtivos: jest.fn().mockResolvedValue([]) } as unknown as TituloAPagarRepository,
+        tituloRepo as unknown as TituloAPagarRepository,
         loteRepo as unknown as LotePagamentoRepository,
         new ConsolidacaoBoletoDda(new CodigoBarrasBoleto(), calendar, new RegraSugestaoBoleto()),
         new PaginacaoBoletoDda(),
@@ -74,7 +78,18 @@ const build = (lockLivre = true, agora: () => number = () => 0) => {
         consolidados,
         runs as unknown as PagamentoIngestaoRunRepository,
     );
-    return { service, dda, repo, log, cache, gruposDaTela, runs, consolidados, loteRepo };
+    return {
+        service,
+        dda,
+        repo,
+        log,
+        cache,
+        gruposDaTela,
+        runs,
+        consolidados,
+        loteRepo,
+        tituloRepo,
+    };
 };
 
 describe('BoletoDdaService — invalida o cache das sugestões (ADR-0068, PERF-1)', () => {
@@ -213,6 +228,8 @@ describe('BoletoDdaService', () => {
                 VINCULADO: 0,
                 CANDIDATO: 0,
                 AMBIGUO: 0,
+                FORA_JANELA: 0,
+                TITULO_SAIU_CARTEIRA: 0,
                 SEM_TITULO: 0,
                 emGrupo: 0,
             },
@@ -276,6 +293,84 @@ describe('BoletoDdaService', () => {
             expect(so.boletos.map((b) => b.ditCod)).toEqual([24398]);
         });
 
+        it('grupo formado numa cópia mais antiga do codbar continua na linha (e a linha passa a apontar para ela)', async () => {
+            const CODBAR = '34193158000004815331090113433700004286589000';
+            const { service, repo, gruposDaTela } = build();
+            repo.listBoletos.mockResolvedValue([
+                { ddcCod: 200, ditCod: 5, valor: 10, vencimento: '2026-10-29', codbar: CODBAR },
+                { ddcCod: 150, ditCod: 9, valor: 10, vencimento: '2026-10-29', codbar: CODBAR },
+            ]);
+            gruposDaTela.gruposPorBoleto.mockResolvedValue(
+                new Map([
+                    [
+                        '150:9',
+                        {
+                            estado: 'CONFIRMADO',
+                            id: 'g1',
+                            filCod: 1,
+                            nTitulos: 2,
+                            confirmavel: true,
+                        },
+                    ],
+                ]),
+            );
+            const r = await service.listar({ escopo: 'todos' });
+            expect(r.boletos).toHaveLength(1);
+            expect(r.boletos[0]).toMatchObject({
+                ddcCod: 150,
+                ditCod: 9,
+                arquivos: 2,
+                grupo: { estado: 'CONFIRMADO', id: 'g1' },
+            });
+            expect(r.contagem.emGrupo).toBe(1);
+        });
+
+        it('o grupo confirmado de uma cópia vence a sugestão da cópia mais nova', async () => {
+            const CODBAR = '34193158000004815331090113433700004286589000';
+            const { service, repo, gruposDaTela } = build();
+            repo.listBoletos.mockResolvedValue([
+                { ddcCod: 200, ditCod: 5, valor: 10, vencimento: '2026-10-29', codbar: CODBAR },
+                { ddcCod: 150, ditCod: 9, valor: 10, vencimento: '2026-10-29', codbar: CODBAR },
+            ]);
+            gruposDaTela.gruposPorBoleto.mockResolvedValue(
+                new Map([
+                    ['200:5', { estado: 'SUGERIDO', filCod: 1, nTitulos: 3, confirmavel: true }],
+                    [
+                        '150:9',
+                        {
+                            estado: 'CONFIRMADO',
+                            id: 'g1',
+                            filCod: 1,
+                            nTitulos: 2,
+                            confirmavel: true,
+                        },
+                    ],
+                ]),
+            );
+            const r = await service.listar({ escopo: 'todos' });
+            expect(r.boletos[0]).toMatchObject({ ddcCod: 150, grupo: { estado: 'CONFIRMADO' } });
+        });
+
+        it('a representante vira cópia quando a linha troca para a cópia que tem o grupo', async () => {
+            const CODBAR = '34193158000004815331090113433700004286589000';
+            const { service, repo, gruposDaTela } = build();
+            repo.listBoletos.mockResolvedValue([
+                { ddcCod: 200, ditCod: 5, valor: 10, vencimento: '2026-10-29', codbar: CODBAR },
+                { ddcCod: 170, ditCod: 7, valor: 10, vencimento: '2026-10-29', codbar: CODBAR },
+                { ddcCod: 150, ditCod: 9, valor: 10, vencimento: '2026-10-29', codbar: CODBAR },
+            ]);
+            gruposDaTela.gruposPorBoleto.mockResolvedValue(
+                new Map([
+                    ['150:9', { estado: 'SUGERIDO', filCod: 1, nTitulos: 2, confirmavel: true }],
+                ]),
+            );
+            const r = await service.listar({ escopo: 'todos' });
+            expect(r.boletos[0]).toMatchObject({ ddcCod: 150, ditCod: 9, arquivos: 3 });
+            expect(r.boletos[0]?.copias?.map((c) => `${c.ddcCod}:${c.ditCod}`).sort()).toEqual([
+                '170:7',
+                '200:5',
+            ]);
+        });
         it('falha ao ler os grupos não derruba a aba: lista sem grupo e avisa com o código do driver', async () => {
             const { service, repo, gruposDaTela, log } = build();
             repo.listBoletos.mockResolvedValue(boletos);
@@ -579,6 +674,27 @@ describe('BoletoDdaService', () => {
             expect((await service.listar({ escopo: 'todos' })).conferidoEm).toBe(5_000);
             repo.ultimaConferencia.mockResolvedValue(undefined);
             expect((await service.listar({ escopo: 'todos' })).conferidoEm).toBe(1_000);
+        });
+    });
+
+    describe('títulos que saíram da carteira', () => {
+        it('falha ao ler os inativos não derruba a aba: lista sem a situação e avisa', async () => {
+            const { service, repo, log, tituloRepo } = build();
+            repo.listBoletos.mockResolvedValue([
+                { ddcCod: 1, ditCod: 1, valor: 10, vencimento: '2026-09-23' },
+            ]);
+            tituloRepo.listInativosRecentes.mockRejectedValue(
+                Object.assign(new Error('timeout'), { code: '57014' }),
+            );
+            const r = await service.listar({ escopo: 'todos' });
+            expect(r.total).toBe(1);
+            expect(r.boletos[0]?.situacao).toBe('SEM_TITULO');
+            expect(log.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    message: expect.stringContaining('saíram da carteira'),
+                    data: expect.objectContaining({ codigoErro: '57014' }),
+                }),
+            );
         });
     });
 });

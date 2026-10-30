@@ -1672,7 +1672,13 @@ export async function formarLotes(): Promise<FormacaoLotesResult> {
 // Snapshot do pool DDA consolidado contra a carteira. Espelha
 // backend/domain/interface/sispag/BoletoDda.ts.
 
-export type BoletoDdaSituacao = 'VINCULADO' | 'CANDIDATO' | 'AMBIGUO' | 'SEM_TITULO'
+export type BoletoDdaSituacao =
+  | 'VINCULADO'
+  | 'CANDIDATO'
+  | 'AMBIGUO'
+  | 'FORA_JANELA'
+  | 'TITULO_SAIU_CARTEIRA'
+  | 'SEM_TITULO'
 export type BoletoDdaEscopo = 'a-vencer' | 'todos'
 
 export interface BoletoDdaTitulo {
@@ -1706,11 +1712,15 @@ export interface BoletoDda {
   codbar?: string
   linhaDigitavel?: string
   bancoEmissor?: string
+  /** Em quantos arquivos do fin124 o mesmo código de barras apareceu (1 = sem cópia). */
+  arquivos: number
   situacao: BoletoDdaSituacao
   vinculo?: BoletoDdaTitulo & { flpCod?: number }
   candidatos: BoletoDdaTitulo[]
   /** Valor igual, data fora do limite seguro: só informação, não conta para a situação. */
   informativos?: BoletoDdaTitulo[]
+  /** Só em TITULO_SAIU_CARTEIRA: título(s) inativo(s) de valor e data próximos. */
+  titulosSaidos?: BoletoDdaTitulo[]
   /** I21v: o boleto fecha a soma de um grupo (sugerido ou confirmado); ortogonal à situação. */
   grupo?: BoletoDdaGrupo
   /**

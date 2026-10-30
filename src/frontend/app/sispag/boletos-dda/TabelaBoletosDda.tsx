@@ -30,14 +30,21 @@ import {
   BOLETOS_DDA_POR_PAGINA,
   descreverFiltrosDda,
   haFiltroDda,
-  ROTULO_SITUACAO_DDA,
+  rotuloDaSituacao,
   rotuloFilial,
   totalDe,
 } from './filtrosBoletosDda'
-import { SITUACAO_BADGE } from './rotulosDda'
+import { badgeDaSituacao } from './rotulosDda'
 import type { TabelaBoletosDdaEstado } from './useTabelaBoletosDda'
 
-const SITUACOES: readonly BoletoDdaSituacao[] = ['VINCULADO', 'CANDIDATO', 'AMBIGUO', 'SEM_TITULO']
+const SITUACOES: readonly BoletoDdaSituacao[] = [
+  'VINCULADO',
+  'CANDIDATO',
+  'AMBIGUO',
+  'FORA_JANELA',
+  'SEM_TITULO',
+  'TITULO_SAIU_CARTEIRA',
+]
 const COLUNAS = 8
 
 function TituloLinha({ t, flpCod }: { t: BoletoDdaTitulo; flpCod?: number }) {
@@ -155,7 +162,7 @@ export function TabelaBoletosDda({
                   label="Situação"
                   opcoes={SITUACOES.map((s) => ({
                     valor: s,
-                    rotulo: ROTULO_SITUACAO_DDA[s],
+                    rotulo: rotuloDaSituacao(s),
                     ...(totalDe(dados, s).qtd !== undefined ? { total: totalDe(dados, s).qtd } : {}),
                   }))}
                   selecionadas={filtros.situacoes}
@@ -262,10 +269,10 @@ export function TabelaBoletosDda({
           </TableHeader>
           <TableBody>
             {dados.boletos.map((b) => {
-              const badge = SITUACAO_BADGE[b.situacao]
+              const badge = badgeDaSituacao(b.situacao)
               // Na linha vai no máximo UM título (o vínculo ou o candidato mais próximo); o
               // resto de um ambíguo abre no modal — senão a linha vira uma coluna de cartões.
-              const principal = b.vinculo ?? b.candidatos[0]
+              const principal = b.vinculo ?? b.candidatos[0] ?? b.titulosSaidos?.[0]
               const extras = b.vinculo ? 0 : b.candidatos.length - 1
               const chaveLinha = `${b.ddcCod}:${b.ditCod}`
               const aberto = abertos.has(chaveLinha)
@@ -306,6 +313,7 @@ export function TabelaBoletosDda({
                           {b.importadoEm
                             ? ` · ${new Date(b.importadoEm).toLocaleDateString('pt-BR')}`
                             : ''}
+                          {b.arquivos > 1 ? ` · em ${b.arquivos} arquivos` : ''}
                         </span>
                       </div>
                     </TableCell>

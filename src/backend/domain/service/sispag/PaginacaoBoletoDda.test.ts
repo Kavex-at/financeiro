@@ -16,6 +16,7 @@ const linha = (over: Partial<BoletoDdaConsolidado>): BoletoDdaConsolidado => ({
     ditCod: 1,
     valor: 100,
     vencido: false,
+    arquivos: 1,
     situacao: 'SEM_TITULO',
     candidatos: [],
     ...over,
@@ -56,6 +57,8 @@ describe('PaginacaoBoletoDda', () => {
             VINCULADO: 1,
             CANDIDATO: 1,
             AMBIGUO: 1,
+            FORA_JANELA: 0,
+            TITULO_SAIU_CARTEIRA: 0,
             SEM_TITULO: 1,
             emGrupo: 0,
         });
@@ -395,5 +398,57 @@ describe('PaginacaoBoletoDda', () => {
                 ]);
             });
         });
+    });
+});
+
+describe('PaginacaoBoletoDda — situações do pool limpo', () => {
+    const SAIU = linha({ ditCod: 10, situacao: 'TITULO_SAIU_CARTEIRA' });
+    const FORA = linha({ ditCod: 11, situacao: 'FORA_JANELA' });
+    const POOL = [ADP, LIVRE, FORA, SAIU];
+
+    it('"Todas" esconde TITULO_SAIU_CARTEIRA, mas a contagem dele aparece', () => {
+        const r = paginacao.paginar(POOL, { pagina: 1, tamanho: 20 });
+        expect(r.total).toBe(3);
+        expect(r.boletos.map((b) => b.ditCod)).toEqual([1, 4, 11]);
+        expect(r.contagem).toMatchObject({
+            todas: 3,
+            FORA_JANELA: 1,
+            TITULO_SAIU_CARTEIRA: 1,
+            SEM_TITULO: 1,
+        });
+    });
+
+    it('o filtro próprio devolve os que saíram da carteira', () => {
+        const r = paginacao.paginar(POOL, {
+            situacao: 'TITULO_SAIU_CARTEIRA',
+            pagina: 1,
+            tamanho: 20,
+        });
+        expect(r.boletos.map((b) => b.ditCod)).toEqual([10]);
+        expect(r.total).toBe(1);
+    });
+});
+
+describe('PaginacaoBoletoDda — totais do pool limpo', () => {
+    it('os que saíram da carteira têm total próprio e ficam fora de todas/urgentes', () => {
+        const r = paginacao.paginar(
+            [
+                linha({ ditCod: 1, valor: 10, situacao: 'FORA_JANELA' }),
+                linha({ ditCod: 2, valor: 20, situacao: 'TITULO_SAIU_CARTEIRA' }),
+            ],
+            { pagina: 1, tamanho: 20 },
+        );
+        expect(r.totais.todas).toMatchObject({ qtd: 1, valor: 10 });
+        expect(r.totais.FORA_JANELA).toMatchObject({ qtd: 1, valor: 10 });
+        expect(r.totais.TITULO_SAIU_CARTEIRA).toMatchObject({ qtd: 1, valor: 20 });
+    });
+
+    it('situacoes[] com TITULO_SAIU_CARTEIRA também a mostra', () => {
+        const r = paginacao.paginar([linha({ ditCod: 2, situacao: 'TITULO_SAIU_CARTEIRA' })], {
+            situacoes: ['TITULO_SAIU_CARTEIRA'],
+            pagina: 1,
+            tamanho: 20,
+        });
+        expect(r.total).toBe(1);
     });
 });

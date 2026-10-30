@@ -213,6 +213,30 @@ describeComBanco('TituloAPagarRepository.buscarPorChave — integração (ADR-00
         expect(await repo.buscarPorChaves([])).toEqual([]);
     });
 
+    it('listInativosRecentes: só inativos, e a data civil vale nas duas bordas (00:00Z e 15:00Z)', async () => {
+        const dia = (n: string, venc: string, over: Record<string, unknown> = {}) =>
+            inserir(
+                { fil: 9, doc: `INA-${n}`, tit: '1' },
+                { vencimento: venc, ativo: false, ...over },
+            );
+        await dia('de-00', '2026-10-05T00:00:00Z');
+        await dia('de-15', '2026-10-05T15:00:00Z');
+        await dia('ate-00', '2026-12-14T00:00:00Z');
+        await dia('ate-15', '2026-12-14T15:00:00Z');
+        await dia('antes', '2026-10-04T15:00:00Z');
+        await dia('depois', '2026-12-15T00:00:00Z');
+        await dia('pago', '2026-11-01T00:00:00Z', { pago: true });
+        await inserir({ fil: 9, doc: 'ATIVO-1', tit: '1' }, { vencimento: '2026-11-01T00:00:00Z' });
+        const r = await repo.listInativosRecentes({ de: '2026-10-05', ate: '2026-12-14' });
+        const docs = r
+            .filter((t) => t.filCod === 9)
+            .map((t) => t.docCod)
+            .sort();
+        expect(docs).toEqual(['INA-ate-00', 'INA-ate-15', 'INA-de-00', 'INA-de-15', 'INA-pago']);
+        expect(r.every((t) => t.ativo === false)).toBe(true);
+        expect(r.find((t) => t.docCod === 'INA-pago')?.pago).toBe(true);
+    });
+
     it('chave inexistente → null; a chave é (filial, documento, título)', async () => {
         expect(await repo.buscarPorChave({ filCod: 2, docCod: 'nada', titCod: '1' })).toBeNull();
         // mesma doc/tit em outra filial não vaza

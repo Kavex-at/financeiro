@@ -223,3 +223,195 @@ describe('ConsolidacaoBoletoDda', () => {
         expect(linha.candidatos[0]?.lote?.loteId).toBe('novo');
     });
 });
+
+describe('ConsolidacaoBoletoDda — pool limpo', () => {
+    const CODBAR = '34193158000004815331090113433700004286589000';
+
+    describe('cópias do mesmo boleto em vários arquivos', () => {
+        it('colapsa em UMA linha por codbar, com a contagem de arquivos', () => {
+            const linhas = consolidacao.consolidar({
+                boletos: [
+                    boleto({ ddcCod: 150, ditCod: 9, codbar: CODBAR, valor: 4815.33 }),
+                    boleto({ ddcCod: 152, ditCod: 3, codbar: CODBAR, valor: 4815.33 }),
+                    boleto({ ddcCod: 151, ditCod: 4, codbar: CODBAR, valor: 4815.33 }),
+                ],
+                titulos: [],
+                titulosEmLote: [],
+            });
+            expect(linhas).toHaveLength(1);
+            expect(linhas[0]).toMatchObject({ ddcCod: 152, ditCod: 3, arquivos: 3 });
+        });
+
+        it('com cópias do mesmo arquivo, desempata pelo maior ditCod', () => {
+            const [linha] = consolidacao.consolidar({
+                boletos: [
+                    boleto({ ddcCod: 152, ditCod: 3, codbar: CODBAR }),
+                    boleto({ ddcCod: 152, ditCod: 8, codbar: CODBAR }),
+                ],
+                titulos: [],
+                titulosEmLote: [],
+            });
+            expect(linha).toMatchObject({ ddcCod: 152, ditCod: 8, arquivos: 1 });
+        });
+
+        it('mantém a cópia que o Conexos vinculou, mesmo que não seja a mais recente', () => {
+            const [linha] = consolidacao.consolidar({
+                boletos: [
+                    boleto({
+                        ddcCod: 140,
+                        ditCod: 2,
+                        codbar: CODBAR,
+                        filCod: 1,
+                        docCod: '5046',
+                        titCod: '1',
+                    }),
+                    boleto({ ddcCod: 152, ditCod: 3, codbar: CODBAR }),
+                ],
+                titulos: [ADP],
+                titulosEmLote: [],
+            });
+            expect(linha).toMatchObject({
+                situacao: 'VINCULADO',
+                ddcCod: 140,
+                ditCod: 2,
+                arquivos: 2,
+            });
+        });
+
+        it('expõe as outras cópias (item e arquivo) para o grupo achar a chave certa', () => {
+            const [linha] = consolidacao.consolidar({
+                boletos: [
+                    boleto({ ddcCod: 150, ditCod: 9, codbar: CODBAR, arquivo: 'a.RET' }),
+                    boleto({ ddcCod: 152, ditCod: 3, codbar: CODBAR }),
+                ],
+                titulos: [],
+                titulosEmLote: [],
+            });
+            expect(linha?.copias).toEqual([{ ddcCod: 150, ditCod: 9, arquivo: 'a.RET' }]);
+        });
+
+        it('boleto sem codbar nunca é colapsado', () => {
+            const linhas = consolidacao.consolidar({
+                boletos: [boleto({ ditCod: 1 }), boleto({ ditCod: 2 })],
+                titulos: [],
+                titulosEmLote: [],
+            });
+            expect(linhas).toHaveLength(2);
+            expect(linhas.every((l) => l.arquivos === 1)).toBe(true);
+        });
+    });
+
+    describe('janela da carteira (hoje 2026-09-23 → 2026-09-08 a 2026-11-07)', () => {
+        const livre = (vencimento: string) => boleto({ valor: 777.77, vencimento });
+        const situacaoDe = (vencimento: string): string | undefined =>
+            consolidacao.consolidar({
+                boletos: [livre(vencimento)],
+                titulos: [],
+                titulosEmLote: [],
+            })[0]?.situacao;
+
+        it('livre sem candidato fora da janela → FORA_JANELA (os dois lados, bordas dentro)', () => {
+            expect(situacaoDe('2026-09-07')).toBe('FORA_JANELA');
+            expect(situacaoDe('2026-11-08')).toBe('FORA_JANELA');
+            expect(situacaoDe('2026-09-08')).toBe('SEM_TITULO');
+            expect(situacaoDe('2026-11-07')).toBe('SEM_TITULO');
+        });
+
+        it('boleto sem vencimento não é FORA_JANELA', () => {
+            const [linha] = consolidacao.consolidar({
+                boletos: [{ ddcCod: 1, ditCod: 1, valor: 5 }],
+                titulos: [],
+                titulosEmLote: [],
+            });
+            expect(linha?.situacao).toBe('SEM_TITULO');
+        });
+
+        it('VINCULADO mantém a situação mesmo fora da janela', () => {
+            const [linha] = consolidacao.consolidar({
+                boletos: [
+                    boleto({
+                        vencimento: '2027-03-01',
+                        filCod: 1,
+                        docCod: '5046',
+                        titCod: '1',
+                    }),
+                ],
+                titulos: [ADP],
+                titulosEmLote: [],
+            });
+            expect(linha?.situacao).toBe('VINCULADO');
+        });
+
+        it('CANDIDATO vence FORA_JANELA', () => {
+            const [linha] = consolidacao.consolidar({
+                boletos: [boleto({ valor: 4815.33, vencimento: '2026-09-07' })],
+                titulos: [titulo({ valor: 4815.33, vencimento: utc('2026-09-07') })],
+                titulosEmLote: [],
+            });
+            expect(linha?.situacao).toBe('CANDIDATO');
+        });
+    });
+
+    describe('título que saiu da carteira', () => {
+        const saido = (over: Partial<TituloAPagar>): TituloAPagar =>
+            titulo({ ativo: false, docCod: '900', credor: 'FORNECEDOR X', ...over });
+
+        it('sem candidato, mas com título inativo (|Δvalor| ≤ 0,05, |Δdias| ≤ 10) → TITULO_SAIU_CARTEIRA com o título', () => {
+            const [linha] = consolidacao.consolidar({
+                boletos: [boleto({ valor: 100.03, vencimento: '2026-09-30' })],
+                titulos: [],
+                titulosSaidos: [saido({ valor: 100, vencimento: utc('2026-09-22') })],
+                titulosEmLote: [],
+            });
+            expect(linha).toMatchObject({
+                situacao: 'TITULO_SAIU_CARTEIRA',
+                candidatos: [],
+                titulosSaidos: [
+                    {
+                        docCod: '900',
+                        credor: 'FORNECEDOR X',
+                        valor: 100,
+                        vencimento: '2026-09-22',
+                        diferencaDias: 8,
+                    },
+                ],
+            });
+        });
+
+        it('fora dos limites (valor ou dias) não casa', () => {
+            const situacao = (valor: number, venc: string): string | undefined =>
+                consolidacao.consolidar({
+                    boletos: [boleto({ valor: 100, vencimento: '2026-09-30' })],
+                    titulos: [],
+                    titulosSaidos: [saido({ valor, vencimento: utc(venc) })],
+                    titulosEmLote: [],
+                })[0]?.situacao;
+            expect(situacao(100.06, '2026-09-30')).toBe('SEM_TITULO');
+            expect(situacao(100.05, '2026-09-30')).toBe('TITULO_SAIU_CARTEIRA');
+            expect(situacao(100, '2026-09-19')).toBe('SEM_TITULO');
+            expect(situacao(100, '2026-09-20')).toBe('TITULO_SAIU_CARTEIRA');
+            expect(situacao(100, '2026-10-10')).toBe('TITULO_SAIU_CARTEIRA');
+            expect(situacao(100, '2026-10-11')).toBe('SEM_TITULO');
+        });
+
+        it('precedência: candidato > FORA_JANELA > saiu da carteira > sem título', () => {
+            const saidoPerto = saido({ valor: 100, vencimento: utc('2026-09-05') });
+            const fora = consolidacao.consolidar({
+                boletos: [boleto({ valor: 100, vencimento: '2026-09-05' })],
+                titulos: [],
+                titulosSaidos: [saidoPerto],
+                titulosEmLote: [],
+            });
+            expect(fora[0]?.situacao).toBe('FORA_JANELA');
+
+            const candidato = consolidacao.consolidar({
+                boletos: [boleto({ valor: 100, vencimento: '2026-09-25' })],
+                titulos: [titulo({ valor: 100, vencimento: utc('2026-09-25') })],
+                titulosSaidos: [saido({ valor: 100, vencimento: utc('2026-09-25') })],
+                titulosEmLote: [],
+            });
+            expect(candidato[0]?.situacao).toBe('CANDIDATO');
+            expect(candidato[0]?.titulosSaidos).toBeUndefined();
+        });
+    });
+});

@@ -6,7 +6,15 @@ import ConsolidacaoBoletoDdaCache, {
 } from './ConsolidacaoBoletoDdaCache.js';
 
 const lista = (ditCod: number): BoletoDdaConsolidado[] => [
-    { ddcCod: 1, ditCod, valor: 1, vencido: false, situacao: 'SEM_TITULO', candidatos: [] },
+    {
+        ddcCod: 1,
+        ditCod,
+        valor: 1,
+        vencido: false,
+        arquivos: 1,
+        situacao: 'SEM_TITULO',
+        candidatos: [],
+    },
 ];
 
 /** Promessa controlada pelo teste. */

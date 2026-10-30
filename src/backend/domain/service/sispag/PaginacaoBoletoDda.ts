@@ -65,6 +65,12 @@ export interface FiltroPaginaBoletoDda {
     tamanho: number;
 }
 
+/**
+ * Situação que a lista padrão ("Todas") esconde e `contagem.todas` não soma: o título já saiu da
+ * carteira, então não pede ação. Só aparece pelo filtro próprio.
+ */
+const ESCONDIDA_NA_LISTA_PADRAO: BoletoDdaSituacao = BOLETO_DDA_SITUACAO.TITULO_SAIU_CARTEIRA;
+
 /** Formato aceito para `vencimentoDe`/`vencimentoAte` (para o Zod da rota). */
 export const DATA_CIVIL_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -124,7 +130,9 @@ const valorBr = (valor: number): string => {
 };
 
 const titulosDe = (b: BoletoDdaConsolidado): BoletoDdaTitulo[] =>
-    [b.vinculo, ...b.candidatos].filter((t): t is BoletoDdaTitulo => t !== undefined);
+    [b.vinculo, ...b.candidatos, ...(b.titulosSaidos ?? [])].filter(
+        (t): t is BoletoDdaTitulo => t !== undefined,
+    );
 
 const textoDeBusca = (b: BoletoDdaConsolidado): string =>
     [
@@ -151,7 +159,9 @@ const ORDEM_SITUACAO: Record<BoletoDdaSituacao, number> = {
     VINCULADO: 0,
     CANDIDATO: 1,
     AMBIGUO: 2,
-    SEM_TITULO: 3,
+    FORA_JANELA: 3,
+    SEM_TITULO: 4,
+    TITULO_SAIU_CARTEIRA: 5,
 };
 
 /** Chave de ordenação de uma coluna; `undefined` vai para o fim nas duas direções. */
@@ -222,15 +232,20 @@ export default class PaginacaoBoletoDda {
         linhas: BoletoDdaConsolidado[],
         filtro: FiltroPaginaBoletoDda,
     ): PaginaBoletoDda => {
-        const facetas = this.facetas(linhas);
+        const situacoes = filtro.situacoes?.length ? new Set(filtro.situacoes) : undefined;
+        // Sem pedir situação, a lista padrão esconde os que saíram da carteira (e as facetas também).
+        const escondeSaidos = filtro.situacao === undefined && situacoes === undefined;
+        const facetas = this.facetas(
+            escondeSaidos ? linhas.filter((b) => b.situacao !== ESCONDIDA_NA_LISTA_PADRAO) : linhas,
+        );
         const criterios = this.criterios(filtro);
         const semSituacao = linhas.filter((b) => criterios.every((ok) => ok(b)));
         const { contagem, totais, amostraHoje } = this.totalizar(semSituacao, filtro.hoje);
 
-        const situacoes = filtro.situacoes?.length ? new Set(filtro.situacoes) : undefined;
         const filtradas = ordenar(
             semSituacao.filter(
                 (b) =>
+                    !(escondeSaidos && b.situacao === ESCONDIDA_NA_LISTA_PADRAO) &&
                     (filtro.situacao === undefined || b.situacao === filtro.situacao) &&
                     (situacoes === undefined || situacoes.has(b.situacao)) &&
                     (filtro.emGrupo !== true || b.grupo !== undefined),
@@ -308,10 +323,12 @@ export default class PaginacaoBoletoDda {
         hoje: string | undefined,
     ): Pick<PaginaBoletoDda, 'contagem' | 'totais' | 'amostraHoje'> => {
         const contagem: BoletoDdaContagem = {
-            todas: linhas.length,
+            todas: 0,
             VINCULADO: 0,
             CANDIDATO: 0,
             AMBIGUO: 0,
+            FORA_JANELA: 0,
+            TITULO_SAIU_CARTEIRA: 0,
             SEM_TITULO: 0,
             emGrupo: 0,
         };
@@ -320,6 +337,8 @@ export default class PaginacaoBoletoDda {
             VINCULADO: vazio(),
             CANDIDATO: vazio(),
             AMBIGUO: vazio(),
+            FORA_JANELA: vazio(),
+            TITULO_SAIU_CARTEIRA: vazio(),
             SEM_TITULO: vazio(),
             emGrupo: vazio(),
             grupoSugerido: vazio(),
@@ -332,14 +351,19 @@ export default class PaginacaoBoletoDda {
         const amostraHoje: BoletoDdaConsolidado[] = [];
         for (const b of linhas) {
             contagem[b.situacao] += 1;
-            somar(totais.todas, b.valor);
             somar(totais[b.situacao], b.valor);
+            // Fora da lista padrão: o título já saiu da carteira, nada a conferir nem a pagar.
+            if (b.situacao === ESCONDIDA_NA_LISTA_PADRAO) continue;
+            contagem.todas += 1;
+            somar(totais.todas, b.valor);
             if (b.grupo) {
                 contagem.emGrupo += 1;
                 somar(totais.emGrupo, b.valor);
                 const sub = b.grupo.estado === 'CONFIRMADO' ? 'grupoConfirmado' : 'grupoSugerido';
                 somar(totais[sub], b.valor);
             }
+            // Urgência é "conferir ou achar título": fora da janela não tem título a achar.
+            if (b.situacao === BOLETO_DDA_SITUACAO.FORA_JANELA) continue;
             const faixa = urgenciaDe(b, hoje);
             if (faixa === undefined) continue;
             somar(totais.urgentes, b.valor);

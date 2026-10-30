@@ -247,6 +247,29 @@ export default class TituloAPagarRepository {
     };
 
     /**
+     * Títulos INATIVOS (`ativo = FALSE`: saíram do fin064) com vencimento no intervalo civil
+     * `[de, ate]` (`YYYY-MM-DD`, inclusivo). Só leitura; serve ao `TITULO_SAIU_CARTEIRA` da aba
+     * "Boletos DDA". O vencimento do ERP é dia civil gravado como 00:00Z/15:00Z: compara-se em UTC.
+     */
+    public listInativosRecentes = async (intervalo: {
+        de: string;
+        ate: string;
+    }): Promise<TituloAPagar[]> => {
+        const rows = (await this.databaseClient.selectMany(
+            `SELECT fil_cod, doc_cod, tit_cod, credor, pes_cod, valor, moeda, vencimento,
+                    aprovado, pago, banco, num_remessa, tpd_cod, tpd_des_nome, pronto_para_remessa,
+                    tem_boleto, forma_pagamento_conexos, doc_esp_numero
+             FROM titulo_a_pagar
+             WHERE ativo = FALSE
+               AND vencimento IS NOT NULL
+               AND (vencimento AT TIME ZONE 'UTC')::date BETWEEN $de::date AND $ate::date
+             ORDER BY vencimento ASC`,
+            intervalo,
+        )) as TituloRow[];
+        return rows.map((r) => ({ ...this.map(r), ativo: false }));
+    };
+
+    /**
      * Número do documento de TODOS os títulos com credor e número — ativos ou não, pagos ou não
      * (SEM filtro `ativo`). Serve à guarda de duplicata da âncora de número (I15s): o mesmo número
      * em outro documento do credor, mesmo que já fora da carteira, torna o número ambíguo.

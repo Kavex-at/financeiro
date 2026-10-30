@@ -1,9 +1,9 @@
 'use client'
 
 import type { BoletoDdaSituacao } from '@/lib/sispag'
-import { SITUACAO_BADGE } from './rotulosDda'
+import { badgeDaSituacao } from './rotulosDda'
 
-const ORDEM: readonly BoletoDdaSituacao[] = ['VINCULADO', 'CANDIDATO', 'AMBIGUO', 'SEM_TITULO']
+const ORDEM: readonly BoletoDdaSituacao[] = ['VINCULADO', 'CANDIDATO', 'AMBIGUO', 'FORA_JANELA', 'SEM_TITULO', 'TITULO_SAIU_CARTEIRA']
 
 /** Como a situação do boleto é calculada (o "?" da barra), no padrão de `RegrasSituacao`. */
 export function RegrasBoletoDda({ id, regraCandidato }: { id: string; regraCandidato?: string }) {
@@ -16,8 +16,8 @@ export function RegrasBoletoDda({ id, regraCandidato }: { id: string; regraCandi
       <ul className="space-y-1">
         {ORDEM.map((s) => (
           <li key={s}>
-            <span className="font-medium">{SITUACAO_BADGE[s].label}:</span>{' '}
-            <span className="text-muted-foreground">{SITUACAO_BADGE[s].title}</span>
+            <span className="font-medium">{badgeDaSituacao(s).label}:</span>{' '}
+            <span className="text-muted-foreground">{badgeDaSituacao(s).title}</span>
           </li>
         ))}
       </ul>

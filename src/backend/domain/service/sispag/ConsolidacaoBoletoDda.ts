@@ -7,6 +7,10 @@ import {
     type BoletoDdaSituacao,
     type BoletoDdaTitulo,
 } from '../../interface/sispag/BoletoDda.js';
+import {
+    JANELA_CARTEIRA_DIAS_ADIANTE,
+    JANELA_CARTEIRA_DIAS_ATRAS,
+} from '../../libs/calendar/JanelaCarteira.js';
 import type { TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 import { RESULTADO_SUGESTAO } from '../../interface/sispag/SugestaoBoleto.js';
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
@@ -22,12 +26,21 @@ const MAX_INFORMATIVOS = 5;
 const chave = (t: { filCod: number; docCod: string; titCod: string }): string =>
     `${t.filCod}:${t.docCod}:${t.titCod}`;
 
+/** Título que saiu da carteira "casa" com o boleto dentro de R$ 0,05 e de 10 dias (em qualquer sentido). */
+const LIMITE_VALOR_SAIDO_CENTAVOS = 5;
+export const LIMITE_DIAS_SAIDO = 10;
+
 const centavos = (valor: number): number => Math.round(valor * 100);
 
 export interface ConsolidacaoEntrada {
     boletos: BoletoDda[];
     /** Carteira ativa (`titulo_a_pagar`). Pagos são ignorados como candidatos. */
     titulos: TituloAPagar[];
+    /**
+     * Títulos INATIVOS recentes (`ativo = false`): saíram do fin064 — em regra quitados, mas
+     * também cancelados, previsão ou renegociados. Só alimentam `TITULO_SAIU_CARTEIRA`.
+     */
+    titulosSaidos?: TituloAPagar[];
     /**
      * Títulos em lotes não cancelados, lote mais recente primeiro. `dataDebito` (data civil) é a do
      * lote quando conhecida (I8); sem ela, a data de débito é o vencimento do título (Q-C).
@@ -69,6 +82,12 @@ export default class ConsolidacaoBoletoDda {
 
     public consolidar = (entrada: ConsolidacaoEntrada): BoletoDdaConsolidado[] => {
         const hoje = this.calendar.todayBrt();
+        const janela = {
+            de: this.calendar.addDays(hoje, -JANELA_CARTEIRA_DIAS_ATRAS),
+            ate: this.calendar.addDays(hoje, JANELA_CARTEIRA_DIAS_ADIANTE),
+        };
+        const { boletos, copiasDe } = this.colapsarCopias(entrada.boletos);
+        const saidos = this.indexarSaidos(entrada.titulosSaidos ?? []);
         const porChave = new Map(entrada.titulos.map((t) => [chave(t), t]));
         const loteDe = new Map<string, BoletoDdaLoteRef>();
         const debitoDe = new Map<string, string>();
@@ -82,7 +101,7 @@ export default class ConsolidacaoBoletoDda {
 
         // Título que o Conexos já ligou a um boleto não é candidato de nenhum outro.
         const vinculados = new Set(
-            entrada.boletos
+            boletos
                 .filter((b) => b.filCod != null && b.docCod && b.titCod)
                 .map((b) =>
                     chave({
@@ -94,8 +113,8 @@ export default class ConsolidacaoBoletoDda {
         );
         const abertos = this.indexarAbertos(entrada.titulos, vinculados);
 
-        return entrada.boletos.map((b): BoletoDdaConsolidado => {
-            const base = this.linhaBase(b, hoje);
+        return boletos.map((b): BoletoDdaConsolidado => {
+            const base = this.linhaBase(b, hoje, copiasDe.get(b) ?? []);
             if (b.filCod != null && b.docCod && b.titCod) {
                 const ref = { filCod: b.filCod, docCod: b.docCod, titCod: b.titCod };
                 return {
@@ -108,14 +127,122 @@ export default class ConsolidacaoBoletoDda {
                     candidatos: [],
                 };
             }
-            const { candidatos, informativos } = this.avaliar(b, abertos, loteDe, debitoDe);
             return {
                 ...base,
-                situacao: this.situacaoLivre(candidatos.length),
-                candidatos,
-                ...(informativos.length > 0 ? { informativos } : {}),
+                ...this.situacaoDoLivre(b, { abertos, saidos, janela, loteDe, debitoDe }),
             };
         });
+    };
+
+    /** Situação e evidências de um boleto livre (sem vínculo do Conexos). */
+    private situacaoDoLivre = (
+        b: BoletoDda,
+        ctx: {
+            abertos: TituloAberto[];
+            saidos: TituloAberto[];
+            janela: { de: string; ate: string };
+            loteDe: Map<string, BoletoDdaLoteRef>;
+            debitoDe: Map<string, string>;
+        },
+    ): Pick<BoletoDdaConsolidado, 'situacao' | 'candidatos' | 'informativos' | 'titulosSaidos'> => {
+        const { candidatos, informativos } = this.avaliar(b, ctx.abertos, ctx.loteDe, ctx.debitoDe);
+        const foraJanela =
+            b.vencimento != null && (b.vencimento < ctx.janela.de || b.vencimento > ctx.janela.ate);
+        const titulosSaidos =
+            candidatos.length === 0 && !foraJanela ? this.saiuDaCarteira(b, ctx.saidos) : [];
+        return {
+            situacao: this.situacaoLivre(candidatos.length, foraJanela, titulosSaidos.length),
+            candidatos,
+            ...(informativos.length > 0 ? { informativos } : {}),
+            ...(titulosSaidos.length > 0 ? { titulosSaidos } : {}),
+        };
+    };
+
+    /**
+     * Uma linha por `codbar`: o mesmo boleto aparece em vários arquivos do fin124. Fica a cópia que
+     * o Conexos vinculou; sem vínculo, a do arquivo mais recente (maior `ddcCod`, depois `ditCod`).
+     * Sem `codbar` nunca colapsa. Preserva a ordem de entrada pela posição do representante.
+     */
+    private colapsarCopias = (
+        entrada: BoletoDda[],
+    ): { boletos: BoletoDda[]; copiasDe: Map<BoletoDda, BoletoDda[]> } => {
+        const vinculado = (b: BoletoDda): boolean => b.filCod != null && !!b.docCod && !!b.titCod;
+        const melhor = (a: BoletoDda, b: BoletoDda): BoletoDda => {
+            if (vinculado(a) !== vinculado(b)) return vinculado(a) ? a : b;
+            return (a.ddcCod - b.ddcCod || a.ditCod - b.ditCod) > 0 ? a : b;
+        };
+        const grupos = new Map<string, BoletoDda[]>();
+        const unicos: Array<BoletoDda | string> = [];
+        for (const b of entrada) {
+            if (!b.codbar) {
+                unicos.push(b);
+                continue;
+            }
+            const g = grupos.get(b.codbar);
+            if (g) g.push(b);
+            else {
+                grupos.set(b.codbar, [b]);
+                unicos.push(b.codbar);
+            }
+        }
+        const copiasDe = new Map<BoletoDda, BoletoDda[]>();
+        const boletos = unicos.map((u) => {
+            if (typeof u !== 'string') return u;
+            const todas = grupos.get(u) ?? [];
+            const rep = todas.reduce(melhor);
+            copiasDe.set(
+                rep,
+                todas.filter((c) => c !== rep),
+            );
+            return rep;
+        });
+        return { boletos, copiasDe };
+    };
+
+    /** Inativos ordenados por centavos — a mesma busca por faixa dos abertos. */
+    private indexarSaidos = (titulos: TituloAPagar[]): TituloAberto[] =>
+        titulos
+            .filter((t) => t.vencimento != null)
+            .map((t) => ({
+                titulo: t,
+                centavos: centavos(t.valor),
+                vencimento: this.calendar.fromErpEpoch(Number(t.vencimento)),
+            }))
+            .sort((x, y) => x.centavos - y.centavos);
+
+    private saiuDaCarteira = (b: BoletoDda, saidos: TituloAberto[]): BoletoDdaTitulo[] => {
+        if (!b.vencimento) return [];
+        const vencimento = b.vencimento;
+        const valor = centavos(b.valor);
+        const achados: TituloAberto[] = [];
+        for (
+            let i = this.primeiroNaFaixa(saidos, valor - LIMITE_VALOR_SAIDO_CENTAVOS);
+            i < saidos.length;
+            i += 1
+        ) {
+            const s = saidos[i];
+            if (!s || s.centavos > valor + LIMITE_VALOR_SAIDO_CENTAVOS) break;
+            if (Math.abs(this.diasEntre(s.vencimento, vencimento)) <= LIMITE_DIAS_SAIDO) {
+                achados.push(s);
+            }
+        }
+        return achados
+            .map((s) => ({
+                filCod: s.titulo.filCod,
+                docCod: s.titulo.docCod,
+                titCod: s.titulo.titCod,
+                ...(s.titulo.credor ? { credor: s.titulo.credor } : {}),
+                valor: s.titulo.valor,
+                vencimento: s.vencimento,
+                diferencaDias: this.diasEntre(s.vencimento, vencimento),
+                deltaValor: (valor - s.centavos) / 100,
+            }))
+            .sort(
+                (x, y) =>
+                    Math.abs(x.diferencaDias) - Math.abs(y.diferencaDias) ||
+                    x.docCod.localeCompare(y.docCod),
+            )
+            .slice(0, MAX_INFORMATIVOS);
     };
 
     /** Abertos ordenados por valor em centavos — a busca por faixa evita O(boletos × títulos). */
@@ -208,7 +335,22 @@ export default class ConsolidacaoBoletoDda {
     private linhaBase = (
         b: BoletoDda,
         hoje: string,
-    ): Omit<BoletoDdaConsolidado, 'situacao' | 'candidatos' | 'vinculo' | 'informativos'> => ({
+        outras: BoletoDda[],
+    ): Omit<
+        BoletoDdaConsolidado,
+        'situacao' | 'candidatos' | 'vinculo' | 'informativos' | 'titulosSaidos'
+    > => ({
+        arquivos: new Set([b.ddcCod, ...outras.map((c) => c.ddcCod)]).size,
+        ...(outras.length > 0
+            ? {
+                  copias: outras.map((c) => ({
+                      ddcCod: c.ddcCod,
+                      ditCod: c.ditCod,
+                      ...(c.arquivo ? { arquivo: c.arquivo } : {}),
+                      ...(c.importadoEm != null ? { importadoEm: c.importadoEm } : {}),
+                  })),
+              }
+            : {}),
         ddcCod: b.ddcCod,
         ditCod: b.ditCod,
         valor: b.valor,
@@ -221,9 +363,19 @@ export default class ConsolidacaoBoletoDda {
         ...this.derivadosDoCodigo(b.codbar),
     });
 
-    private situacaoLivre = (quantos: number): BoletoDdaSituacao => {
-        if (quantos === 0) return BOLETO_DDA_SITUACAO.SEM_TITULO;
-        return quantos === 1 ? BOLETO_DDA_SITUACAO.CANDIDATO : BOLETO_DDA_SITUACAO.AMBIGUO;
+    /** Precedência: CANDIDATO/AMBIGUO > FORA_JANELA > TITULO_SAIU_CARTEIRA > SEM_TITULO. */
+    private situacaoLivre = (
+        quantos: number,
+        foraJanela: boolean,
+        saidos: number,
+    ): BoletoDdaSituacao => {
+        if (quantos > 0) {
+            return quantos === 1 ? BOLETO_DDA_SITUACAO.CANDIDATO : BOLETO_DDA_SITUACAO.AMBIGUO;
+        }
+        if (foraJanela) return BOLETO_DDA_SITUACAO.FORA_JANELA;
+        return saidos > 0
+            ? BOLETO_DDA_SITUACAO.TITULO_SAIU_CARTEIRA
+            : BOLETO_DDA_SITUACAO.SEM_TITULO;
     };
 
     private titulo = (

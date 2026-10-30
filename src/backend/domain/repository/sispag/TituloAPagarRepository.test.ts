@@ -172,6 +172,44 @@ describe('TituloAPagarRepository', () => {
         expect(sql).toContain('doc_esp_numero');
     });
 
+    it('listInativosRecentes lê só ativo = FALSE, por data civil UTC, com SQL parametrizado', async () => {
+        const { client } = buildDb();
+        (client.selectMany as jest.Mock).mockResolvedValue([
+            {
+                fil_cod: 2,
+                doc_cod: '900',
+                tit_cod: '1',
+                credor: 'ACME',
+                pes_cod: '9',
+                valor: '100.03',
+                moeda: 'BRL',
+                vencimento: new Date('2026-10-20T15:00:00Z'),
+                aprovado: true,
+                pago: true,
+                banco: null,
+                num_remessa: null,
+                tpd_cod: null,
+                tpd_des_nome: null,
+                pronto_para_remessa: null,
+                tem_boleto: false,
+                forma_pagamento_conexos: null,
+                doc_esp_numero: null,
+            },
+        ]);
+        const r = await new TituloAPagarRepository(client).listInativosRecentes({
+            de: '2026-10-05',
+            ate: '2026-12-14',
+        });
+        expect(r[0]).toMatchObject({ docCod: '900', valor: 100.03, pago: true, ativo: false });
+        const [sql, params] = (client.selectMany as jest.Mock).mock.calls[0] as [string, unknown];
+        expect(sql).toContain('ativo = FALSE');
+        expect(sql).toContain("AT TIME ZONE 'UTC'");
+        expect(sql).toContain('$de::date');
+        expect(sql).toContain('$ate::date');
+        expect(sql).not.toMatch(/2026-/);
+        expect(params).toEqual({ de: '2026-10-05', ate: '2026-12-14' });
+    });
+
     it('listNumerosDocumento lê SEM filtro ativo, só com SQL fixo, e mapeia as linhas (I15s)', async () => {
         const { client } = buildDb();
         (client.selectMany as jest.Mock).mockResolvedValue([

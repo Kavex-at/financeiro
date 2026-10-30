@@ -47,6 +47,7 @@ const ADP: BoletoDda = {
   valor: 4815.33,
   vencimento: '2026-09-25',
   vencido: false,
+  arquivos: 1,
   bancoEmissor: '341',
   linhaDigitavel: '34191090110134337000242865890009315800000481533',
   situacao: 'CANDIDATO',
@@ -76,6 +77,8 @@ const pagina = (
     VINCULADO: 0,
     CANDIDATO: 0,
     AMBIGUO: 0,
+    FORA_JANELA: 0,
+    TITULO_SAIU_CARTEIRA: 0,
     SEM_TITULO: 0,
     emGrupo: 0,
   }
@@ -84,6 +87,8 @@ const pagina = (
     VINCULADO: { ...zero },
     CANDIDATO: { ...zero },
     AMBIGUO: { ...zero },
+    FORA_JANELA: { ...zero },
+    TITULO_SAIU_CARTEIRA: { ...zero },
     SEM_TITULO: { ...zero },
     emGrupo: { ...zero },
     grupoSugerido: { ...zero },
@@ -152,6 +157,40 @@ describe('BoletosDdaTab', () => {
     const regras = screen.getByRole('region', { name: 'Como a situação do boleto é calculada' })
     expect(regras).toHaveTextContent(/diferença de até R\$ 0,05 no mesmo dia/)
     expect(screen.queryByText(/±/)).not.toBeInTheDocument()
+  })
+
+  it('mostra "em N arquivos" quando o boleto apareceu em mais de um arquivo do fin124', async () => {
+    mockFetch.mockResolvedValue(pagina([{ ...ADP, arquivos: 3 }]))
+    render(<BoletosDdaTab />)
+    expect(await screen.findByText(/em 3 arquivos/)).toBeInTheDocument()
+  })
+
+  it('"Saiu da carteira" é segmento próprio, mostra o título que saiu e vai ao servidor', async () => {
+    const saiu: BoletoDda = {
+      ...ADP,
+      ditCod: 99,
+      situacao: 'TITULO_SAIU_CARTEIRA',
+      candidatos: [],
+      titulosSaidos: [{ filCod: 1, docCod: '900', titCod: '1', credor: 'FORNECEDOR SAIDO LTDA' }],
+    }
+    mockFetch.mockResolvedValue(pagina([saiu]))
+    render(<BoletosDdaTab />)
+    expect(await screen.findByText('FORNECEDOR SAIDO LTDA')).toBeInTheDocument()
+
+    const segmentos = screen.getByRole('group', { name: 'Situação do boleto' })
+    fireEvent.click(within(segmentos).getByRole('button', { name: /Saiu da carteira/ }))
+    await waitFor(() =>
+      expect(ultimoFiltro()).toEqual({ ...PADRAO, situacoes: ['TITULO_SAIU_CARTEIRA'] }),
+    )
+  })
+
+  it('"Fora da janela" tem card e segmento próprios', async () => {
+    const fora: BoletoDda = { ...ADP, ditCod: 98, situacao: 'FORA_JANELA', candidatos: [] }
+    mockFetch.mockResolvedValue(pagina([fora]))
+    render(<BoletosDdaTab />)
+    await screen.findByText('001532761')
+    fireEvent.click(await screen.findByRole('button', { name: 'Ver fora da janela' }))
+    await waitFor(() => expect(ultimoFiltro()).toEqual({ ...PADRAO, situacoes: ['FORA_JANELA'] }))
   })
 
   it('segmento "Sem título" vai ao servidor como situacoes e volta para a página 1', async () => {
@@ -247,6 +286,7 @@ describe('BoletosDdaTab', () => {
       valor: 1412,
       vencimento: '2026-09-24',
       vencido: false,
+      arquivos: 1,
       situacao: 'AMBIGUO',
       candidatos: [
         pedroni('34685', '2026-09-24', 0),

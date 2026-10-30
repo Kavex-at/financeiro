@@ -7,6 +7,10 @@ import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type { SinalPendente } from '../../interface/sispag/Fin015Write.js';
+import {
+    JANELA_CARTEIRA_DIAS_ADIANTE,
+    JANELA_CARTEIRA_DIAS_ATRAS,
+} from '../../libs/calendar/JanelaCarteira.js';
 import { PagoPorConexosRotulo } from '../../interface/sispag/PagoPorConexos.js';
 import {
     DDA_NA_INGESTAO,
@@ -361,8 +365,8 @@ export default class IngestaoPagamentosService {
                 .filter((n): n is number => typeof n === 'number');
 
             const now = Date.now();
-            const minVencimento = now - 15 * DAY_MS;
-            const maxVencimento = now + 45 * DAY_MS;
+            const minVencimento = now - JANELA_CARTEIRA_DIAS_ATRAS * DAY_MS;
+            const maxVencimento = now + JANELA_CARTEIRA_DIAS_ADIANTE * DAY_MS;
 
             // Por filial: títulos (fin064) + conjunto de docs a EXCLUIR (exterior/câmbio,
             // com298 ufEspSigla=EX). Internacional está FORA do escopo SISPAG (é câmbio manual

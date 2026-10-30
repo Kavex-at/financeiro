@@ -6,7 +6,7 @@ import type { BoletoDdaSituacao, BoletosDdaResposta } from '@/lib/sispag'
 import { ChipFiltro } from '../components/filtros/ChipFiltro'
 import { SegmentosComTotal } from '../components/filtros/SegmentosComTotal'
 import {
-  ROTULO_SITUACAO_DDA,
+  rotuloDaSituacao,
   type SegmentoDda,
   SITUACOES_PARA_CONFERIR,
   somaTotais,
@@ -18,6 +18,9 @@ const SEGMENTOS: ReadonlyArray<{ valor: SegmentoDda; rotulo: string; ponto: stri
   { valor: 'casados', rotulo: 'Casados', ponto: 'bg-success' },
   { valor: 'conferir', rotulo: 'Para conferir', ponto: 'bg-danger' },
   { valor: 'sem-titulo', rotulo: 'Sem título', ponto: 'bg-muted-foreground' },
+  { valor: 'fora-janela', rotulo: 'Fora da janela', ponto: 'bg-muted-foreground' },
+  // Escondido em "Todos": só aparece aqui, com a quantidade.
+  { valor: 'saiu-carteira', rotulo: 'Saiu da carteira', ponto: 'bg-muted-foreground' },
 ]
 
 /**
@@ -59,6 +62,10 @@ export function FiltroSituacaoDdaBarra({
         return somaTotais(totalDe(dados, 'CANDIDATO'), totalDe(dados, 'AMBIGUO'))
       case 'sem-titulo':
         return totalDe(dados, 'SEM_TITULO')
+      case 'fora-janela':
+        return totalDe(dados, 'FORA_JANELA')
+      case 'saiu-carteira':
+        return totalDe(dados, 'TITULO_SAIU_CARTEIRA')
     }
   }
   const marcadas = situacoes.length === 1 ? situacoes : []
@@ -103,7 +110,7 @@ export function FiltroSituacaoDdaBarra({
             <span className="text-xs text-muted-foreground">Por situação:</span>
             {SITUACOES_PARA_CONFERIR.map((s) => (
               <ChipFiltro key={s} marcado={marcadas.includes(s)} onClick={() => onAlternarConferir(s)}>
-                {ROTULO_SITUACAO_DDA[s]}
+                {rotuloDaSituacao(s)}
                 <b className="tabular-nums">{totalDe(dados, s).qtd ?? '—'}</b>
               </ChipFiltro>
             ))}
