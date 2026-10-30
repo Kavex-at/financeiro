@@ -11,6 +11,7 @@ import {
     SINAL_SUGESTAO,
 } from '../../interface/sispag/SugestaoBoleto.js';
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
+import { MODO_AJUSTE, type ModoAjuste } from '../../libs/boleto/ModoAjusteCentavos.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import AncoraOrdemDps from './AncoraOrdemDps.js';
 import MotorSugestaoBoleto, { type EntradaMotorSugestao } from './MotorSugestaoBoleto.js';
@@ -99,13 +100,14 @@ const ORIGEM = { filCod: 2, docCod: '25037', titCod: '1', pesCod: '387' };
 
 const listar = (
     e: EntradaMotorSugestao,
-    over: { emLoteFinalizado?: Set<string>; origem?: typeof ORIGEM } = {},
+    over: { emLoteFinalizado?: Set<string>; origem?: typeof ORIGEM; modoAjuste?: ModoAjuste } = {},
 ): IrmaoConjunto[] =>
     regraConjunto.irmaos({
         origem: over.origem ?? ORIGEM,
         desfechos: motor.desfechos(e),
         emLoteFinalizado: over.emLoteFinalizado ?? new Set(),
         pool: e.boletos,
+        modoAjuste: over.modoAjuste ?? MODO_AJUSTE.ON,
     });
 
 const docs = (l: IrmaoConjunto[]): string[] => l.map((x) => x.docCod);
@@ -212,6 +214,15 @@ describe('RegraIrmaosConjunto — avisos (I15t(5))', () => {
         expect(l[0]?.deltaValor).toBeCloseTo(0.01);
         expect(l[0]?.deltaDias).toBe(0);
         expect(l[0]?.ajusteAutomatico).toBe(true);
+        expect(l[0]?.avisos).not.toContain(AVISO_CONJUNTO.FAIXA_AJUSTE_MANUAL);
+    });
+
+    it('centavos no mesmo dia em shadow: sem ajuste automático (nada é escrito no Conexos)', () => {
+        const l = listar(entrada({ titulos: [titulo('25037')], boletos: [boleto('25037')] }), {
+            modoAjuste: MODO_AJUSTE.SHADOW,
+        });
+        expect(l[0]?.deltaDias).toBe(0);
+        expect(l[0]?.ajusteAutomatico).toBe(false);
         expect(l[0]?.avisos).not.toContain(AVISO_CONJUNTO.FAIXA_AJUSTE_MANUAL);
     });
 
