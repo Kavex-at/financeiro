@@ -1,5 +1,16 @@
 # Columbia Financeiro — Changelog
 
+## v0.80.0 (2026-10-30) — SISPAG: confirmar boleto que renegocia o título, direto na gaveta
+
+- **A tela avisa antes de confirmar.** Quando confirmar o boleto fará o sistema renegociar o título no
+  Conexos (diferença de 1 a 5 centavos, mesmo vencimento, ajuste ligado), a gaveta e o painel de sugestão
+  dizem isso antes do clique. Em simulação nada é prometido, porque nada é gravado.
+- **A gaveta acompanha o ajuste.** Depois de confirmar, a gaveta mostra "Ajustando…" e, ao terminar,
+  passa sozinha para o título novo (ex.: 41027/1 → 41027/2) com o valor líquido. Se o ajuste parar, a
+  gaveta mostra o motivo.
+- **Também na confirmação em conjunto.** Se o título da gaveta for renegociado ao confirmar os irmãos
+  juntos, a gaveta também segue para o título novo.
+
 ## v0.79.0 (2026-10-29) — SISPAG: o boleto que paga vários títulos aparece na gaveta e na aba Boletos DDA
 
 - **O boleto do grupo deixa de ser oferecido a um título só.** Quando um único boleto fecha a soma de
