@@ -46,7 +46,12 @@ const VINCULADO = linha({
     situacao: 'VINCULADO',
     vinculo: titulo({ filCod: 4, docCod: '9823' }),
 });
-const LIVRE = linha({ ditCod: 4, numero: '7386000', valor: 4838.32 });
+const LIVRE = linha({
+    ditCod: 4,
+    numero: '7386000',
+    valor: 4838.32,
+    fornecedor: { pesCod: '77', nome: 'ACME FORNECIMENTOS LTDA', origem: 'INFERIDO' },
+});
 const TODAS = [ADP, PEDRONI, VINCULADO, LIVRE];
 
 describe('PaginacaoBoletoDda', () => {
@@ -72,6 +77,7 @@ describe('PaginacaoBoletoDda', () => {
         ['credor, sem diferenciar maiúsculas', 'pedroni', '329691'],
         ['documento do título', '9823/1', '998524434'],
         ['número do boleto', '7386', '7386000'],
+        ['fornecedor aprendido (ADR-0081)', 'acme fornecimentos', '7386000'],
     ])('busca por %s', (_caso, busca, esperado) => {
         const r = paginacao.paginar(TODAS, { busca, pagina: 1, tamanho: 20 });
         expect(r.boletos.map((b) => b.numero)).toEqual([esperado]);

@@ -7,6 +7,8 @@
  */
 
 /** Arquivo DDA importado no `fin124` (uma linha de `fin124/list`). */
+import type { BoletoDdaFornecedor } from './FornecedorContaBoleto.js';
+
 export interface ArquivoDda {
     ddcCod: number;
     nome?: string;
@@ -142,6 +144,12 @@ export interface BoletoDdaConsolidado {
      * ausente ("sem filial"). Preenchida só nas linhas que saem na página.
      */
     filial?: number;
+
+    /**
+     * Fornecedor aprendido da conta do beneficiário nas barras (ADR-0081); ausente quando a conta
+     * é desconhecida ou ambígua. `origem: 'INFERIDO'` é "provável".
+     */
+    fornecedor?: BoletoDdaFornecedor;
 }
 
 /** O grupo de títulos que o boleto paga (só o resumo; o detalhe vem dos endpoints de grupos). */

@@ -4,6 +4,7 @@ import type ConexosDdaClient from '../../client/ConexosDdaClient.js';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import EmptyDdaFileError from '../../errors/EmptyDdaFileError.js';
 import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
+import { BOLETO_DDA_ESCOPO } from '../../interface/sispag/BoletoDda.js';
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
@@ -17,7 +18,9 @@ import ConsolidacaoBoletoDdaCache from './ConsolidacaoBoletoDdaCache.js';
 import ConsolidacaoBoletoDda from './ConsolidacaoBoletoDda.js';
 import RegraSugestaoBoleto, { REGRA_CANDIDATO_TEXTO } from './RegraSugestaoBoleto.js';
 import PaginacaoBoletoDda from './PaginacaoBoletoDda.js';
+import type AprendizadoFornecedorBoletoService from './AprendizadoFornecedorBoletoService.js';
 import type BoletoSuggestionService from './BoletoSuggestionService.js';
+import type FornecedorBoletoDda from './FornecedorBoletoDda.js';
 import SugestaoBoletoCache from './SugestaoBoletoCache.js';
 
 const HOJE = new Date('2026-09-23T15:00:00Z');
@@ -61,6 +64,15 @@ const build = (lockLivre = true, agora: () => number = () => 0) => {
         listAtivos: jest.fn().mockResolvedValue([]),
         listInativosRecentes: jest.fn().mockResolvedValue([]),
     };
+    // ADR-0081: o fornecedor da conta do beneficiário (leitura) e o aprendizado (fim da sincronização).
+    const fornecedores = { enriquecer: jest.fn(async (linhas: unknown[]) => linhas) };
+    const aprendizado = {
+        aprender: jest.fn().mockResolvedValue({
+            chaves: 0,
+            ambiguas: 0,
+            porOrigem: { VINCULADO: 0, CONFIRMADO: 0, INFERIDO: 0 },
+        }),
+    };
     const service = new BoletoDdaService(
         dda as unknown as ConexosDdaClient,
         { getFilCodDefault: jest.fn().mockResolvedValue(1) } as unknown as ConexosBaseClient,
@@ -77,6 +89,8 @@ const build = (lockLivre = true, agora: () => number = () => 0) => {
         gruposDaTela as unknown as BoletoSuggestionService,
         consolidados,
         runs as unknown as PagamentoIngestaoRunRepository,
+        fornecedores as unknown as FornecedorBoletoDda,
+        aprendizado as unknown as AprendizadoFornecedorBoletoService,
     );
     return {
         service,
@@ -89,6 +103,8 @@ const build = (lockLivre = true, agora: () => number = () => 0) => {
         consolidados,
         loteRepo,
         tituloRepo,
+        fornecedores,
+        aprendizado,
     };
 };
 
@@ -696,5 +712,53 @@ describe('BoletoDdaService', () => {
                 }),
             );
         });
+    });
+});
+
+describe('BoletoDdaService — fornecedor pela conta do beneficiário (ADR-0081)', () => {
+    it('reaprende ao fim da sincronização, depois de copiar o pool', async () => {
+        const { service, dda, repo, aprendizado } = build();
+        dda.listarArquivos.mockResolvedValue([{ ddcCod: 1, importadoEm: dia('2026-09-23') }]);
+        dda.listarItens.mockResolvedValue([{ ddcCod: 1, ditCod: 1, valor: 1 }]);
+        await service.sincronizar({ triggeredBy: 'teste' });
+        expect(aprendizado.aprender).toHaveBeenCalledTimes(1);
+        expect(aprendizado.aprender.mock.invocationCallOrder[0]).toBeGreaterThan(
+            repo.salvarArquivo.mock.invocationCallOrder[0] ?? 0,
+        );
+    });
+
+    it('falha no aprendizado vira WARN e a sincronização termina normalmente', async () => {
+        const { service, aprendizado, log } = build();
+        aprendizado.aprender.mockRejectedValue(new Error('tabela ausente'));
+        await expect(service.sincronizar({ triggeredBy: 'teste' })).resolves.toMatchObject({
+            falhas: 0,
+        });
+        expect(log.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ message: expect.stringContaining('aprender o fornecedor') }),
+        );
+    });
+
+    it('lock ocupado não aprende nada', async () => {
+        const { service, aprendizado } = build(false);
+        await expect(service.sincronizar({ triggeredBy: 'teste' })).rejects.toBeInstanceOf(
+            IngestLockBusyError,
+        );
+        expect(aprendizado.aprender).not.toHaveBeenCalled();
+    });
+
+    it('listar NÃO aprende (a leitura não escreve) e enriquece depois de consolidar', async () => {
+        const { service, aprendizado, fornecedores } = build();
+        await service.listar({ escopo: BOLETO_DDA_ESCOPO.TODOS });
+        expect(aprendizado.aprender).not.toHaveBeenCalled();
+        expect(fornecedores.enriquecer).toHaveBeenCalledTimes(1);
+    });
+
+    it('falha ao ler o fornecedor tira só a coluna: a lista sai', async () => {
+        const { service, fornecedores, log } = build();
+        fornecedores.enriquecer.mockRejectedValue(new Error('tabela ausente'));
+        await expect(service.listar({ escopo: BOLETO_DDA_ESCOPO.TODOS })).resolves.toMatchObject({
+            total: 0,
+        });
+        expect(log.warn).toHaveBeenCalled();
     });
 });

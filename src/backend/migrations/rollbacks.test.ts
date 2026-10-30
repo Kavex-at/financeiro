@@ -80,6 +80,7 @@ describe('migrations — segurança do diretório', () => {
                 // Colunas do reconhecimento na decisão e do caminho do vínculo no item (ADR-0078);
                 // o reverse documenta o export prévio — o ack também fica no detalhe do evento.
                 '0091_sispag_reconhecimento_divergencia.sql',
+                '0093_sispag_fornecedor_conta_boleto.sql',
             ].sort(),
         );
         for (const alvo of reverses) {

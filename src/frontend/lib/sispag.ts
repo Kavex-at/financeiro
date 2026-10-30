@@ -1728,6 +1728,14 @@ export interface BoletoDda {
    * "sem filial". Backend anterior à v0.80 não manda.
    */
   filial?: number
+  /** Fornecedor aprendido da conta do beneficiário nas barras (ADR-0081); `INFERIDO` = "provável". */
+  fornecedor?: BoletoDdaFornecedor
+}
+
+export interface BoletoDdaFornecedor {
+  pesCod: string
+  nome: string
+  origem: 'VINCULADO' | 'CONFIRMADO' | 'INFERIDO'
 }
 
 /** O grupo de títulos que o boleto paga (só o resumo; o detalhe vem dos endpoints de grupos). */

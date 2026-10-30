@@ -247,16 +247,16 @@ export function BoletosDdaTab({
           type="search"
           className="pl-8"
           value={filtros.busca}
-          placeholder="Buscar por número, valor, credor, documento, código de barras ou arquivo…"
+          placeholder="Buscar por número, valor, credor, fornecedor, documento, código de barras ou arquivo…"
           onChange={(e) => tabela.atualizar({ busca: e.target.value })}
         />
       </label>
 
       {!dados && carregando ? (
         <TableSkeleton
-          columns={8}
+          columns={9}
           aria-label="Carregando boletos"
-          larguras={['w-20', 'w-24', 'w-20', 'w-20', 'w-10', 'w-40', 'w-10', 'w-8']}
+          larguras={['w-20', 'w-24', 'w-20', 'w-20', 'w-10', 'w-32', 'w-40', 'w-10', 'w-8']}
         />
       ) : erro ? (
         <EmptyState
