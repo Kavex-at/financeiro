@@ -31,6 +31,23 @@ import { DiferencaBadge, fmtCivil } from './CandidatosBoletoDialog'
 import { ConfirmacaoEmConjuntoSecao } from './ConfirmacaoEmConjuntoSecao'
 import { GrupoBoletoDaFilial } from './GrupoBoletoDaFilial'
 import { SugestaoBoletoPainel } from './SugestaoBoletoPainel'
+import { ajusteDoTitulo, ajusteEmCurso, mensagemFimAjuste } from './sugestaoBoleto'
+
+/** Acompanhamento do ajuste de centavos depois de uma confirmação que renegocia (ADR-0074). */
+export const INTERVALO_ACOMPANHAMENTO_MS = 2_000
+export const TENTATIVAS_ACOMPANHAMENTO = 30
+
+type Acompanhamento = {
+  /** `fil:doc:tit` do título confirmado; o título novo entra em `chaves` ao concluir. */
+  chaves: string[]
+  filCod: number
+  docCod: string
+  titCod: string
+  fase: 'aguardando' | 'fim' | 'tempo-esgotado'
+  texto?: string
+  /** Fim com o ajuste concluído (tom de sucesso) ou não (tom de aviso). */
+  sucesso?: boolean
+}
 
 function TabelaBoletos({ linhas, mostrarLigacao }: { linhas: BoletoDdaDoTitulo[]; mostrarLigacao: boolean }) {
   return (
@@ -111,7 +128,13 @@ export function BoletosDoTituloDialog({
   onDecidido,
   vinculadoEmLoteVivo = false,
   onGrupoAlterado,
+  onAjusteFinalizado,
 }: {
+  /**
+   * O ajuste de centavos acompanhado chegou a uma etapa final: a tela relê painel e sugestões e,
+   * se concluído com título novo, leva a gaveta até ele.
+   */
+  onAjusteFinalizado?: (ajuste: AjusteCentavos) => void | Promise<void>
   /** O item do título tem o código vinculado num lote vivo (ADR-0071, I17l). */
   vinculadoEmLoteVivo?: boolean
   titulo: TituloSemBoleto | null
@@ -189,6 +212,95 @@ export function BoletosDoTituloDialog({
     }
   }, [titulo, chaveAjuste, versaoAjuste])
   const ajusteAtual = ajuste !== null && ajuste.chave === chaveAjuste ? ajuste : null
+
+  // Depois de "Confirmar e renegociar" o ajuste roda em segundo plano no servidor (a confirmação
+  // nunca espera o ERP, I18g): relê o ledger a cada 2 s, por até ~60 s, até uma etapa final.
+  const [acompanhamento, setAcompanhamento] = React.useState<Acompanhamento | null>(null)
+  const acompanhamentoVisivel =
+    acompanhamento !== null && chaveAjuste !== null && acompanhamento.chaves.includes(chaveAjuste)
+      ? acompanhamento
+      : null
+  const aguardando =
+    acompanhamentoVisivel?.fase === 'aguardando' && acompanhamentoVisivel.chaves[0] === chaveAjuste
+  const onAjusteFinalizadoRef = React.useRef(onAjusteFinalizado)
+  React.useEffect(() => {
+    onAjusteFinalizadoRef.current = onAjusteFinalizado
+  }, [onAjusteFinalizado])
+  /** Único ponto que inicia o acompanhamento: confirmação individual ou em conjunto. */
+  const acompanharAjuste = (t: { filCod: number; docCod: string; titCod: string }) =>
+    setAcompanhamento({
+      chaves: [`${t.filCod}:${t.docCod}:${t.titCod}`],
+      filCod: t.filCod,
+      docCod: t.docCod,
+      titCod: t.titCod,
+      fase: 'aguardando',
+    })
+  const alvo = aguardando ? acompanhamentoVisivel : null
+  const alvoChave = alvo?.chaves[0] ?? null
+  const alvoFil = alvo?.filCod
+  const alvoDoc = alvo?.docCod
+  const alvoTit = alvo?.titCod
+  React.useEffect(() => {
+    if (
+      alvoChave === undefined ||
+      alvoChave === null ||
+      alvoFil === undefined ||
+      alvoDoc === undefined ||
+      alvoTit === undefined
+    )
+      return
+    let vivo = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let tentativas = 0
+    const filCod = alvoFil
+    const docCod = alvoDoc
+    const titCod = alvoTit
+    const base = { filCod, docCod, titCod }
+    const tick = async () => {
+      tentativas += 1
+      try {
+        const r = await fetchAjustesCentavos(filCod)
+        if (!vivo) return
+        const doTitulo = ajusteDoTitulo(r.ajustes, { docCod, titCod })
+        setAjuste({ chave: alvoChave, modo: r.modo, ...(doTitulo ? { ajuste: doTitulo } : {}) })
+        if (doTitulo && !ajusteEmCurso(doTitulo.etapa)) {
+          const concluido =
+            doTitulo.etapa === 'concluido' || doTitulo.etapa === 'concluido_sem_decisao'
+          setAcompanhamento({
+            ...base,
+            chaves:
+              concluido && doTitulo.titCodNovo
+                ? [alvoChave, `${filCod}:${docCod}:${doTitulo.titCodNovo}`]
+                : [alvoChave],
+            fase: 'fim',
+            texto: mensagemFimAjuste(doTitulo),
+            sucesso: concluido,
+          })
+          await onAjusteFinalizadoRef.current?.(doTitulo)
+          return
+        }
+      } catch {
+        // Falha de leitura conta como tentativa; o próximo ciclo tenta de novo.
+        if (!vivo) return
+      }
+      if (tentativas >= TENTATIVAS_ACOMPANHAMENTO) {
+        setAcompanhamento({
+          ...base,
+          chaves: [alvoChave],
+          fase: 'tempo-esgotado',
+          texto:
+            'O ajuste do título no Conexos ainda está em andamento. A tela mostra o resultado quando o título for reaberto ou a página recarregada.',
+        })
+        return
+      }
+      timer = setTimeout(() => void tick(), INTERVALO_ACOMPANHAMENTO_MS)
+    }
+    timer = setTimeout(() => void tick(), INTERVALO_ACOMPANHAMENTO_MS)
+    return () => {
+      vivo = false
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }, [alvoChave, alvoFil, alvoDoc, alvoTit])
   const chave = titulo ? `${titulo.filCod ?? ''}:${titulo.docCod}:${titulo.titCod}` : null
   React.useEffect(() => {
     if (!titulo || chave === null) return
@@ -213,6 +325,10 @@ export function BoletosDoTituloDialog({
   const dados = atual?.dados ?? null
   const erro = atual?.erro ?? null
 
+  // I21v: só o grupo (sem candidato individual) não mostra a seção da sugestão nem o acompanhamento.
+  const temPainel = (sugestoes.length > 0 || desfecho !== undefined) && !soGrupo
+  // A seção em conjunto também inicia o acompanhamento do próprio título.
+  const temConjunto = titulo?.filCod !== undefined && desfecho !== undefined
   const vazio = dados !== null && dados.doTitulo.length === 0 && dados.mesmoValor.length === 0
   const numeroDocumento =
     titulo?.numeroDocumento ??
@@ -265,7 +381,30 @@ export function BoletosDoTituloDialog({
           </Drawer.Header>
           <Drawer.Body className="flex flex-col gap-4">
             {grupoNoTopo ? blocoDoGrupo : null}
-            {(sugestoes.length > 0 || desfecho !== undefined) && !soGrupo ? (
+            {/* Região viva do acompanhamento do ajuste: anuncia o andamento sem roubar o foco.
+                Existe junto com o painel da sugestão e a seção em conjunto, que o iniciam. */}
+            {temPainel || temConjunto ? (
+              <div role="status" data-testid="acompanhamento-ajuste">
+                {acompanhamentoVisivel ? (
+                  acompanhamentoVisivel.fase === 'aguardando' ? (
+                    <p className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm text-muted-foreground">
+                      <Spinner aria-hidden /> Ajustando o título no Conexos…
+                    </p>
+                  ) : (
+                    <p
+                      className={
+                        acompanhamentoVisivel.sucesso
+                          ? 'rounded-lg border border-success/40 px-3 py-2 text-sm text-success-foreground'
+                          : 'rounded-lg border border-warning/40 px-3 py-2 text-sm text-warning-foreground'
+                      }
+                    >
+                      {acompanhamentoVisivel.texto}
+                    </p>
+                  )
+                ) : null}
+              </div>
+            ) : null}
+            {temPainel ? (
               <SugestaoBoletoPainel
                 sugestoes={sugestoes}
                 desfecho={desfecho}
@@ -277,19 +416,34 @@ export function BoletosDoTituloDialog({
                 itemVinculadoEmLoteVivo={vinculadoEmLoteVivo}
                 ajusteCentavos={ajusteAtual?.ajuste}
                 modoAjusteCentavos={ajusteAtual?.modo}
+                acompanhandoAjuste={aguardando}
+                onRenegociacaoIniciada={acompanharAjuste}
                 onDecidido={async () => {
                   setVersaoAjuste((n) => n + 1)
                   await onDecidido?.()
                 }}
               />
             ) : null}
-            {titulo.filCod !== undefined && desfecho !== undefined ? (
+            {temConjunto && titulo.filCod !== undefined ? (
               // Confirmação em conjunto (I15t, ADR-0080): irmãos do mesmo credor e filial escolhidos
               // pelo número; some sozinha quando não há nenhum além deste título.
               <ConfirmacaoEmConjuntoSecao
                 origem={{ filCod: titulo.filCod, docCod: titulo.docCod, titCod: titulo.titCod }}
                 podeExecutar={podeExecutar}
                 versao={versaoAjuste}
+                onConfirmados={(linhas) => {
+                  // Só o próprio título é acompanhado (os irmãos voltam pela releitura da tela) e
+                  // só com o modo `on`: em `shadow` nada é gravado no Conexos (ADR-0074).
+                  if (ajusteAtual?.modo !== 'on') return
+                  const proprio = linhas.find(
+                    (l) =>
+                      l.ajusteAutomatico &&
+                      l.filCod === titulo.filCod &&
+                      l.docCod === titulo.docCod &&
+                      l.titCod === titulo.titCod,
+                  )
+                  if (proprio) acompanharAjuste(proprio)
+                }}
                 onDecidido={async () => {
                   setVersaoAjuste((n) => n + 1)
                   await onDecidido?.()

@@ -138,7 +138,15 @@ describe('ConfirmacaoEmConjuntoSecao', () => {
       },
     })
     const onDecidido = jest.fn()
-    render(<ConfirmacaoEmConjuntoSecao origem={ORIGEM} podeExecutar onDecidido={onDecidido} />)
+    const onConfirmados = jest.fn()
+    render(
+      <ConfirmacaoEmConjuntoSecao
+        origem={ORIGEM}
+        podeExecutar
+        onConfirmados={onConfirmados}
+        onDecidido={onDecidido}
+      />,
+    )
     await user.click(await screen.findByRole('checkbox', { name: 'Marcar o título 40107/1' }))
     await user.click(screen.getByRole('checkbox', { name: 'Marcar o título 40111/1' }))
     await user.click(screen.getByRole('button', { name: 'Confirmar selecionados (2)' }))
@@ -159,6 +167,9 @@ describe('ConfirmacaoEmConjuntoSecao', () => {
     expect(status).toHaveTextContent('40111/1')
     expect(status).toHaveTextContent('O boleto deste título não é confirmável agora.')
     expect(onDecidido).toHaveBeenCalledTimes(1)
+    // Só a linha recém-confirmada segue para quem acompanha o ajuste; a recusada fica de fora.
+    expect(onConfirmados).toHaveBeenCalledTimes(1)
+    expect(onConfirmados.mock.calls[0][0].map((l: IrmaoConjunto) => l.docCod)).toEqual(['40107'])
     await waitFor(() =>
       expect(screen.queryByRole('checkbox', { name: 'Marcar o título 40107/1' })).not.toBeInTheDocument(),
     )

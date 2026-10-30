@@ -470,3 +470,50 @@ export function seloDoAjusteCentavos(p: {
   const motivo = ajuste.motivo ? ` (motivo: ${ajuste.motivo.replace(/\d{20,}/g, '…')})` : ''
   return { tipo: 'aviso', texto: `${aviso.texto}${motivo}`, retomavel: aviso.retomavel }
 }
+
+/** A etapa ainda está andando no executor do ajuste (não é um estado final). */
+export const ajusteEmCurso = (etapa: AjusteCentavos['etapa']): boolean => EM_CURSO.has(etapa)
+
+/**
+ * Previsão (não promessa) de que CONFIRMAR este par fará o sistema renegociar o título no Conexos
+ * (ADR-0074, I18a): modo `on`, diferença de 1 a 5 centavos e MESMO vencimento — a faixa de +1 a
+ * +5 dias da âncora por número não é ajustada (I18a(4)). O servidor confere de novo a
+ * elegibilidade (aprovação, pagamento parcial, estado do lote…), então a cópia diz "se continuar
+ * elegível". Em `shadow` (ou sem o modo) nada é gravado: `false`.
+ */
+export const confirmarRenegocia = (p: {
+  sugestao: Pick<SugestaoBoleto, 'avaliacao'>
+  modo?: ModoAjusteCentavos | undefined
+}): boolean => {
+  if (p.modo !== 'on') return false
+  const delta = Math.abs(centavosDe(p.sugestao.avaliacao.deltaValor))
+  const dentroDoLimite = delta > 0 && delta <= centavosDe(LIMITE_AJUSTE_CENTAVOS)
+  return dentroDoLimite && p.sugestao.avaliacao.deltaDias === 0
+}
+
+/** O ajuste do título no estado do ledger (pelo título de origem OU pelo novo, já rechaveado). */
+export const ajusteDoTitulo = (
+  ajustes: AjusteCentavos[],
+  t: { docCod: string; titCod: string },
+): AjusteCentavos | undefined =>
+  ajustes.find(
+    (a) => a.docCod === t.docCod && (a.titCodOrigem === t.titCod || a.titCodNovo === t.titCod),
+  )
+
+/**
+ * Aviso de fim do acompanhamento do ajuste (etapa final). Concluído nomeia o título de origem, o
+ * novo e o líquido; os demais reusam os textos do selo.
+ */
+export const mensagemFimAjuste = (a: AjusteCentavos): string => {
+  if (a.etapa === 'concluido' || a.etapa === 'concluido_sem_decisao') {
+    const valor =
+      a.valorBoletoCentavos !== undefined ? ` · ${formatBRL(a.valorBoletoCentavos / 100)}` : ''
+    return `Título renegociado no Conexos: ${a.docCod}/${a.titCodOrigem} → ${a.docCod}/${a.titCodNovo ?? '?'}${valor}`
+  }
+  if (a.etapa === 'simulado') return 'Ajuste em simulação: nada foi gravado no Conexos.'
+  const aviso = AVISO_POR_ETAPA[a.etapa]
+  if (!aviso) return 'O ajuste do título terminou; reabra o título para ver o estado.'
+  const texto = aviso.texto.charAt(0).toUpperCase() + aviso.texto.slice(1)
+  const motivo = a.motivo ? ` (motivo: ${a.motivo.replace(/\d{20,}/g, '…')})` : ''
+  return `${texto}${motivo}.`
+}
